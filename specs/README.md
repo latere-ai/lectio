@@ -26,10 +26,15 @@ flowchart LR
   complete --> superseded
 ```
 
-Every spec in this tree is `drafted`: the set is under review as a
-whole, and none is validated until that review ends. A scaffold of the
-parsing path and the API exists beside the specs, and each spec says
-under `Implementation status` what of it is built and what remains.
+Specs 001 to 016 are `drafted`: the set is under review as a whole,
+and none is validated until that review ends. A scaffold of the parsing
+path and the API exists beside the specs, and each spec says under
+`Implementation status` what of it is built and what remains. The set
+was reviewed once, by three readers working apart, and the control
+plane, the reader interface, the prompts, assembly and intake were
+revised from what they found. Spec 017 is `vague`: a problem statement
+with a proposed shape and the questions that have to be answered before
+it is a design.
 
 ## Index
 
@@ -51,6 +56,7 @@ under `Implementation status` what of it is built and what remains.
 | [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | drafted | 002, 003, 004 |
 | [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | drafted | 004, 006, 007 |
 | [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | drafted | 001 |
+| [017](017-agent-driven-parsing.md) | Agent-driven parsing: reader tiers, the text layer, reading a page again, and what an agent needs from the core | xlarge | vague | 002, 003, 008, 009 |
 
 ## Build order
 
