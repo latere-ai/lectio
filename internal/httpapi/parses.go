@@ -108,9 +108,18 @@ func viewParse(p store.Parse) parseView {
 // describe: a member it does not name, a second value, a body over the
 // limit.
 func decode(w http.ResponseWriter, r *http.Request, v any) ([]byte, error) {
+	return decodeBody(w, r, v, false)
+}
+
+// decodeBody is decode for a request whose body may be left out: with
+// optional set, a request with no body leaves v as it is.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any, optional bool) ([]byte, error) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
 		return nil, fault.New(fault.InvalidRequest, "the body is over %d bytes or stopped before its end", maxBody)
+	}
+	if optional && len(bytes.TrimSpace(raw)) == 0 {
+		return raw, nil
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()

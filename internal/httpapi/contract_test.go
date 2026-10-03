@@ -284,7 +284,7 @@ func TestTheServerAnswersTheContractsCodes(t *testing.T) {
 	problem, _ := at(contract, "components", "schemas", "Problem", "properties", "code", "enum").([]any)
 	for _, code := range []fault.Code{
 		fault.FileNotFound, fault.FileTooLarge, fault.InvalidPages, fault.DocumentCorrupt, fault.UnsupportedMediaType,
-		fault.TooManyPages, fault.SourceUnreachable, fault.PageUnreadable, fault.ReaderUnavailable,
+		fault.TooManyPages, fault.SourceUnreachable, fault.PageUnreadable, fault.FigureUnreadable, fault.ReaderUnavailable,
 		fault.BudgetExhausted, fault.DeadlineExceeded, fault.SchemaNotSatisfied, fault.Internal,
 	} {
 		if !slices.Contains(problem, any(string(code))) {

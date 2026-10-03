@@ -54,6 +54,8 @@ tags:
     description: Submitting a parse and following it.
   - name: results
     description: Reading what a parse produced, whole or one object at a time.
+  - name: figures
+    description: Saying what the figures of a parsed document show.
   - name: fields
     description: Extracting an object in the shape of a schema from a parsed document.
   - name: operations
@@ -367,6 +369,87 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/blocks/{ref}/image:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+      - name: ref
+        in: path
+        required: true
+        description: "`<page>.<order>`"
+        schema: { type: string, pattern: '^[1-9][0-9]*\.[1-9][0-9]*$' }
+    get:
+      tags: [results]
+      operationId: getBlockImage
+      summary: Read a block as it looks on its page.
+      description: |
+        The page's image cut to the block's box: a figure, a table, a
+        signature as an image of its own. The page image is the one the
+        reader saw, so the cut is the region the box names. A block with
+        no box, and a block of a page that was not read from an image, is
+        `404 block_not_found`.
+      responses:
+        "200":
+          description: The image.
+          content:
+            image/png: { schema: { type: string, format: binary } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/figures:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    post:
+      tags: [figures]
+      operationId: createFigures
+      summary: Describe the figures of a parse.
+      description: |
+        A reader that finds a figure says where it is. This asks a
+        describer what each figure shows: the figure is cut from its
+        page's image and described alone, and the answer is written onto
+        the figure's block as `description`, with `figure.type` and, when
+        the page's reader gave the block no text, the words printed in
+        the figure as `text`.
+
+        It is a request against a parse that has ended, so figures can be
+        described later, for some pages, and no page is read again. Only
+        a figure that has a box, on a page read from an image, and has no
+        description yet is described, unless `redo` is true. A figure
+        described once from the same bytes by the same describers is not
+        described again by a later parse. One run at a time: a request
+        while a run is in flight is `conflict`. A parse that has not
+        ended is `not_terminal`. With no describer configured, or one
+        named that is not, it is `reader_not_found`.
+
+        Answers `202` with the run. With `Prefer: wait=<seconds>` the
+        answer is held until the run ends or the wait runs out, and is
+        `200` when it ended. A run succeeds when it described any figure
+        it set out to; a figure it lost says why in the listing.
+      parameters:
+        - name: Prefer
+          in: header
+          description: "`wait=<seconds>`, at most 60."
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FiguresRequest" }
+      responses:
+        "200": { description: The run ended within the wait., content: { application/json: { schema: { $ref: "#/components/schemas/Figures" } } } }
+        "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Figures" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [figures]
+      operationId: listFigures
+      summary: List a parse's figures and the run that describes them.
+      description: Every figure block of the parse, described or not. `run` is absent when no run was started.
+      responses:
+        "200": { description: The figures., content: { application/json: { schema: { $ref: "#/components/schemas/Figures" } } } }
+        "404": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/chunks:
     parameters:
@@ -696,7 +779,7 @@ components:
       properties:
         code:
           type: string
-          enum: [file_not_found, file_too_large, invalid_pages, document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
+          enum: [file_not_found, file_too_large, invalid_pages, document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, figure_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
         detail: { type: string }
 
     Usage:
@@ -730,6 +813,7 @@ components:
         box: { $ref: "#/components/schemas/Box" }
         text: { type: string, description: What is printed in the region, as plain text. A table's cells joined row by row; the words printed inside a figure. Transcription and nothing else. }
         description: { type: string, description: What a reader says a figure shows. The reader's own prose, kept apart from `text` because it is not what the document says. }
+        figure: { $ref: "#/components/schemas/Figure" }
         level: { type: integer, minimum: 1, maximum: 6, description: The depth of a title or heading. }
         table: { $ref: "#/components/schemas/Table" }
         repeated: { type: boolean, description: A running header or footer after its first occurrence. }
@@ -737,6 +821,61 @@ components:
           type: array
           description: What validation did to the block.
           items: { type: string, enum: [box_clamped, kind_coerced, truncated] }
+
+    Figure:
+      type: object
+      required: [type]
+      description: What a describer found a figure to be. Present once the figure was described.
+      properties:
+        type: { type: string, enum: [diagram, chart, photo, table, other] }
+        model: { type: string, description: The model that described the figure. }
+
+    FiguresRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        pages:
+          type: string
+          description: Limits the run to figures on these pages, in the syntax of a submit's `pages`. Absent means all.
+        describer:
+          type: string
+          description: The name of a configured describer. Naming one pins it. Absent, the routing policy decides.
+        redo:
+          type: boolean
+          default: false
+          description: Describes again a figure that already has a description, and takes none from an earlier run.
+
+    FigureRun:
+      type: object
+      required: [state, total, done, failed, usage, started_at]
+      properties:
+        state: { type: string, enum: [running, succeeded, failed], description: "`failed` when the run described none of the figures it set out to." }
+        total: { type: integer, description: How many figures the run set out to describe. }
+        done: { type: integer }
+        failed: { type: integer }
+        reused: { type: integer, description: How many of the figures done were taken from an earlier description and cost no call. }
+        usage: { $ref: "#/components/schemas/Usage" }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    FigureEntry:
+      type: object
+      required: [ref, page, box, text]
+      properties:
+        ref: { type: string }
+        page: { type: integer }
+        box: { $ref: "#/components/schemas/Box" }
+        text: { type: string, description: The words printed inside the figure. }
+        description: { type: string, description: What a describer says the figure shows. }
+        figure: { $ref: "#/components/schemas/Figure" }
+        error: { $ref: "#/components/schemas/Problem" }
+
+    Figures:
+      type: object
+      required: [figures]
+      properties:
+        run: { $ref: "#/components/schemas/FigureRun" }
+        figures: { type: array, items: { $ref: "#/components/schemas/FigureEntry" } }
 
     Table:
       type: object

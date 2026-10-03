@@ -405,7 +405,7 @@ func TestAParseIsReadWhileItRunsAndCanBeCanceled(t *testing.T) {
 		t.Fatalf("a page that was read: %d %s", got.status, got.body)
 	}
 	for path, want := range map[string]string{
-		"/pages/3": "page_not_ready", "/pages/3/image": "page_not_ready", "/blocks/3.1": "page_not_ready",
+		"/pages/3": "page_not_ready", "/pages/3/image": "page_not_ready", "/blocks/3.1": "page_not_ready", "/blocks/3.1/image": "page_not_ready",
 		"/document": "document_not_ready", "/document?format=markdown": "document_not_ready", "/chunks": "document_not_ready",
 	} {
 		got := e.do("GET", "/parses/"+pid+path, nil)
