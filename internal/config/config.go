@@ -164,11 +164,11 @@ type readerSpec struct {
 	Temperature      *float64 `yaml:"temperature"`
 	OutputLimitParam string   `yaml:"outputLimitParam"`
 
-	// Capacity is the concern of the durable runner, which shares a
-	// reader's slots between workers. The in-process runner does not apply
-	// these two.
-	MaxInFlight       int `yaml:"maxInFlight"`
-	RequestsPerMinute int `yaml:"requestsPerMinute"`
+	// What the durable control plane reads and the in-process runner does
+	// not apply: how many calls a reader may have in flight, and what a
+	// page read by it costs against a tenant's share.
+	MaxInFlight int     `yaml:"maxInFlight"`
+	Cost        float64 `yaml:"cost"`
 }
 
 // policySpec is the spec of the Policy.
@@ -327,8 +327,8 @@ func build(doc document) (rd reader.Reader, unapplied []string, err error) {
 			return nil, nil, errors.New("timeout is not a duration above zero, such as 120s")
 		}
 	}
-	if spec.MaxInFlight != 0 || spec.RequestsPerMinute != 0 {
-		unapplied = append(unapplied, fmt.Sprintf("Reader %q maxInFlight and requestsPerMinute", name))
+	if spec.MaxInFlight != 0 || spec.Cost != 0 {
+		unapplied = append(unapplied, fmt.Sprintf("Reader %q maxInFlight and cost", name))
 	}
 	img := reader.ImageSpec{DPI: spec.Image.DPI, LongEdge: spec.Image.LongEdge, Format: spec.Image.Format}
 

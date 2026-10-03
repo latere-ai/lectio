@@ -86,7 +86,7 @@ spec:
   endpoint: https://gateway.example/v1
   model: some-model
   maxInFlight: 16
-  requestsPerMinute: 0
+  cost: 1
   timeout: 120s
   image: { dpi: 160, longEdge: 2048, format: png }
   constrained: true
@@ -133,7 +133,7 @@ func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
 		t.Fatalf("the layout reader: %+v", d)
 	}
 	// What is set and not acted on is named.
-	if want := `Reader "default" maxInFlight and requestsPerMinute|Policy extract.chain|Policy escalate`; strings.Join(got.Unapplied, "|") != want {
+	if want := `Reader "default" maxInFlight and cost|Policy extract.chain|Policy escalate`; strings.Join(got.Unapplied, "|") != want {
 		t.Fatalf("unapplied: %q", got.Unapplied)
 	}
 
@@ -158,22 +158,23 @@ func TestAConfigurationThatDoesNotHoldIsRefusedWhole(t *testing.T) {
 		files map[string]string
 		want  string
 	}{
-		"no document":              {map[string]string{"a.yaml": ""}, "declares no Reader"},
-		"not YAML":                 {map[string]string{"a.yaml": "kind: [unclosed"}, "document 1"},
-		"another version":          {map[string]string{"a.yaml": "apiVersion: v2\nkind: Reader\nmetadata: {name: x}\nspec: {adapter: stub}\n"}, `apiVersion is "v2"`},
-		"another kind":             {map[string]string{"a.yaml": head + "kind: Pool\nmetadata: {name: x}\n"}, "not Reader or Policy"},
-		"no name":                  {map[string]string{"a.yaml": head + "kind: Reader\nspec: {adapter: stub}\n"}, "metadata.name is empty"},
-		"a name used twice":        {map[string]string{"a.yaml": stub("x") + "---\n" + stub("x")}, "used twice"},
-		"an adapter that is none":  {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: vision}\n"}, `adapter is "vision"`},
-		"a member no spec has":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, topP: 1}\n"}, "topP"},
-		"a timeout of nothing":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, timeout: soon}\n"}, "timeout is not a duration"},
-		"a box order that is none": {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1', model: m, boxes: {order: zigzag}}\n"}, "zigzag"},
-		"a chat reader, no model":  {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1'}\n"}, "names no model"},
-		"a layout reader, no url":  {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: layout}\n"}, "x"},
-		"two readers, no policy":   {map[string]string{"a.yaml": stub("x") + "---\n" + stub("y")}, "no Policy to order them"},
-		"two policies":             {map[string]string{"a.yaml": stub("x"), "b.yaml": policy + "---\n" + policy}, "this is the second"},
-		"a policy member no spec":  {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {write: {chain: [x]}}\n"}, "write"},
-		"a chain naming no one":    {map[string]string{"a.yaml": stub("x") + "---\n" + policy}, `names "default", which is no Reader`},
+		"no document":                 {map[string]string{"a.yaml": ""}, "declares no Reader"},
+		"not YAML":                    {map[string]string{"a.yaml": "kind: [unclosed"}, "document 1"},
+		"another version":             {map[string]string{"a.yaml": "apiVersion: v2\nkind: Reader\nmetadata: {name: x}\nspec: {adapter: stub}\n"}, `apiVersion is "v2"`},
+		"another kind":                {map[string]string{"a.yaml": head + "kind: Pool\nmetadata: {name: x}\n"}, "not Reader or Policy"},
+		"no name":                     {map[string]string{"a.yaml": head + "kind: Reader\nspec: {adapter: stub}\n"}, "metadata.name is empty"},
+		"a name used twice":           {map[string]string{"a.yaml": stub("x") + "---\n" + stub("x")}, "used twice"},
+		"an adapter that is none":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: vision}\n"}, `adapter is "vision"`},
+		"a member no spec has":        {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, topP: 1}\n"}, "topP"},
+		"a timeout of nothing":        {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, timeout: soon}\n"}, "timeout is not a duration"},
+		"a box order that is none":    {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1', model: m, boxes: {order: zigzag}}\n"}, "zigzag"},
+		"a member the design dropped": {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, requestsPerMinute: 60}\n"}, "requestsPerMinute"},
+		"a chat reader, no model":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1'}\n"}, "names no model"},
+		"a layout reader, no url":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: layout}\n"}, "x"},
+		"two readers, no policy":      {map[string]string{"a.yaml": stub("x") + "---\n" + stub("y")}, "no Policy to order them"},
+		"two policies":                {map[string]string{"a.yaml": stub("x"), "b.yaml": policy + "---\n" + policy}, "this is the second"},
+		"a policy member no spec":     {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {write: {chain: [x]}}\n"}, "write"},
+		"a chain naming no one":       {map[string]string{"a.yaml": stub("x") + "---\n" + policy}, `names "default", which is no Reader`},
 	} {
 		got, err := Load(write(t, tc.files))
 		if err == nil || !strings.Contains(err.Error(), tc.want) || got.Readers != nil {

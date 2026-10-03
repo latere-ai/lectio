@@ -102,7 +102,8 @@ func (r *Reader) Describe() reader.Description {
 
 // version names what this reader's configuration decides about a page's
 // result: the model, the prompt as this reader asks it, whether the reply
-// is constrained, how the page is rendered, and the temperature.
+// is constrained, how the page is rendered, the temperature, and the
+// output bound, which decides where a long page's reply is cut.
 func (r *Reader) version() string {
 	cfg := r.c.cfg
 	temperature := "default"
@@ -112,6 +113,7 @@ func (r *Reader) version() string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		cfg.Model, prompts.PageVersion(ask(cfg)), strconv.FormatBool(cfg.Constrain), temperature,
 		strconv.Itoa(cfg.Image.DPI), strconv.Itoa(cfg.Image.LongEdge), cfg.Image.Format,
+		strconv.Itoa(cfg.MaxOutputTokens),
 	}, "\x00")))
 	return hex.EncodeToString(sum[:6])
 }

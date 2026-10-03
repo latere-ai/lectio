@@ -354,6 +354,7 @@ func TestBoxesAreAskedAndReadInTheReadersConvention(t *testing.T) {
 		"constrain":   base(func(c *Config) { c.Constrain = true }),
 		"temperature": base(func(c *Config) { c.Temperature = &zero }),
 		"resolution":  base(func(c *Config) { c.Image.DPI = 200 }),
+		"output":      base(func(c *Config) { c.MaxOutputTokens = 16000 }),
 	}
 	seen := map[string]string{}
 	for name, v := range versions {
