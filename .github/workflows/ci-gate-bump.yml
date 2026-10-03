@@ -21,7 +21,6 @@ permissions:
 jobs:
   bump:
     uses: latere-ai/ci/.github/workflows/ci-gate-bump.yml@v1
-    # While the repository is private the bump runs on the organization's
-    # self-hosted runner, as its per-push gate does.
+    # The bump runs where the per-push gate runs: on a hosted runner.
     with:
-      runs_on: linux-vm
+      runs_on: ubuntu-latest

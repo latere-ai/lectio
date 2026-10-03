@@ -5,7 +5,7 @@
 - Leftovers are cleaned up in follow-up commits.
 - Target a high quality outcome, >90% coverage, each feature verified via an e2e test.
 - Write in audience language: documents aim at user value and usage, the API surface aims at builder precision, code comments aim at technical precision.
-- This repository will be public. No Latere hostname, token, or internal reference anywhere but as a default or an example. The hosted plane that builds on it lives elsewhere and is one consumer among any.
+- This repository is public. No Latere hostname, token, or internal reference anywhere but as a default or an example. The hosted plane that builds on it lives elsewhere and is one consumer among any.
 - A durability or fairness claim is proven by a test that kills a worker or runs the dispatch simulation, not by a unit test of one function.
 - Relevant latere projects and shared components (latere.ai/x/pkg/*) are in ../
 - Every sentence is written for one reader (user, contributor, developer) and the register follows the reader; an error has one code, one fixed user sentence in `message`, and one developer detail in a separate field. The rule and the review checklist: https://github.com/latere-ai/pkg/blob/main/docs/writing/registers.md
