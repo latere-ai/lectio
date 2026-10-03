@@ -175,32 +175,39 @@ what the figure shows: the specialized model used in the first runs is
 trained to return a picture's box and no text. A general vision model
 describes a figure well and places it loosely. Each does half.
 
-The object model already keeps the halves apart: a figure block has its
-box, `text` for the words printed inside it, and `description` for what
-a reader says it shows. What is missing is the step between them.
+The object model keeps the halves apart: a figure block has its box,
+`text` for the words printed inside it, and `description` for what a
+reader says it shows. The step between them is built
+([[003-api]], [[008-readers]]):
 
 1. **A block's image.** The page image is stored and a box is a
    fraction of it, so the image of any block is a crop:
    `GET /parses/{parse}/blocks/{ref}/image`. That alone is figure
    extraction.
-2. **A describe step.** For each figure, the crop goes to a vision
-   reader with a prompt of its own, and the answer fills the block's
-   `description`, the labels printed in it, and its type. A first run
-   of exactly this, a figure located by the layout engine, cropped, and
-   described by a general vision model, took under ten seconds and
-   under two hundred output tokens, and named the figure's parts and
-   how they connect.
+2. **A describe step.** `POST /parses/{parse}/figures` cuts each figure
+   from its page and gives it, with its caption, to a describer behind
+   an interface of its own with a prompt of its own. The answer fills
+   the block's `description`, its `figure.type`, and the labels printed
+   in it.
 3. **Where it runs.** As a request against a parse, the way extraction
    is, so figures can be described later, for some pages, without
-   reading a page again; and as an option of the routing policy for
-   operators who want it on every parse.
+   reading a page again.
 
-Later, on the same step: a chart's data as a table, and a diagram as
-vector graphics, which some specialized models return.
+In the first run of both together, a specialized model read two pages
+of a typeset paper in 20 seconds and located a figure on each, and a
+general vision model described the two crops in 16 seconds and 369
+output tokens, naming each diagram's parts and how they connect.
 
-This is the smallest real case of a region read by a second reader, and
-answering it settles the first open question below for one kind of
-block before it is settled for all.
+Not built, on the same step: a chart's data as a table; a diagram as
+vector graphics, which some specialized models return; and describing
+figures on every parse, as an option of the routing policy, for
+operators who want it without a second request.
+
+This is the smallest real case of a region read by a second reader. It
+settles the first open question below for one kind of block: a figure
+is a region a second reader is given. It does not settle it for a
+table or a paragraph read again, which need a page to have more than
+one result.
 
 ### What to change before more is built on top
 
@@ -259,7 +266,9 @@ model.
 
 ## Implementation status
 
-Nothing of this spec is built. What exists and is relied on above: a
+Built: a block's image, and describing a parse's figures by a second
+reader on request. Nothing else of this spec is built. What exists and
+is relied on above: a
 result addressed by page and block, read-time views, a parse that names
 its reader and its pages, reuse of a page by what was read, the reader
 interface with a chain that passes a page down when a reader cannot be

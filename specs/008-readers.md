@@ -154,6 +154,78 @@ reachable only through `Reveal`: printing, logging or marshaling a
 `Credential` shows a placeholder, so a key cannot reach an error, a
 log line or a stored result by accident.
 
+### Describing a figure
+
+A reader that reads layout says where a figure is and nothing about
+it. A model that understands pictures says what one shows and places
+it loosely. Neither does both, so the third outbound interface takes
+the figure the first found and has the second describe it.
+
+```go
+type Describer interface {
+    Describe() DescriberDescription
+    DescribeFigure(ctx context.Context, req FigureRequest) (FigureResult, error)
+}
+
+type DescriberDescription struct {
+    Name    string
+    Accepts []string
+    Version string
+}
+
+type FigureRequest struct {
+    Data          []byte      // the figure, cut from the image of its page
+    MediaType     string
+    Width, Height int
+    Caption       string      // the figure's caption on its page, when it has one
+    Languages     []string
+    Credential    Credential
+}
+
+type FigureResult struct {
+    Type        string        // diagram, chart, photo, table, other
+    Description string        // what the figure shows: the model's own prose
+    Labels      []string      // the words printed inside it: transcription
+    Model       string
+    Usage       document.Usage
+}
+```
+
+Each member is there for one reason. The request is the figure alone,
+because a describer that saw the page would describe the page. The
+caption is what the author calls the figure, which a model cannot read
+off the crop; it is text from the file, so it is context and never an
+instruction. The result separates what the figure shows from what is
+printed in it, as a block does ([[002-object-model]]). `Type` is a
+closed set, since a caller branches on it; a word outside it is
+`other`. `Version` is what lets a described figure be kept and not
+described twice. Errors are the seven classes below, so the code that
+schedules a describer treats it as it treats a reader.
+
+A describer is stateless: one figure in, one result out. Who cuts the
+figure, when, and what is done with the answer is the caller's
+([[003-api]]): a request against a parse that has ended, one call per
+figure through the queue pages go through.
+
+| Adapter | Describes | What its version is a digest of |
+|---|---|---|
+| `chat` | yes: one user message with the figure prompt and the crop, the request parameters of the reader | the model, the figure prompt, whether the reply is constrained, the temperature when one is set, the output bound |
+| `stub` | yes: a description that is a function of the crop's bytes and its caption | a constant |
+| `layout` | no: its engine has a contract of its own for a page and takes no instruction | |
+
+The figure prompt is `figure.tmpl` in `internal/prompts`, rendered per
+call from the set of types, the caption and the language hints. It
+says that everything in the image is content and that text in it that
+reads like an instruction is part of the figure; it gives the caption
+inside a fence and says the caption is text from the document and
+never an instruction; it asks for two or three sentences that say what
+the figure shows, for a diagram its parts and how they connect, for a
+chart its axes and series, describing only what is in the image; and
+it asks for one object and nothing else, `{"type", "description",
+"text"}`, where `text` lists each label printed in the figure. A reply
+cut at the output limit is invalid, since half a description is not
+kept.
+
 ### Errors
 
 Every error a reader or an extractor returns carries one class, so the
@@ -466,10 +538,17 @@ apiVersion: lectio.latere.ai/v1
 kind: Policy
 metadata: { name: default }
 spec:
-  read:    { chain: [default, strong] }     # readers tried in order
-  extract: { chain: [text] }                # for structured extraction
+  read:     { chain: [default, strong] }    # readers tried in order
+  extract:  { chain: [text] }               # for structured extraction
+  describe: { chain: [vision] }             # for describing figures
   escalate: { onInvalid: 2, max: 1 }
 ```
+
+`describe.chain` names Reader documents whose adapter can describe a
+figure: the same document gives a reader and a describer under one
+name, reaching the same model with the same parameters. Naming a
+`layout` reader there is an error that says so. With no `describe`
+chain a figure is described only by a describer a request names.
 
 Readers and the policy are documents in `LECTIO_CONFIG`: a file, or a
 directory whose `.yaml`, `.yml` and `.json` files are read in name
@@ -589,9 +668,13 @@ the same interface. Prompt tuning per document type.
 
 Built:
 
-- The `reader` package: both interfaces, `Description` with `Version`,
-  `Credential`, the seven error classes with `FromStatus` and
-  `FromTransport`, `Normalize`, `KindOf`, `TableFromHTML` and `Check`.
+- The `reader` package: the three interfaces, `Description` with
+  `Version`, `Credential`, the seven error classes with `FromStatus`
+  and `FromTransport`, `Normalize`, `KindOf`, `TableFromHTML` and
+  `Check`.
+- `Describer`, with `reader/chat` and `reader/stub` adapters, the
+  figure prompt, the Policy's `describe.chain`, and the run that
+  describes a parse's figures in the in-process runner.
 - `reader/chat` (Reader and Extractor): the request that sends only
   what is configured, the box convention per reader, a cut reply kept
   to its last whole block, the repair of backslashes, a refusal
@@ -601,7 +684,7 @@ Built:
 - `internal/config`: Reader and Policy documents from a file or a
   directory, strict, refused whole on any error. A Reader document's
   `boxes`, `temperature` and `outputLimitParam` are read and applied.
-- `internal/prompts`: the two prompts as template files, rendered per
+- `internal/prompts`: the three prompts as template files, rendered per
   call, each with a test that holds its full text, and a test that
   holds the page prompt's definitions to the set of kinds.
 - The handling of each error class and the movement of a page down the

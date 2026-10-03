@@ -132,7 +132,8 @@ when false:
   "order": 1,
   "box": [0.14, 0.07, 0.81, 0.31],
   "text": "Q1 Q2 Q3 Q4",
-  "description": "A bar chart of revenue by quarter."
+  "description": "A bar chart of revenue by quarter.",
+  "figure": { "type": "chart", "model": "some-vision-model" }
 }
 ```
 
@@ -158,6 +159,14 @@ when false:
   document says ([[010-assembly]], [[011-structured-extraction]]). The
   first draft put the description in `text`, where prose a model wrote
   was indistinguishable from what the page printed.
+- `figure` is present on a figure once it was described
+  ([[008-readers]]): `type` is one of `diagram`, `chart`, `photo`,
+  `table` and `other`, and `model` is the model that described it. A
+  reader that finds a figure need not say what it shows; a describer
+  does, on request, and what it returns fills `description`, `figure`,
+  and, when the page's reader gave the block no text, `text` with the
+  words printed inside the figure. `figure` is on a block of kind
+  `figure` and on no other.
 - `level` is the heading depth, 1 to 6, on `title` and `heading`, and
   absent on every other kind.
 - `table` is present on a block of kind `table` and on no other.
@@ -309,8 +318,11 @@ Built:
 - `internal/id`: prefixed ULIDs that keep their order within one
   millisecond.
 - `internal/store`: a memory store for files, parses, pages, page
-  images, document indexes, and the page results kept for reuse. It
+  images, document indexes, the page results and figure descriptions
+  kept for reuse, and the run that describes a parse's figures. It
   holds everything in the process and nothing survives a restart.
+- A block's `figure` member, filled when a figure is described, and a
+  block's image as a cut of its page's image.
 - Reuse by page, in the in-process runner over the memory store.
 
 Remaining:
