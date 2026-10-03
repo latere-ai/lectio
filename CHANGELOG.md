@@ -6,8 +6,13 @@ refused before it is pushed.
 
 ## Unreleased
 
-- Added: the repository scaffold. The object model (`document`), the
+- Added: the repository scaffold. The object model (`document`); the
   interfaces a page-reading model and a field-extracting model sit behind
-  (`reader`, `extractor`) with their first adapters, the HTTP contract in
-  `api/openapi.yaml`, and a development server that parses in process with
-  nothing durable.
+  (`reader`), with adapters for an OpenAI-compatible chat endpoint, for a
+  layout engine behind HTTP, and a stub that calls nothing; intake for
+  images, text, Markdown and CSV; assembly with Markdown, text and chunk
+  views chosen when a result is read; and the HTTP contract in
+  `api/openapi.yaml`.
+- Added: `lectiod` with `LECTIO_DEV=true`, a development server that
+  serves the whole contract in one process and keeps nothing. Routes the
+  contract marks planned answer `501 not_implemented`.

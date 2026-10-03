@@ -16,10 +16,73 @@ Tenants share the workers and the model's rate limit by weight, with an
 interactive class ahead of a batch class, and no tenant can queue its
 way past another.
 
-> **Status: design under review.** This repository holds the specs and
-> no implementation yet. Start with
-> [`specs/001-architecture.md`](specs/001-architecture.md); the index in
-> [`specs/README.md`](specs/README.md) lists every spec in build order.
+> **Status: design under review, scaffold in place.** The specs in
+> [`specs/`](specs/README.md) are the design, and none is final. What
+> runs today is the whole parsing path and the whole HTTP contract in
+> one process with nothing durable: the object model, the interface a
+> model sits behind with its first adapters, intake, assembly, and a
+> development server. The durable tasks, the fair queue, and PDF
+> rendering are designed and not built. Each spec says what of it
+> exists.
+
+## Run it
+
+```sh
+make run          # builds out/lectiod and starts it with LECTIO_DEV=true
+```
+
+The development server listens on `:8080`, keeps everything in memory,
+and takes the token `dev`. With no reader configured it reads pages
+with a stub that calls no model, so the path can be followed end to end
+before a key exists.
+
+```sh
+api=http://localhost:8080/v1
+auth='Authorization: Bearer dev'
+
+# Upload a file. The same bytes twice are one file.
+curl -s -H "$auth" --data-binary @report.csv "$api/files?name=report.csv"
+
+# Parse it, holding the answer up to 30 seconds for the parse to end.
+curl -s -H "$auth" -H 'Prefer: wait=30' -H 'Content-Type: application/json' \
+  -d '{"source":{"file":"fil_..."}}' "$api/parses"
+
+# Read the result: whole, as Markdown, one page, one block, or as chunks.
+curl -s -H "$auth" "$api/parses/prs_.../document"
+curl -s -H "$auth" "$api/parses/prs_.../document?format=markdown"
+curl -s -H "$auth" "$api/parses/prs_.../pages/1"
+curl -s -H "$auth" "$api/parses/prs_.../blocks/1.2"
+curl -s -H "$auth" "$api/parses/prs_.../chunks?by=section"
+```
+
+A page is readable as soon as it was read, while the rest of the parse
+is still running. How a result looks is chosen when it is read, so
+another format or another chunk size never runs the parse again. The
+contract is [`api/openapi.yaml`](api/openapi.yaml), and the server
+serves it at `/v1/openapi.yaml`.
+
+To read pages with a model, declare a reader and point `LECTIO_CONFIG`
+at the file. Any endpoint that speaks the OpenAI chat completions API
+works, a gateway included:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: default }
+spec:
+  adapter: chat
+  endpoint: https://gateway.example/v1
+  model: your-vision-model
+  image: { dpi: 160, longEdge: 2048, format: png }
+  constrained: true
+```
+
+```sh
+LECTIO_DEV=true LECTIO_CONFIG=reader.yaml LECTIO_MODEL_KEY=... out/lectiod
+```
+
+This build reads images (PNG, JPEG, TIFF) through a reader, and text,
+Markdown and CSV from the file itself.
 
 ## What it is for
 
