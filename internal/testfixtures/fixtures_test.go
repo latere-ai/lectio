@@ -11,7 +11,7 @@ import (
 // named is every fixture constant. A constant missing here fails
 // TestEveryEmbeddedFileIsNamed as soon as its file exists.
 var named = []string{
-	MinimalPDF, MultipagePDF, DOCX, XLSX, PPTX, JPEG, PNG, MultiTIFF,
+	MinimalPDF, MultipagePDF, TextPDF, DOCX, XLSX, PPTX, JPEG, PNG, MultiTIFF,
 	CSV, TXT, HTML, XML, Markdown, WrappedPDF, WrappedXML,
 	DOC, PPT, RTF, Keynote,
 }

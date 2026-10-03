@@ -20,6 +20,7 @@ var files embed.FS
 const (
 	MinimalPDF   = "files/minimal.pdf"   // one page, page tree in an object stream
 	MultipagePDF = "files/multipage.pdf" // three pages, page tree in the clear
+	TextPDF      = "files/text.pdf"      // two letter pages: a line of text and a bar, then nothing
 	DOCX         = "files/sample.docx"
 	XLSX         = "files/sample.xlsx"
 	PPTX         = "files/sample.pptx"

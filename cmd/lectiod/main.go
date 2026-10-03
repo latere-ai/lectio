@@ -87,7 +87,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
 	st := store.NewMemory()
 	runner := &run.Runner{
-		Store: st, Pipeline: &parse.Pipeline{Limits: limits, Renderer: render.Images{}},
+		Store: st, Pipeline: &parse.Pipeline{Limits: limits, Renderer: render.NewPages()},
 		Readers: readers.Readers, Chain: readers.Chain, Workers: s.Workers, Attempts: s.Attempts,
 		Credential: func(string) reader.Credential { return s.ModelKey },
 	}
