@@ -38,8 +38,8 @@ under `Implementation status` what of it is built and what remains.
 | [001](001-architecture.md) | Architecture: one binary in two roles, Postgres for state and the queue, an object store for bytes, a model endpoint for pages | large | drafted | |
 | [002](002-object-model.md) | Object model: file, parse, document, page, block, table, field, and where each is stored | medium | drafted | 001 |
 | [003](003-api.md) | API: files, parses, pages, blocks, fields, events, and the errors a caller branches on | large | drafted | 001, 002 |
-| [004](004-durable-tasks.md) | Durable tasks: the task table, claim under a lease, fencing, retry, capacity waits, cancel, and the sweeps | xlarge | drafted | 001, 002 |
-| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, finalize, extraction on request, and what a parse keeps when part of it fails | large | drafted | 002, 004 |
+| [004](004-durable-tasks.md) | Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps | xlarge | drafted | 001, 002 |
+| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails | large | drafted | 002, 004 |
 | [006](006-fairness-and-priority.md) | Fairness and priority: groups, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | drafted | 004, 005 |
 | [007](007-model-capacity.md) | Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback | large | drafted | 004, 006 |
 | [008](008-readers.md) | Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy | large | drafted | 002, 005, 007 |
@@ -49,7 +49,7 @@ under `Implementation status` what of it is built and what remains.
 | [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | drafted | 001, 003 |
 | [013](013-limits-and-usage.md) | Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records | medium | drafted | 005, 006, 012 |
 | [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | drafted | 002, 003, 004 |
-| [015](015-observability.md) | Observability: one trace per parse, the processing record, queue and pool metrics, logs | medium | drafted | 004, 006, 007 |
+| [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | drafted | 004, 006, 007 |
 | [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | drafted | 001 |
 
 ## Build order

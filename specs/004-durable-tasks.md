@@ -1,5 +1,5 @@
 ---
-title: "Durable tasks: the task table, claim under a lease, fencing, retry, capacity waits, cancel, and the sweeps"
+title: "Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps"
 status: drafted
 track: core
 depends_on:
@@ -17,13 +17,14 @@ author: changkun
 ## Overview
 
 Every unit of work Lectio does is a task: a row in Postgres that a
-worker claims under a lease, runs, and settles. This spec defines the
-row, the claim, what a lease guarantees, how a task is retried, how
-waiting differs from failing, and how a dead worker's tasks come back.
-It is the mechanism under invariants 1, 2, 3, 5 and 6 of
-[[001-architecture]]. Which task a worker claims next is
-[[006-fairness-and-priority]]; what the tasks of a parse are is
-[[005-parse-graph]].
+worker claims, runs, and settles. This spec defines the row, the lease
+a worker process holds for the tasks it runs, the one call a worker
+makes to the database, what the fencing token guarantees, how a task is
+retried, and how a dead worker's tasks come back. It is the mechanism
+under invariants 1, 2, 3, 5 and 6 of [[001-architecture]]. Which task a
+worker claims next is [[006-fairness-and-priority]]; whether a model
+has room for it is [[007-model-capacity]]; what the tasks of a parse
+are is [[005-parse-graph]].
 
 ## Current state
 
@@ -35,175 +36,316 @@ was re-queued on every start, and a cancel changed a row while the work
 went on. None of that is carried over. The state names and the retry
 package from the shared library are.
 
+### What changed in review
+
+The first draft of this spec made the task row the unit of everything
+at once: the lease, the pool slot, the fairness charge, the meter and
+the trace span. Each was reasonable alone. Together they put about
+16 database round trips on every page, a heartbeat on every task,
+and a write on every poll that found no capacity, against a deployment
+that may give this service one database connection. They also tied a
+page's survival to the database answering within one task lease: a
+stall of a minute expired every live lease, and a page caught in three
+stalls failed as unreadable.
+
+The row stays the unit of work and of the fencing token. The lease
+moves to the worker process, and a worker talks to the database once
+per interval, not once per page. Four defects of the draft are closed
+with it: a cancel was not fenced, the fence did not cover the object
+store, a capacity wait was a write, and the graph kept edge rows it did
+not need.
+
 ## Design
 
-### The row
+### The rows
 
 ```sql
+CREATE TABLE workers (
+  worker_id  text PRIMARY KEY,                 -- minted at process start, never reused
+  seen_at    timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL              -- seen_at + LECTIO_TASK_LEASE
+);
+
 CREATE TABLE tasks (
-  parse_id         text    NOT NULL REFERENCES parses ON DELETE CASCADE,
-  task_id          text    NOT NULL,           -- prepare | page-<n> | assemble | extract-<name> | finalize
-  kind             text    NOT NULL,
-  group_id         text    NOT NULL,
-  class            smallint NOT NULL,          -- 0 interactive, 1 batch
-  priority         integer NOT NULL DEFAULT 0,
-  seq              integer NOT NULL,           -- position within the parse; orders a group's queue
-  cost             integer NOT NULL,           -- fairness charge; 1 for a page, 0 otherwise
-  state            text    NOT NULL,           -- blocked | queued | leased | succeeded | failed | canceled
-  blocked_by       integer NOT NULL DEFAULT 0, -- unsettled dependencies
-  attempt          integer NOT NULL DEFAULT 0,
-  expiries         integer NOT NULL DEFAULT 0,
-  waits            integer NOT NULL DEFAULT 0,
-  available_at     timestamptz NOT NULL DEFAULT now(),
-  reader           text,                       -- the pool a leased page task holds a slot in
-  lease_owner      text,
-  lease_token      bigint  NOT NULL DEFAULT 0,
-  lease_expires_at timestamptz,
-  error            jsonb,
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  settled_at       timestamptz,
+  parse_id      text     NOT NULL REFERENCES parses ON DELETE CASCADE,
+  task_id       text     NOT NULL,             -- prepare | page-<n> | assemble | extract-<name>
+  kind          text     NOT NULL,
+  group_id      text     NOT NULL,
+  class         smallint NOT NULL,             -- 0 interactive, 1 batch
+  priority      integer  NOT NULL DEFAULT 0,
+  seq           integer  NOT NULL,             -- position within the parse; orders a group's queue
+  pin           text,                          -- the reader the parse named, when it named one
+  state         text     NOT NULL,             -- queued | leased | succeeded | failed | canceled
+  attempt       integer  NOT NULL DEFAULT 0,
+  expiries      integer  NOT NULL DEFAULT 0,
+  available_at  timestamptz NOT NULL DEFAULT now(),
+  lease_owner   text,                          -- the worker running it
+  lease_token   bigint   NOT NULL DEFAULT 0,   -- raised by one at every claim
+  leased_at     timestamptz,
+  reader        text,                          -- the pool the task holds a slot in
+  scope         text,                          -- the key scope of that slot
+  calling       boolean  NOT NULL DEFAULT false, -- holds the slot now
+  charged       integer  NOT NULL DEFAULT 0,   -- fairness units charged at claim
+  output        text,                          -- object key of the result that won
+  calls         integer  NOT NULL DEFAULT 0,   -- model calls, over every attempt
+  input_tokens  bigint   NOT NULL DEFAULT 0,
+  output_tokens bigint   NOT NULL DEFAULT 0,
+  error         jsonb,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  settled_at    timestamptz,
   PRIMARY KEY (parse_id, task_id)
 );
 CREATE INDEX tasks_runnable ON tasks (group_id, class, priority DESC, seq, created_at)
   WHERE state = 'queued';
-CREATE INDEX tasks_leased ON tasks (lease_expires_at) WHERE state = 'leased';
-CREATE TABLE task_edges (parse_id text, task_id text, needs text, PRIMARY KEY (parse_id, task_id, needs));
+CREATE INDEX tasks_leased ON tasks (lease_owner) WHERE state = 'leased';
+CREATE INDEX tasks_slots  ON tasks (reader, scope) WHERE state = 'leased' AND calling;
 ```
 
 Task ids are deterministic from the parse, so writing a parse's tasks
 twice is `ON CONFLICT DO NOTHING` and writes nothing the second time.
 
+There is no table of edges and no `blocked` state. The graph of a
+parse is fixed ([[005-parse-graph]]), so the parse row counts its
+unsettled page tasks in `pages_open`, and the settle that takes the
+count to zero inserts the `assemble` task in the same transaction. A
+task exists only when it can run.
+
 ### States
 
 ```mermaid
 stateDiagram-v2
-  [*] --> blocked: has dependencies
-  [*] --> queued: has none
-  blocked --> queued: last dependency succeeded
-  queued --> leased: claim
-  leased --> succeeded: complete, token matches
+  [*] --> queued: inserted when it can run
+  queued --> leased: claim, token + 1
+  leased --> succeeded: settle, worker alive and token matches
   leased --> queued: retryable failure, attempt + 1, backoff
-  leased --> queued: capacity wait, waits + 1
-  leased --> queued: lease expired, expiries + 1
+  leased --> queued: the reader said to wait, attempt unchanged
+  leased --> queued: its worker died, expiries + 1
   leased --> failed: permanent failure, attempts or expiries exhausted
   queued --> canceled: parse canceled
-  blocked --> canceled: parse canceled
-  leased --> canceled: parse canceled, seen at heartbeat
+  leased --> canceled: parse canceled, in the cancel's own transaction
   failed --> queued: retry requested, attempt reset
 ```
 
-### Claim
+### The worker's lease
 
-One transaction, on the pooled endpoint:
-
-1. Pick a group and a class ([[006-fairness-and-priority]]).
-2. `SELECT ... FROM tasks WHERE group_id = $1 AND class = $2 AND state = 'queued' AND available_at <= now() ORDER BY priority DESC, seq, created_at FOR UPDATE SKIP LOCKED LIMIT 1`.
-3. For a page task, take a slot in a reader pool or stop
-   ([[007-model-capacity]]).
-4. `UPDATE` the row to `leased`, set `lease_owner`, increment
-   `lease_token`, set `lease_expires_at = now() + lease`.
-
-The worker receives the task and the token. Every timestamp in this
-spec is the database's `now()`; a worker's clock is never compared with
-a stored time.
-
-### Lease, heartbeat, fencing
+A worker process registers a row in `workers` when it starts and holds
+one lease for everything it runs. A task is leased while three things
+hold: its `state` is `leased`, its `lease_owner` is a worker whose
+`expires_at` is in the future, and the token the worker was given
+equals `lease_token`. There is no expiry on the task row and no
+heartbeat per task.
 
 | Setting | Default |
 |---|---|
-| `LECTIO_TASK_LEASE` | 60s |
-| heartbeat interval | lease / 3 |
+| `LECTIO_TASK_LEASE` | 60s, the length of a worker's lease |
+| `LECTIO_WORKER_FLUSH` | 200ms, the shortest time between two exchanges of one worker |
 | `LECTIO_WORKER_POLL` | 1s idle, backing off to 5s with jitter |
 | `LECTIO_SWEEP_INTERVAL` | 30s |
 
-A heartbeat is `UPDATE tasks SET lease_expires_at = now() + lease WHERE
-... AND lease_token = $token AND state = 'leased' RETURNING
-(SELECT cancel_requested FROM parses ...)`. Zero rows means the lease is
-gone: the worker abandons the task and writes nothing further. A
-returned cancel flag makes the worker cancel the task's context, which
-aborts the model call in flight.
+Every timestamp in this spec is the database's `now()`; a worker's
+clock is never compared with a stored time.
 
-Completion is one transaction: the same predicate on `lease_token`,
-the row to `succeeded`, each dependent's `blocked_by` decremented and
-moved to `queued` at zero, and the parse's progress counters advanced.
-A worker whose lease expired and was reissued matches no row and is
-refused. This is the fence: two workers may briefly run one task, and
-only the holder of the current token can settle it.
+### The exchange
 
-A task's output is written to its deterministic object key before
-completion ([[002-object-model]]). If the worker dies between the write
-and the completion, the next holder overwrites the same key with an
-equivalent result. Effects outside the object store and the database,
-of which the reader call is the only one, are the reason a page may be
-read twice after a crash; it is never recorded twice.
+A worker makes one kind of call to the database. It is one statement,
+a function in the database, so it is one round trip and one
+transaction with no client time inside it. A worker calls it when a
+task finished or a slot is free, at most once per `LECTIO_WORKER_FLUSH`
+and at least once per third of the lease. In order, the exchange:
+
+1. **Renews** the worker: `UPDATE workers SET seen_at = now(),
+   expires_at = now() + lease WHERE worker_id = $1 AND expires_at >
+   now()`. Zero rows means the fleet has given this process up. It
+   abandons every task it runs, writes nothing further for them, and
+   registers under a new id.
+2. **Settles** the tasks that finished since the last exchange, each
+   under the fence below: the outcome, the output key, the usage of the
+   attempt, the fairness correction ([[006-fairness-and-priority]]),
+   the parse's progress counters, and for the last page of a parse the
+   insert of `assemble`.
+3. **Reports** which of the tasks the worker still runs are no longer
+   its own: canceled, or reissued after the worker was taken for dead.
+   The worker cancels those tasks' contexts, which aborts a model call
+   in flight.
+4. **Claims** up to as many tasks as the worker has free slots, chosen
+   by the fair queue among tasks whose reader has room
+   ([[006-fairness-and-priority]], [[007-model-capacity]]). Each claim
+   sets `state = 'leased'`, `lease_owner`, `leased_at`, raises
+   `lease_token`, and for a task that calls a model takes its slot.
+5. **Takes and releases slots** for tasks that make more than one
+   model call ([[007-model-capacity]]).
+
+The whole exchange runs under one transaction-level advisory lock, so
+exchanges are serialized across the fleet. This makes every count in
+it exact, a pool's in-flight number and a group's running number
+included, with no further lock, and it bounds the fleet to what one
+lock passes: an exchange of a few milliseconds allows a few hundred per
+second. That is the ceiling of this design, stated on purpose. Past it
+the lock is split by class or by group, which changes no row.
+
+### The statement budget
+
+The number of statements depends on how many worker processes there
+are and not on how fast pages are read. With 200 pages in flight on 25
+processes of 8 slots, the fleet issues at most 25 exchanges per
+`LECTIO_WORKER_FLUSH`, 125 per second, whether a page takes five
+seconds or half a second, plus one sweep statement per sweep interval.
+An idle worker backs off to one exchange every five seconds. At two
+milliseconds per exchange that is a quarter of one database connection,
+which is why the design holds behind a server-side pool of one.
+
+A page's result is visible to a caller when its settle commits, so a
+finished page waits at most one flush interval to be read. A worker
+with a task that finished and no exchange in the last interval calls at
+once.
+
+### Fencing
+
+A settle is `UPDATE tasks ... WHERE parse_id = $1 AND task_id = $2 AND
+state = 'leased' AND lease_owner = $worker AND lease_token = $token`.
+A worker that was taken for dead, a task that was reissued, and a task
+that was canceled each match no row, and the settle is refused. Two
+workers may briefly run one task; only the holder of the current token
+on a live lease can settle it.
+
+The fence covers the object store too. A model's replies to the same
+page are not equivalent, so two workers that write one key would leave
+blocks that disagree with the reader, the model and the usage the row
+records. A task therefore writes its output to a key that carries its
+token, `pages/<n>.<token>.json` for a page, and the settle records that
+key in `output`. A stale worker's late write lands on a key that
+nothing points at. The document index lists the winning key of every
+page ([[005-parse-graph]]), so a result is found through the task row
+while the parse runs and through the index after. Keys nothing points
+at are removed by a sweep.
+
+The reader call is the one effect outside the database and the object
+store. A page may be read twice after a crash; it is never recorded
+twice.
 
 ### Failure, and what is not failure
 
-A task ends an attempt in one of four ways:
+An attempt ends in one of four ways:
 
 | Outcome | Examples | Effect |
 |---|---|---|
 | retryable failure | a network error, a 5xx from the model endpoint, a timeout, a reply that fails validation | `attempt + 1`; `available_at = now() + backoff(attempt)`; `failed` at `LECTIO_TASK_ATTEMPTS` (default 5) |
 | permanent failure | a 4xx other than 408 and 429, a corrupt page, an unsupported input, a budget refusal | `failed` at once |
-| capacity wait | the pool is full, the pool is paused by a rate limit, the breaker is open | `waits + 1`; `available_at` set to when the pool expects room; `attempt` unchanged |
-| lease expiry | the worker died or stalled | `expiries + 1`; `attempt` unchanged; `failed` at `LECTIO_TASK_EXPIRIES` (default 3) |
+| the reader said to wait | a rate-limit reply from the endpoint | `attempt` unchanged; `available_at` set to when the pool's pause ends ([[007-model-capacity]]) |
+| the worker died | the process was killed or stalled past its lease | `expiries + 1`; `attempt` unchanged; see below |
 
 Backoff is `min(cap, base * 2^(attempt-1))` with `base` 1s and `cap`
-60s, plus jitter uniform in half the delay. A capacity wait is bounded
-by the parse's deadline, not by a count: under sustained contention a
-page waits, and it does not die without one real failure. The expiry
-bound exists for the opposite case: an input that kills the worker
-every time it is touched stops after three workers, instead of being
-handed to every worker forever.
+60s, plus jitter uniform in half the delay.
+
+Waiting for capacity is not an outcome and writes nothing. A task
+whose reader has no room is not claimed: the claim reads the pools
+first and chooses among tasks that can run. A worker with free slots
+and nothing to claim sleeps until the earliest pause ends or its poll
+interval passes. The only write a rate limit causes is the one reply
+that reported it.
+
+Nothing waits without bound. A parse submitted with no deadline takes
+`LECTIO_MAX_DEADLINE` as its deadline, so a page that can never be
+read, because its reader stays paused or its parse pinned a reader that
+is gone, ends with the parse and not never.
+
+### A task that kills its worker
+
+When a worker dies, every task it ran comes back with `expiries + 1`,
+though at most one of them killed it. So that the others are not
+blamed, a task with `expiries > 0` is run alone: it is claimed only by
+a worker that runs nothing else, and that worker claims nothing more
+until it settles. A task whose worker dies while running it alone is
+the cause, and at `LECTIO_TASK_EXPIRIES` (default 3) it is failed with
+`page_unreadable`. An input that kills the process every time it is
+touched stops after three workers, and the pages that shared a worker
+with it lose one lease period and nothing else.
 
 ### Sweeps
 
-Any worker runs the sweeps; each is a single statement that is safe to
-run concurrently.
+Any worker runs the sweeps, inside its own exchange when one is due;
+each is a single statement that is safe to run concurrently.
 
-- **Expired leases**: `UPDATE tasks SET state = 'queued', expiries =
-  expiries + 1, lease_owner = NULL, reader = NULL WHERE state = 'leased'
-  AND lease_expires_at < now()`, with the `failed` branch for rows at
-  the expiry bound.
+- **Dead workers**: tasks leased to a worker whose `expires_at` has
+  passed go back to `queued` with `expiries + 1` and their slot
+  cleared, with the `failed` branch for rows at the bound, and the
+  worker's row is deleted. A worker reaps others only when its own
+  previous exchange succeeded within the last third of a lease. After
+  the database itself was unreachable for longer than a lease, every
+  worker's first exchange renews its own row and reaps no one, so a
+  stall of the database expires nothing.
 - **Deadlines**: a parse past its deadline is failed with
-  `deadline_exceeded` and its unsettled tasks canceled.
-- **Settled tasks**: rows of a terminal parse older than
-  `LECTIO_TASK_RETENTION` (default 7 days) are deleted; the parse row
-  keeps the counters a reader needs.
+  `deadline_exceeded` and its unsettled tasks canceled, in the cancel's
+  own statement.
+- **Settled tasks**: the `succeeded` task rows of a parse are deleted
+  when the parse settles; the parse row keeps the counters and the
+  document index keeps the output keys. `failed` and `canceled` rows
+  stay for `LECTIO_TASK_RETENTION` (default 7 days), which is what a
+  retry and an operator read.
+- **Orphaned outputs**: objects under a settled parse's prefix that its
+  document index does not list are deleted.
 - Retention sweeps for files and parses are [[014-sources-and-retention]].
+
+### Row volume
+
+The task table holds what is queued or running, plus failures. At a
+sustained 40 pages a second in parses of 20 pages, that is the backlog
+(bounded per group by `max_queued`, [[006-fairness-and-priority]]),
+200 leased rows, and a week of failed rows: thousands to a few hundred
+thousand rows, not the hundred million that keeping every settled page
+row for a week would be. The meter is one row per parse and reader, not
+one per page ([[013-limits-and-usage]]).
 
 ### Cancel
 
-`POST /parses/{parse}/cancel` sets `cancel_requested` on the parse and,
-in the same transaction, moves its `blocked` and `queued` tasks to
-`canceled`. Leased tasks learn at their next heartbeat. The parse
-becomes `canceled` when no task of it is leased. Results already
-written stay readable until the parse is deleted.
+`POST /parses/{parse}/cancel` is one transaction: the parse becomes
+`canceled`, and its `queued` and `leased` tasks become `canceled`. The
+fence does the rest. A page that finishes after the cancel settles
+against a row that is no longer `leased` and writes nothing, so nothing
+is recorded after a cancel, and `assemble` is never inserted. The dead
+worker sweep and the claim both read only `leased` and `queued` rows,
+so a canceled parse's page is never reissued. A worker learns of the
+cancel at its next exchange, within one flush interval while it has
+work, and aborts the call; until then the call's slot is already free
+for others, which is a short overshoot of the pool and not a leak.
+Results already written stay readable until the parse is deleted.
 
 ### Behind a connection pooler
 
-Every operation above is one short transaction with no session state,
-so a transaction-mode pooler can sit in front of it. Lectio uses no
+The exchange and each sweep are one statement with no session state,
+so a transaction-mode pooler can sit in front of them. Lectio uses no
 `LISTEN` or `NOTIFY`, no session advisory lock, and no named prepared
-statement; workers poll. Where a critical section is needed
-([[007-model-capacity]]) it is `pg_advisory_xact_lock`, which ends with
-the transaction. Migrations run on a separate direct connection.
-JSON parameters are bound as text.
+statement; workers poll. The one lock is `pg_advisory_xact_lock`, which
+ends with the transaction. Migrations, which carry the exchange
+function, run on a separate direct connection. JSON parameters are
+bound as text.
 
 ### Shutdown
 
-On a termination signal a worker stops claiming, lets running tasks
-finish for `LECTIO_SHUTDOWN_GRACE` (default 25s), then cancels them and
-releases their leases explicitly (`state = 'queued'`, no counter
-changed), so a rolling restart costs neither an attempt nor a lease
-period.
+On a termination signal a worker stops claiming and lets running tasks
+finish for `LECTIO_SHUTDOWN_GRACE` (default 25s). Its last exchange
+settles what finished, returns the rest to `queued` with no counter
+changed, and deletes its worker row, so a rolling restart costs neither
+an attempt nor a lease period.
+
+### What this leaves open for longer work
+
+A task here is one model call, or a few. Two hooks keep room for a
+kind of task that does more, such as a model working over a whole
+document, without designing it: the fairness charge is corrected at
+settle to what the task used ([[006-fairness-and-priority]]), and a
+task that makes several model calls holds a pool slot per call and not
+for its whole lease ([[007-model-capacity]]). What stays open is a task
+that holds a worker for minutes: the lease, the grace period at
+shutdown, and the rule that a page is the preemption point all assume
+seconds.
 
 ## Not in this spec
 
 Which group's task is claimed ([[006-fairness-and-priority]]); pool
 slots, rate limits and the breaker ([[007-model-capacity]]); the tasks
-of a parse and their edges ([[005-parse-graph]]). A general workflow
-engine: tasks here have one shape and one owner.
+of a parse ([[005-parse-graph]]). A general workflow engine: tasks
+here have one shape and one owner.
 
 ## Implementation status
 
@@ -218,11 +360,16 @@ every parse that had not ended.
 
 | Criterion | Proven by |
 |---|---|
-| A worker killed with `SIGKILL` while holding a task loses it after one lease period, another worker completes it, and `attempt` is unchanged | a process-level test |
-| A worker paused past its lease and resumed cannot complete or heartbeat its task | a test that suspends a worker and asserts the refused write |
+| A worker killed with `SIGKILL` while running tasks loses them after one lease period, other workers complete them, and `attempt` is unchanged | a process-level test |
+| A worker paused past its lease and resumed cannot settle any task it ran, and registers under a new id | a test that suspends a worker and asserts the refused settle |
+| Two workers that ran the same page write two objects; the page's `output` names the one whose settle matched, the document index lists it, and the other is deleted by the orphan sweep | a test that reissues a task under a paused worker |
+| A page whose call returns after its parse was canceled records nothing: no `output`, no progress, no `assemble` task; and the parse is `canceled` when the cancel returns | a test with a stub reader that blocks across a cancel |
 | Across 1,000 parses run by 8 workers with random kills, every task settles exactly once and no page result is missing | a soak test over Postgres |
-| A pool that refuses every call for longer than `LECTIO_TASK_ATTEMPTS` backoffs leaves `attempt` at 0 and the task queued | a test with a stub pool |
-| An input that crashes the worker is failed after `LECTIO_TASK_EXPIRIES` leases with code `page_unreadable`, and the rest of the parse completes | a test with a stub reader that exits the process |
+| With every pool full for ten minutes and 32 idle slots polling, no task row is written | a test counting writes with a stub pool |
+| A parse with no deadline whose pinned reader never admits a call ends `failed` with `deadline_exceeded` at `LECTIO_MAX_DEADLINE` | a test with a virtual clock |
+| An input that crashes the worker is failed after `LECTIO_TASK_EXPIRIES` workers with code `page_unreadable`; the seven pages that shared its first worker each have `expiries` 1 and succeed | a test with a stub reader that exits the process |
+| The database made unreachable for two lease periods and restored: no task has `expiries` raised and no page is read twice | a test that blocks the database connection |
 | A graceful shutdown returns leased tasks to the queue within the grace period with no counter changed | a test sending `SIGTERM` |
 | Every statement runs unchanged through a transaction-mode pooler | the store conformance suite run through PgBouncer in transaction mode |
-| The claim query uses `tasks_runnable` and stays under 5 ms at one million queued rows | a benchmark with `EXPLAIN` assertions |
+| 25 worker processes with 200 slots and a stub reader of one-second pages sustain 190 pages a second through one pooled backend connection, with at most 130 statements a second and no lease lost | a throughput test through a pooler with a pool of one |
+| The claim inside an exchange uses `tasks_runnable` and stays under 5 ms at one million queued rows | a benchmark with `EXPLAIN` assertions |
