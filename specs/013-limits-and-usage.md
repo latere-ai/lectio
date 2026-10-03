@@ -180,7 +180,13 @@ per-tenant report in a user interface.
 
 ## Implementation status
 
-Nothing of this spec is built. The server's own limits on a file's
+One part is built, in the task store
+([[004-durable-tasks]], [[007-model-capacity]]): whether keys are one
+for every group or one per group is a setting the store is opened
+with, and it decides the scope a slot is taken in and a rate limit
+pauses. The key source that would make a key per group real is not
+built, and nothing sets the setting yet. The rest of this spec is not
+built. The server's own limits on a file's
 size and page count and on a deadline are enforced ([[009-intake]],
 [[003-api]]), one key from `LECTIO_MODEL_KEY` is passed to every
 reader call, and a parse sums its pages' usage. There is no limit per

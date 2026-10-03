@@ -259,6 +259,23 @@ Built:
   the breaker with its one trial, and fallback to the next reader of
   the chain.
 
+Proven at the store, by the tests of `internal/store/postgres`, on a
+direct connection, in the query mode that prepares nothing, and through
+PgBouncer in transaction mode: 4 workers with 32 slots exchanging at
+once never hold more than a pool's `max_in_flight` of 8; a first reader
+that is paused, open or full sends pages to the second, and a pinned
+parse waits for its reader; one rate limit stops every worker's calls
+in its scope for the wait it named and spends no attempt; 40 refusals
+of one pause halve the ceiling once, from 40 to 20; the scope admits a
+tenth of its ceiling one second after the pause and all of it after the
+resume period; a ceiling driven to 1 is back at 200 within 10 quiet
+intervals; with a key per group a rate limit pauses that group alone;
+and 3 failures in a row open the breaker for every worker, with exactly
+one trial after the open period. The criteria that need an endpoint, a
+process to kill, or the worker's own loop are not proven: the rows of
+the table below that name a stub endpoint, a process-level test or an
+end-to-end test.
+
 Remaining: a slot taken and given back per call, for an extraction and
 for a page that moves to the next reader after a reply
 ([[004-durable-tasks]], step 5 of the exchange): a task holds the slot
