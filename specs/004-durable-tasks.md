@@ -350,12 +350,20 @@ here have one shape and one owner.
 
 ## Implementation status
 
-Nothing of this spec is built. `internal/run`, the in-process runner,
-stands in for it: it holds the page-level shape of the work, ordering
-by class and priority, retry by the reader's error class, a rate limit
-that spends no attempt, cancel and deadline, and it keeps its queue in
-memory, so nothing is durable, no task is a row, and a restart loses
-every parse that had not ended.
+Built:
+
+- `internal/tasks`: the protocol a worker and a store share. The kinds,
+  states and classes of a task; a claim, a settle with its outcome and
+  the reader's health, and the request and reply of the exchange; and
+  the settings a store runs with, each default the one this spec, or
+  [[006-fairness-and-priority]] or [[007-model-capacity]], gives.
+
+Remaining: everything that runs. `internal/run`, the in-process runner,
+still stands in for this spec in a development server: it holds the
+page-level shape of the work, ordering by class and priority, retry by
+the reader's error class, a rate limit that spends no attempt, cancel
+and deadline, and it keeps its queue in memory, so nothing is durable,
+no task is a row, and a restart loses every parse that had not ended.
 
 ## Acceptance criteria
 
