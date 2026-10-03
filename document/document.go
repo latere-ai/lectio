@@ -213,6 +213,9 @@ const (
 	PagePending   PageState = "pending"
 	PageSucceeded PageState = "succeeded"
 	PageFailed    PageState = "failed"
+	// PageSkipped: the parse ended, canceled or out of time, before the
+	// page was read. Nothing went wrong with the page.
+	PageSkipped PageState = "skipped"
 )
 
 // PageSource says who produced a page's blocks.
@@ -267,6 +270,10 @@ type Page struct {
 	Reader   string `json:"reader,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
+	// Reused reports that the result was taken from an earlier read of the
+	// same page of the same bytes by the same reader, and no model was
+	// called for it in this parse.
+	Reused bool `json:"reused,omitempty"`
 	// Truncated reports that the reader's reply ended at its output limit:
 	// the blocks are what it finished, and the page may hold more.
 	Truncated bool    `json:"truncated,omitempty"`

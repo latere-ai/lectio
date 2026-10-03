@@ -19,9 +19,12 @@ package run
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,7 +69,7 @@ type Runner struct {
 
 	mu      sync.Mutex
 	cond    *sync.Cond
-	queue   jobs
+	queue   queue
 	base    context.Context
 	running map[string]*handle
 	wg      sync.WaitGroup
@@ -90,21 +93,15 @@ type job struct {
 	wg       *sync.WaitGroup
 }
 
-// jobs is the queue of pages, kept sorted with the page to dispatch next
-// at the end, so taking it is a truncation.
+// jobs is one owner's waiting pages in one class, kept sorted with the
+// page to dispatch next at the end, so taking it is a truncation.
 type jobs []*job
 
-// later orders two jobs: negative when a is dispatched after b. The
-// dispatch order is interactive before batch, then the higher priority,
-// then the earlier position in its parse, so parses advance together and a
-// short one finishes early, then the older parse.
+// later orders two jobs of one owner: negative when a is dispatched after
+// b. The higher priority goes first, then the earlier position in its
+// parse, so an owner's parses advance together and a short one finishes
+// early, then the older parse.
 func later(a, b *job) int {
-	if ai, bi := a.parse.Class == store.ClassInteractive, b.parse.Class == store.ClassInteractive; ai != bi {
-		if ai {
-			return 1
-		}
-		return -1
-	}
 	if a.parse.Priority != b.parse.Priority {
 		return a.parse.Priority - b.parse.Priority
 	}
@@ -114,18 +111,86 @@ func later(a, b *job) int {
 	return strings.Compare(b.parse.ID, a.parse.ID)
 }
 
-// push puts a job at its place in the order.
-func (q *jobs) push(j *job) {
-	at, _ := slices.BinarySearchFunc(*q, j, later)
-	*q = slices.Insert(*q, at, j)
+// lane is the waiting pages of one class: each owner's own queue, and the
+// order the owners are served in.
+type lane struct {
+	owners []string
+	jobs   map[string]jobs
+}
+
+// interactiveShare is how many interactive pages are dispatched for one
+// batch page when both classes have work.
+const interactiveShare = 4
+
+// queue is every waiting page. A page is chosen in three steps: the class,
+// the owner, then that owner's next page. Interactive pages go ahead of
+// batch pages without starving them: one page in five is a batch page
+// when both wait. Within a class the owners take turns, one page each, so
+// nothing an owner queues, however much or at whatever priority, moves it
+// ahead of another owner. Priority orders an owner's own pages and
+// nothing else.
+//
+// This is the shape of the fair queue with every weight at one. It is not
+// the fair queue: it keeps no account of what each owner was served.
+type queue struct {
+	interactive, batch lane
+	size               int
+	// streak counts interactive pages dispatched since the last batch page.
+	streak int
+}
+
+func (q *queue) len() int { return q.size }
+
+func (q *queue) lane(class string) *lane {
+	if class == store.ClassBatch {
+		return &q.batch
+	}
+	return &q.interactive
+}
+
+// push puts a job at its place in its owner's order.
+func (q *queue) push(j *job) {
+	l := q.lane(j.parse.Class)
+	if l.jobs == nil {
+		l.jobs = map[string]jobs{}
+	}
+	own, waiting := l.jobs[j.parse.Owner]
+	if !waiting {
+		// An owner with nothing waiting joins the end of the turn order.
+		l.owners = append(l.owners, j.parse.Owner)
+	}
+	at, _ := slices.BinarySearchFunc(own, j, later)
+	l.jobs[j.parse.Owner] = slices.Insert(own, at, j)
+	q.size++
 }
 
 // pop takes the job to dispatch next. The queue is not empty.
-func (q *jobs) pop() *job {
-	last := len(*q) - 1
-	j := (*q)[last]
-	(*q)[last] = nil
-	*q = (*q)[:last]
+func (q *queue) pop() *job {
+	l := &q.interactive
+	switch {
+	case len(q.batch.owners) == 0:
+		// No batch page waits, so none is owed a turn.
+		q.streak = 0
+	case len(l.owners) == 0 || q.streak >= interactiveShare:
+		l, q.streak = &q.batch, 0
+	default:
+		q.streak++
+	}
+
+	owner := l.owners[0]
+	own := l.jobs[owner]
+	last := len(own) - 1
+	j := own[last]
+	own[last] = nil
+	l.owners = l.owners[1:]
+	if last == 0 {
+		delete(l.jobs, owner)
+	} else {
+		// The owner has more waiting: it goes to the back of the turns.
+		l.jobs[owner] = own[:last]
+		l.owners = append(l.owners, owner)
+	}
+	q.size--
 	return j
 }
 
@@ -213,11 +278,13 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 
 	file, err := r.Store.File(p.Owner, p.File)
 	if err != nil {
+		r.assemble(p.ID, nil)
 		r.finish(ctx, p.ID, err)
 		return
 	}
 	prepared, err := r.Pipeline.Prepare(ctx, file.Data, detect.DeclaredType{MIME: file.MediaType, FileName: file.Name}, p.Pages)
 	if err != nil {
+		r.assemble(p.ID, nil)
 		r.finish(ctx, p.ID, err)
 		return
 	}
@@ -237,6 +304,7 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 			chain = []string{p.Reader}
 		}
 		if len(chain) == 0 || r.Readers[chain[0]] == nil {
+			r.assemble(p.ID, prepared.Manifest.Selected)
 			r.finish(ctx, p.ID, fault.New(fault.ReaderUnavailable, "no reader is configured to read the pages"))
 			return
 		}
@@ -254,27 +322,37 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 		r.mu.Unlock()
 		pages.Wait()
 	}
-	if ctx.Err() != nil {
-		r.finish(ctx, p.ID, nil)
-		return
-	}
+	r.assemble(p.ID, prepared.Manifest.Selected)
+	r.finish(ctx, p.ID, nil)
+}
 
-	r.update(p.ID, func(p *store.Parse) { p.Stage = store.StageAssembling })
-	read := r.Store.Pages(p.ID)
+// assemble writes a parse's document from the pages that were read. It
+// runs however the parse ends: a parse that was canceled, ran out of time,
+// or lost pages still has every page it read, and a caller reads them as a
+// document and not only one by one. A page of selected that was never
+// read is recorded as skipped, so the document accounts for every page
+// the parse was asked for.
+func (r *Runner) assemble(id string, selected []int) {
+	r.update(id, func(p *store.Parse) { p.Stage = store.StageAssembling })
+	for _, n := range selected {
+		if _, read := r.Store.Page(id, n); !read {
+			r.Store.PutPage(id, document.Page{Number: n, State: document.PageSkipped, Blocks: []document.Block{}}, nil)
+		}
+	}
+	read := r.Store.Pages(id)
 	for i := range read {
 		// Assembly edits blocks in place, and a stored page may be being
 		// served: it works on a copy, which then replaces the stored one.
 		read[i].Blocks = slices.Clone(read[i].Blocks)
 	}
-	doc := assemble.Document(p.ID, read)
+	doc := assemble.Document(id, read)
 	doc.Renderings = []string{"markdown", "text"}
 	for _, page := range read {
 		// Assembly marks running headers and footers on the pages.
-		r.Store.PutPage(p.ID, page, nil)
+		r.Store.PutPage(id, page, nil)
 	}
 	r.Store.PutDocument(doc)
-	r.update(p.ID, func(p *store.Parse) { p.Usage = doc.Usage })
-	r.finish(ctx, p.ID, nil)
+	r.update(id, func(p *store.Parse) { p.Usage = doc.Usage })
 }
 
 // finish gives a parse its terminal state. err is why it failed outright,
@@ -312,12 +390,12 @@ func (r *Runner) update(id string, change func(*store.Parse)) {
 func (r *Runner) work() {
 	for {
 		r.mu.Lock()
-		for len(r.queue) == 0 && r.base.Err() == nil {
+		for r.queue.len() == 0 && r.base.Err() == nil {
 			r.cond.Wait()
 		}
 		if r.base.Err() != nil {
 			// The runner stopped: release every parse waiting on a page.
-			for len(r.queue) > 0 {
+			for r.queue.len() > 0 {
 				r.queue.pop().wg.Done()
 			}
 			r.mu.Unlock()
@@ -345,7 +423,31 @@ func (r *Runner) read(j *job) {
 		opt.Credential = r.Credential(j.parse.Owner)
 	}
 
-	at, attempt, invalid, waits := 0, 0, 0, 0
+	// A page an earlier parse of this owner read whole, from the same
+	// bytes with the same readers, is taken and not read again.
+	key := r.readKey(j)
+	if j.parse.Reuse {
+		if page, img, ok := r.Store.Read(j.parse.Owner, key); ok {
+			page.Number, page.Reused, page.Usage = j.page, true, &document.Usage{Pages: 1}
+			page.Blocks = document.Number(j.page, page.Blocks)
+			r.Store.PutPage(j.parse.ID, page, img)
+			r.update(j.parse.ID, func(p *store.Parse) { p.PagesDone++; p.PagesReused++ })
+			return
+		}
+	}
+
+	// at is the reader in the chain the page is with. It moves down the
+	// chain when a reader cannot be the one to read this page.
+	at, attempt, invalid, waits, escalated := 0, 0, 0, 0, false
+	next := func() bool {
+		for at+1 < len(j.chain) {
+			if at++; r.Readers[j.chain[at]] != nil {
+				attempt, invalid = 0, 0
+				return true
+			}
+		}
+		return false
+	}
 	for {
 		attempt++
 		got, err := r.Pipeline.ReadPage(j.ctx, j.manifest, j.working, j.page, r.Readers[j.chain[at]], opt)
@@ -357,6 +459,7 @@ func (r *Runner) read(j *job) {
 		if err == nil {
 			got.Page.Attempts = attempt
 			r.Store.PutPage(j.parse.ID, got.Page, &got.Image)
+			r.Store.KeepRead(j.parse.Owner, key, got.Page, &got.Image)
 			r.update(j.parse.ID, func(p *store.Parse) { p.PagesDone++ })
 			return
 		}
@@ -383,12 +486,28 @@ func (r *Runner) read(j *job) {
 			r.fail(j, attempt, fault.BudgetExhausted, "the key's budget is spent")
 			return
 		case reader.Permanent:
-			r.fail(j, attempt, fault.PageUnreadable, "the reader refused the page")
+			r.fail(j, attempt, fault.PageUnreadable, "the reader cannot take the page as it is")
+			return
+		case reader.Refused:
+			// The reader is healthy and declined this page. Another may
+			// read it; the same one will decline again.
+			if next() {
+				continue
+			}
+			r.fail(j, attempt, fault.PageUnreadable, "the model declined to read the page")
+			return
+		case reader.Misconfigured:
+			// The endpoint rejected the request itself, as it will for
+			// every page. The failure is the reader's and not the page's.
+			if next() {
+				continue
+			}
+			r.fail(j, attempt, fault.ReaderUnavailable, "the reader's endpoint rejected the request; its configuration needs to change")
 			return
 		case reader.Invalid:
 			// Two unusable replies send the page to the next reader, once.
-			if invalid++; invalid == 2 && at == 0 && len(j.chain) > 1 && r.Readers[j.chain[1]] != nil {
-				at, attempt = 1, 0
+			if invalid++; invalid == 2 && !escalated && next() {
+				escalated = true
 				continue
 			}
 		}
@@ -404,6 +523,31 @@ func (r *Runner) read(j *job) {
 			return
 		}
 	}
+}
+
+// readKey names what reading this page means: the file's bytes, the page,
+// the languages hinted, and every reader that may come to read it, each by
+// the version it describes itself with. Two reads with the same key give
+// the same result, so the second need not happen. A reader that names no
+// version makes no such promise, and then there is no key.
+func (r *Runner) readKey(j *job) string {
+	if j.parse.ContentSHA == "" {
+		return ""
+	}
+	parts := []string{j.parse.ContentSHA, strconv.Itoa(j.page), strings.Join(j.parse.Languages, ",")}
+	for _, name := range j.chain {
+		rd := r.Readers[name]
+		if rd == nil {
+			continue
+		}
+		version := rd.Describe().Version
+		if version == "" {
+			return ""
+		}
+		parts = append(parts, name+"="+version)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
 }
 
 // fail records a page that could not be read.

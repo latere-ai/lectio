@@ -6,6 +6,7 @@ package run
 import (
 	"context"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -160,11 +161,11 @@ func TestAParseIsReadPageByPage(t *testing.T) {
 		if _, ok := r.Store.Image("prs_1", n); !ok {
 			t.Fatalf("page %d has no image", n)
 		}
-		// Assembly ran over the stored pages: the stub's first line is the
-		// same on every page, so it is a running header, repeated after the
-		// first.
-		if first := page.Blocks[0]; first.Kind != document.KindPageHeader || first.Repeated != (n > 1) {
-			t.Fatalf("page %d starts with %+v", n, first)
+		// Assembly ran over the stored pages. The stub's first line differs
+		// from page to page by its number, so it is content and stays a
+		// title; its last line is the page's number.
+		if first, last := page.Blocks[0], page.Blocks[2]; first.Kind != document.KindTitle || first.Repeated || last.Kind != document.KindPageNumber {
+			t.Fatalf("page %d holds %+v and %+v", n, first, last)
 		}
 	}
 }
@@ -323,15 +324,20 @@ func TestCancelStopsBetweenPages(t *testing.T) {
 	if p.State != store.StateCanceled || p.Error != nil || p.FinishedAt == nil || p.PagesDone != 1 {
 		t.Fatalf("ended: %+v", p)
 	}
-	// The page that was being read is dropped and the one after is not read.
-	if got := r.Store.Pages("prs_1"); len(got) != 1 || got[0].Number != 1 {
+	// The page that was being read is dropped and the one after is not
+	// read: both are recorded as skipped, and nothing went wrong with them.
+	got := r.Store.Pages("prs_1")
+	if len(got) != 3 || got[0].State != document.PageSucceeded || got[1].State != document.PageSkipped || got[2].State != document.PageSkipped || got[1].Error != nil {
 		t.Fatalf("pages: %+v", got)
 	}
 	if rd.Calls(3) != 0 {
 		t.Fatal("page 3 was read after the cancel")
 	}
-	if _, ok := r.Store.Document("prs_1"); ok {
-		t.Fatal("a canceled parse has no document")
+	// What was read is a document all the same: a caller reads the one
+	// page as Markdown and does not have to fetch it block by block.
+	doc, ok := r.Store.Document("prs_1")
+	if !ok || len(doc.Pages) != 3 || doc.Pages[0].Blocks != 3 || doc.Pages[2].State != document.PageSkipped {
+		t.Fatalf("a canceled parse's document: %+v, %v", doc, ok)
 	}
 	if r.Cancel("prs_1") || r.Cancel("prs_none") {
 		t.Fatal("a parse that is not running is not canceled here")
@@ -356,8 +362,9 @@ func TestCancelEndsAWait(t *testing.T) {
 		submit(t, r, store.Parse{ID: "prs_1"}, testfixtures.PNG)
 		<-reached
 		r.Cancel("prs_1")
-		if p := ended(t, r, "prs_1"); p.State != store.StateCanceled || len(r.Store.Pages("prs_1")) != 0 {
-			t.Fatalf("%s: %+v", name, p)
+		p := ended(t, r, "prs_1")
+		if got := r.Store.Pages("prs_1"); p.State != store.StateCanceled || len(got) != 1 || got[0].State != document.PageSkipped {
+			t.Fatalf("%s: %+v, pages %+v", name, p, got)
 		}
 	}
 }
@@ -370,8 +377,11 @@ func TestAParsePastItsDeadlineFails(t *testing.T) {
 	if p.State != store.StateFailed || code(p.Error) != "deadline_exceeded" {
 		t.Fatalf("ended: %+v (%v)", p, p.Error)
 	}
-	if rd.Calls(1) != 0 || len(r.Store.Pages("prs_1")) != 0 {
-		t.Fatal("no page is read past the deadline")
+	if got := r.Store.Pages("prs_1"); rd.Calls(1) != 0 || len(got) != 3 || got[0].State != document.PageSkipped {
+		t.Fatalf("no page is read past the deadline, and each is skipped: %+v", got)
+	}
+	if _, ok := r.Store.Document("prs_1"); !ok {
+		t.Fatal("a parse that ran out of time still has a document")
 	}
 
 	future := time.Now().Add(time.Hour)
@@ -435,7 +445,7 @@ func TestPagesAreDispatchedByClassThenPriority(t *testing.T) {
 	eventually(t, "twelve pages wait", func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return len(r.queue) == 12
+		return r.queue.len() == 12
 	})
 	close(release)
 	for _, id := range []string{"prs_0", "prs_1", "prs_2", "prs_3", "prs_4"} {
@@ -471,8 +481,8 @@ func TestStoppingTheRunnerEndsWhatIsRunning(t *testing.T) {
 	r.Wait()
 
 	p, _ := r.Store.Parse("alice", "prs_1")
-	if p.State != store.StateCanceled || len(r.Store.Pages("prs_1")) != 0 {
-		t.Fatalf("ended: %+v", p)
+	if got := r.Store.Pages("prs_1"); p.State != store.StateCanceled || len(got) != 3 || got[0].State != document.PageSkipped {
+		t.Fatalf("ended: %+v, pages %+v", p, got)
 	}
 
 	// A parse submitted to a stopped runner ends at once, with no page queued.
@@ -481,8 +491,8 @@ func TestStoppingTheRunnerEndsWhatIsRunning(t *testing.T) {
 	if p, _ := r.Store.Parse("alice", "prs_2"); p.State != store.StateCanceled {
 		t.Fatalf("submitted after the stop: %+v", p)
 	}
-	if len(r.queue) != 0 {
-		t.Fatalf("%d pages were queued for no worker", len(r.queue))
+	if r.queue.len() != 0 {
+		t.Fatalf("%d pages were queued for no worker", r.queue.len())
 	}
 }
 
@@ -500,5 +510,158 @@ func TestBackoffAndSleep(t *testing.T) {
 	cancel()
 	if sleep(ctx, 0) || sleep(ctx, time.Hour) {
 		t.Fatal("a wait cut short reports so")
+	}
+}
+
+// A reader that cannot be the one to read a page passes it down the chain:
+// one that declined the content, and one whose endpoint rejects the
+// request itself. Neither is retried where it failed.
+func TestAPageMovesDownTheChainWhenAReaderCannotReadIt(t *testing.T) {
+	declined, rejected := reader.Errorf(reader.Refused, "no"), reader.Errorf(reader.Misconfigured, "400")
+	for name, tc := range map[string]struct {
+		chain    []*stub.Reader
+		pinned   string
+		calls    []int
+		pageCode string
+		reader   string
+	}{
+		"declined, and the next reads it":          {chain: []*stub.Reader{failing(0, declined), {}}, calls: []int{1, 1}},
+		"declined by two, read by the third":       {chain: []*stub.Reader{failing(0, declined), failing(0, declined), {}}, calls: []int{1, 1, 1}},
+		"declined, with no other reader":           {chain: []*stub.Reader{failing(0, declined)}, calls: []int{1}, pageCode: "page_unreadable"},
+		"declined, and the parse named its reader": {chain: []*stub.Reader{failing(0, declined), {}}, pinned: "r0", calls: []int{1, 0}, pageCode: "page_unreadable"},
+		"rejected, and the next reads it":          {chain: []*stub.Reader{failing(0, rejected), {}}, calls: []int{1, 1}},
+		"rejected, with no other reader":           {chain: []*stub.Reader{failing(0, rejected)}, calls: []int{1}, pageCode: "reader_unavailable"},
+		"unusable replies still move it only once": {
+			chain: []*stub.Reader{failing(0, reader.Errorf(reader.Invalid, "loop")), failing(0, reader.Errorf(reader.Invalid, "loop")), {}},
+			calls: []int{2, 3, 0}, pageCode: "page_unreadable",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			readers, chain := map[string]reader.Reader{}, []string{}
+			for i, rd := range tc.chain {
+				name := "r" + strconv.Itoa(i)
+				readers[name], chain = rd, append(chain, name)
+			}
+			r := start(t, &Runner{Readers: readers, Chain: chain})
+			p := run(t, r, store.Parse{ID: "prs_1", Reader: tc.pinned}, testfixtures.MultiTIFF)
+			page, _ := r.Store.Page("prs_1", 2)
+			if code(page.Error) != tc.pageCode {
+				t.Fatalf("page 2: %+v (%v)", page, page.Error)
+			}
+			for i, rd := range tc.chain {
+				if got := rd.Calls(2); got != tc.calls[i] {
+					t.Errorf("reader %d read page 2 %d times, want %d", i, got, tc.calls[i])
+				}
+			}
+			if (tc.pageCode == "") != (p.State == store.StateSucceeded) {
+				t.Fatalf("ended: %+v (%v)", p, p.Error)
+			}
+		})
+	}
+}
+
+// A page that an earlier parse of the same owner read whole, from the same
+// bytes with the same readers, is not read again. The parse is a new one.
+func TestAPageAlreadyReadIsNotReadAgain(t *testing.T) {
+	rd := failing(0, reader.Errorf(reader.Permanent, "no"))
+	r := start(t, &Runner{Readers: map[string]reader.Reader{"stub": rd}, Chain: []string{"stub"}})
+	first := run(t, r, store.Parse{ID: "prs_1", ContentSHA: "sha", Reuse: true, AllowFailedPages: 1}, testfixtures.MultiTIFF)
+	if first.PagesDone != 2 || first.PagesReused != 0 || rd.Calls(1) != 1 {
+		t.Fatalf("the first parse: %+v", first)
+	}
+
+	second := run(t, r, store.Parse{ID: "prs_2", ContentSHA: "sha", Reuse: true, AllowFailedPages: 1, Labels: map[string]string{"batch": "nov"}}, testfixtures.MultiTIFF)
+	if second.ID != "prs_2" || second.PagesDone != 2 || second.PagesReused != 2 || second.Labels["batch"] != "nov" {
+		t.Fatalf("the second parse is its own, with two pages taken: %+v", second)
+	}
+	// The pages that were read are not read again; the one that failed is.
+	if rd.Calls(1) != 1 || rd.Calls(3) != 1 || rd.Calls(2) != 2 {
+		t.Fatalf("calls: %d, %d, %d", rd.Calls(1), rd.Calls(2), rd.Calls(3))
+	}
+	page, _ := r.Store.Page("prs_2", 3)
+	if !page.Reused || page.Blocks[0].Ref != "3.1" || page.Usage.Pages != 1 || page.Usage.InputTokens != 0 {
+		t.Fatalf("a page taken from an earlier read: %+v (%+v)", page, page.Usage)
+	}
+	if _, ok := r.Store.Image("prs_2", 3); !ok {
+		t.Fatal("a reused page has the image the reader saw")
+	}
+
+	for name, tc := range map[string]struct {
+		parse store.Parse
+		owner string
+	}{
+		"a parse that asks for no reuse": {store.Parse{ContentSHA: "sha"}, ""},
+		"other bytes":                    {store.Parse{ContentSHA: "other", Reuse: true}, ""},
+		"other language hints":           {store.Parse{ContentSHA: "sha", Reuse: true, Languages: []string{"de"}}, ""},
+		"a file with no digest":          {store.Parse{Reuse: true}, ""},
+	} {
+		before := rd.Calls(1)
+		tc.parse.ID, tc.parse.AllowFailedPages = "prs_"+name, 1
+		if p := run(t, r, tc.parse, testfixtures.MultiTIFF); p.PagesReused != 0 || rd.Calls(1) != before+1 {
+			t.Errorf("%s: %d pages reused, %d more calls", name, p.PagesReused, rd.Calls(1)-before)
+		}
+	}
+
+	// A reader that names no version promises nothing about its results.
+	unversioned := start(t, &Runner{Readers: map[string]reader.Reader{"stub": noVersion{&stub.Reader{}}}, Chain: []string{"stub"}})
+	run(t, unversioned, store.Parse{ID: "prs_1", ContentSHA: "sha", Reuse: true}, testfixtures.MultiTIFF)
+	if p := run(t, unversioned, store.Parse{ID: "prs_2", ContentSHA: "sha", Reuse: true}, testfixtures.MultiTIFF); p.PagesReused != 0 {
+		t.Fatalf("pages of a reader with no version were reused: %+v", p)
+	}
+}
+
+// noVersion is a reader that describes itself without a version.
+type noVersion struct{ reader.Reader }
+
+func (n noVersion) Describe() reader.Description {
+	d := n.Reader.Describe()
+	d.Version = ""
+	return d
+}
+
+// Owners take turns, one page each. Nothing an owner queues, however much
+// or at whatever priority, moves it ahead of another owner.
+func TestOwnersTakeTurns(t *testing.T) {
+	var q queue
+	add := func(owner, id, class string, priority, pages int) {
+		for i := range pages {
+			q.push(&job{parse: store.Parse{ID: id, Owner: owner, Class: class, Priority: priority}, seq: i})
+		}
+	}
+	order := func() string {
+		var out []string
+		for q.len() > 0 {
+			j := q.pop()
+			out = append(out, j.parse.ID+strconv.Itoa(j.seq+1))
+		}
+		return strings.Join(out, " ")
+	}
+
+	// One owner queues six pages at a high priority, another two at none.
+	add("alice", "a", store.ClassInteractive, 9, 6)
+	add("bob", "b", store.ClassInteractive, 0, 2)
+	if got, want := order(), "a1 b1 a2 b2 a3 a4 a5 a6"; got != want {
+		t.Fatalf("two owners:\n  %s\nwant\n  %s", got, want)
+	}
+
+	// Priority orders an owner's own parses.
+	add("alice", "low", store.ClassInteractive, 0, 2)
+	add("alice", "high", store.ClassInteractive, 5, 2)
+	if got, want := order(), "high1 high2 low1 low2"; got != want {
+		t.Fatalf("one owner's priorities:\n  %s\nwant\n  %s", got, want)
+	}
+
+	// Interactive goes ahead of batch and does not starve it: one page in
+	// five is a batch page while both wait.
+	add("alice", "i", store.ClassInteractive, 0, 9)
+	add("bob", "b", store.ClassBatch, 0, 3)
+	if got, want := order(), "i1 i2 i3 i4 b1 i5 i6 i7 i8 b2 i9 b3"; got != want {
+		t.Fatalf("two classes:\n  %s\nwant\n  %s", got, want)
+	}
+
+	// With no interactive work, batch takes every slot.
+	add("bob", "b", store.ClassBatch, 0, 2)
+	if got, want := order(), "b1 b2"; got != want {
+		t.Fatalf("batch alone: %s", got)
 	}
 }

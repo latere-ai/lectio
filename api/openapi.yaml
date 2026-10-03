@@ -121,9 +121,14 @@ paths:
       description: |
         Answers `202` with the parse. With `Prefer: wait=<seconds>` the
         answer is held until the parse ends or the wait runs out, and is
-        `200` when it ended. A submit that matches an earlier succeeded
-        parse of the same content and options answers `200` with that parse
-        and `reused: true`, unless `reuse` is false.
+        `200` when it ended.
+
+        A submit always makes a parse of its own, with its own id, labels
+        and origin. What is not repeated is the reading: a page that an
+        earlier parse of the same caller read whole, from the same bytes
+        with the same readers, is taken from that read and no model is
+        called for it, unless `reuse` is false. Such a page says
+        `reused: true` and the parse counts it in `progress.pages_reused`.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -139,7 +144,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ParseRequest" }
       responses:
-        "200": { description: The parse ended within the wait, or an earlier parse was reused., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "200": { description: The parse ended within the wait., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
@@ -319,6 +324,28 @@ paths:
           content:
             image/png: { schema: { type: string, format: binary } }
             image/jpeg: { schema: { type: string, format: binary } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/blocks:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [results]
+      operationId: listBlocks
+      summary: Read every block of the pages read so far.
+      description: |
+        The bulk read: all blocks in page and reading order, one per line,
+        in one answer. It answers while the parse runs, with the pages
+        read so far. A block's `ref` says which page it is on.
+      parameters:
+        - name: pages
+          in: query
+          description: Limits the answer to these pages, in the syntax of a submit's `pages`.
+          schema: { type: string }
+      responses:
+        "200": { description: One block per line., content: { application/x-ndjson: { schema: { $ref: "#/components/schemas/Block" } } } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
@@ -608,7 +635,7 @@ components:
         reuse:
           type: boolean
           default: true
-          description: Whether an earlier succeeded parse of the same content and options may be returned in place of new work.
+          description: Whether a page an earlier parse already read whole, from the same bytes with the same readers, is taken from that read. The parse is a new one either way.
         labels:
           type: object
           maxProperties: 16
@@ -626,7 +653,6 @@ components:
         id: { type: string }
         owner: { type: string }
         state: { $ref: "#/components/schemas/ParseState" }
-        reused: { type: boolean, description: Present and true when this answer is an earlier parse. }
         class: { type: string, enum: [interactive, batch] }
         priority: { type: integer }
         file: { type: string }
@@ -644,6 +670,7 @@ components:
             pages_total: { type: integer }
             pages_done: { type: integer }
             pages_failed: { type: integer }
+            pages_reused: { type: integer, description: How many of the pages done were taken from an earlier read and cost no model call. }
             waiting:
               type: string
               enum: [turn, capacity]
@@ -740,11 +767,12 @@ components:
         width: { type: number, description: Points for paged formats, pixels for images. Boxes do not depend on it. }
         height: { type: number }
         rotation: { type: integer }
-        state: { type: string, enum: [pending, succeeded, failed] }
+        state: { type: string, enum: [pending, succeeded, failed, skipped], description: "`skipped`: the parse ended, canceled or out of time, before the page was read." }
         source: { type: string, enum: [reader, native], description: Whether a model read the page or the format carried its own structure. }
         reader: { type: string }
         model: { type: string }
         attempts: { type: integer }
+        reused: { type: boolean, description: The result was taken from an earlier read of the same page by the same reader. No model was called for it in this parse. }
         truncated: { type: boolean, description: The reader's reply ended at its output limit. The blocks are what it finished, and the page may hold more. }
         blocks: { type: array, items: { $ref: "#/components/schemas/Block" } }
         usage: { $ref: "#/components/schemas/Usage" }
@@ -755,7 +783,7 @@ components:
       required: [number, state, blocks]
       properties:
         number: { type: integer }
-        state: { type: string, enum: [pending, succeeded, failed] }
+        state: { type: string, enum: [pending, succeeded, failed, skipped] }
         source: { type: string, enum: [reader, native] }
         blocks: { type: integer, description: How many blocks the page holds. }
         error: { $ref: "#/components/schemas/Problem" }
@@ -855,6 +883,7 @@ components:
             format: { type: string, enum: [png, jpeg] }
         boxes: { type: boolean, description: Whether the reader returns a position for each block. }
         kinds: { type: array, items: { $ref: "#/components/schemas/Kind" } }
+        version: { type: string, description: Names everything in the reader's configuration that changes what it returns for the same page. Pages are reused only between readers of the same version. }
         default: { type: boolean, description: Whether the routing policy tries this reader first. }
 
     ReaderList:

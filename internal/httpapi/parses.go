@@ -67,6 +67,7 @@ type progress struct {
 	PagesTotal  int    `json:"pages_total"`
 	PagesDone   int    `json:"pages_done"`
 	PagesFailed int    `json:"pages_failed"`
+	PagesReused int    `json:"pages_reused,omitempty"`
 }
 
 // parseView is a parse as the API returns it.
@@ -74,7 +75,6 @@ type parseView struct {
 	ID               string            `json:"id"`
 	Owner            string            `json:"owner,omitempty"`
 	State            string            `json:"state"`
-	Reused           bool              `json:"reused,omitempty"`
 	Class            string            `json:"class"`
 	Priority         int               `json:"priority"`
 	File             string            `json:"file"`
@@ -98,7 +98,7 @@ func viewParse(p store.Parse) parseView {
 		ID: p.ID, Owner: p.Owner, State: p.State, Class: p.Class, Priority: p.Priority, File: p.File,
 		Origin: p.Origin, Pages: p.Pages, Reader: p.Reader, Languages: p.Languages,
 		AllowFailedPages: p.AllowFailedPages, Labels: p.Labels,
-		Progress: progress{Stage: p.Stage, PagesTotal: p.PagesTotal, PagesDone: p.PagesDone, PagesFailed: p.PagesFailed},
+		Progress: progress{Stage: p.Stage, PagesTotal: p.PagesTotal, PagesDone: p.PagesDone, PagesFailed: p.PagesFailed, PagesReused: p.PagesReused},
 		Usage:    p.Usage, Error: p.Error,
 		CreatedAt: p.CreatedAt, StartedAt: p.StartedAt, FinishedAt: p.FinishedAt, DeadlineAt: p.DeadlineAt,
 	}
@@ -185,21 +185,6 @@ func (s *Server) validate(req parseRequest) (store.Parse, error) {
 	return p, nil
 }
 
-// fingerprint is the options of a parse that change its result, as one
-// value. Two parses of the same bytes with the same fingerprint do the
-// same work. Class, priority, deadline and labels change when and for whom
-// the work runs, and not what it produces, so they are left out.
-func (s *Server) fingerprint(p store.Parse) string {
-	chain := s.Chain
-	if p.Reader != "" {
-		chain = []string{p.Reader}
-	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.Pages, strings.Join(chain, ","), strings.Join(p.Languages, ","),
-	}, "\x00")))
-	return hex.EncodeToString(sum[:])
-}
-
 // wait reads how long a submit asked to be held from its Prefer header.
 // A preference the server does not know is ignored, as preferences are.
 func wait(r *http.Request) time.Duration {
@@ -248,16 +233,7 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, owner strin
 
 	p.ID, p.Owner, p.File = s.IDs.New(id.Parse), owner, file.ID
 	p.State, p.Stage, p.CreatedAt = store.StateQueued, store.StageQueued, s.now()
-	p.ContentSHA, p.Fingerprint = file.SHA256, s.fingerprint(p)
-
-	if req.Reuse == nil || *req.Reuse {
-		if earlier, ok := s.Store.Reusable(owner, p.ContentSHA, p.Fingerprint); ok {
-			view := viewParse(earlier)
-			view.Reused = true
-			httpjson.Write(w, http.StatusOK, view)
-			return nil
-		}
-	}
+	p.ContentSHA, p.Reuse = file.SHA256, req.Reuse == nil || *req.Reuse
 
 	body := sha256.Sum256(raw)
 	stored, created, err := s.Store.CreateParse(p, key, hex.EncodeToString(body[:]))

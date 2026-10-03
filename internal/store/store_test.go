@@ -100,11 +100,11 @@ func TestIdempotentCreate(t *testing.T) {
 func TestParses(t *testing.T) {
 	m := NewMemory()
 	for i, p := range []Parse{
-		{ID: "prs_1", Owner: "alice", State: StateSucceeded, File: "fil_a", Origin: &Origin{Path: "reports/q3.pdf"}, Labels: map[string]string{"batch": "oct", "kind": "invoice"}, ContentSHA: "sha", Fingerprint: "fp"},
+		{ID: "prs_1", Owner: "alice", State: StateSucceeded, File: "fil_a", Origin: &Origin{Path: "reports/q3.pdf"}, Labels: map[string]string{"batch": "oct", "kind": "invoice"}, ContentSHA: "sha"},
 		{ID: "prs_2", Owner: "alice", State: StateFailed, File: "fil_a", Labels: map[string]string{"batch": "oct"}},
-		{ID: "prs_3", Owner: "alice", State: StateSucceeded, File: "fil_b", ContentSHA: "sha", Fingerprint: "fp"},
-		{ID: "prs_4", Owner: "alice", State: StateRunning, File: "fil_b", ContentSHA: "sha", Fingerprint: "other"},
-		{ID: "prs_5", Owner: "bob", State: StateSucceeded, File: "fil_c", ContentSHA: "sha", Fingerprint: "fp"},
+		{ID: "prs_3", Owner: "alice", State: StateSucceeded, File: "fil_b", ContentSHA: "sha"},
+		{ID: "prs_4", Owner: "alice", State: StateRunning, File: "fil_b", ContentSHA: "sha"},
+		{ID: "prs_5", Owner: "bob", State: StateSucceeded, File: "fil_c", ContentSHA: "sha"},
 	} {
 		if _, _, err := m.CreateParse(p, "", ""); err != nil {
 			t.Fatalf("parse %d: %v", i, err)
@@ -148,14 +148,41 @@ func TestParses(t *testing.T) {
 		}
 	}
 
-	if p, ok := m.Reusable("alice", "sha", "fp"); !ok || p.ID != "prs_3" {
-		t.Fatalf("the newest succeeded parse of the same work is reused: %+v, %v", p, ok)
+}
+
+// A page that was read whole is kept under what was read, for the owner
+// who had it read, and handed back as a copy.
+func TestAReadIsKeptForItsOwner(t *testing.T) {
+	m := NewMemory()
+	page := document.Page{Number: 3, State: document.PageSucceeded, Blocks: []document.Block{{Ref: "3.1", Text: "kept"}}}
+	img := &render.Image{MediaType: "image/png", Data: []byte("img")}
+	m.KeepRead("alice", "key", page, img)
+
+	got, gotImg, ok := m.Read("alice", "key")
+	if !ok || got.Blocks[0].Text != "kept" || string(gotImg.Data) != "img" {
+		t.Fatalf("Read = %+v, %v, %v", got, gotImg, ok)
 	}
-	if _, ok := m.Reusable("alice", "sha", "other"); ok {
-		t.Fatal("a running parse is not reused")
+	// The caller may change what it was handed; what is kept does not move.
+	got.Blocks[0].Text = "changed"
+	if again, _, _ := m.Read("alice", "key"); again.Blocks[0].Text != "kept" {
+		t.Fatal("a read handed out shares its blocks with the one kept")
 	}
-	if _, ok := m.Reusable("carol", "sha", "fp"); ok {
-		t.Fatal("another owner's parse is not reused")
+	if _, _, ok := m.Read("bob", "key"); ok {
+		t.Fatal("another owner takes a read that is not theirs")
+	}
+	if _, _, ok := m.Read("alice", "other"); ok {
+		t.Fatal("a key nothing was kept under")
+	}
+
+	// A read with no key, a page that failed, and a page whose reply was
+	// cut are not kept: each is read again.
+	m.KeepRead("alice", "", page, nil)
+	m.KeepRead("alice", "failed", document.Page{Number: 1, State: document.PageFailed}, nil)
+	m.KeepRead("alice", "cut", document.Page{Number: 1, State: document.PageSucceeded, Truncated: true}, nil)
+	for _, key := range []string{"", "failed", "cut"} {
+		if _, _, ok := m.Read("alice", key); ok {
+			t.Errorf("a read was kept under %q", key)
+		}
 	}
 }
 

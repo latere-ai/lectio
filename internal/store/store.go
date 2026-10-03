@@ -83,17 +83,19 @@ type Parse struct {
 	AllowFailedPages int
 	Labels           map[string]string
 
-	// ContentSHA and Fingerprint identify the work: the bytes, and the
-	// options that change the result. Two parses of one owner that agree
-	// on both did the same work.
-	ContentSHA  string
-	Fingerprint string
+	// ContentSHA is the digest of the file's bytes. With a page's number
+	// and the readers that may read it, it names a page's result whoever
+	// asks for it. Reuse says whether this parse may take a page an
+	// earlier parse of the same owner already read.
+	ContentSHA string
+	Reuse      bool
 
 	// Where it stands.
 	Stage       string
 	PagesTotal  int
 	PagesDone   int
 	PagesFailed int
+	PagesReused int
 	Usage       document.Usage
 	Error       *document.Error
 
@@ -125,6 +127,14 @@ type Memory struct {
 	images    map[pageKey]render.Image
 	documents map[string]document.Document
 	keys      map[string]idempotent
+	read      map[string]readPage
+}
+
+// readPage is one page's result as a reader gave it, kept under what was
+// read and not under the parse that asked.
+type readPage struct {
+	page  document.Page
+	image *render.Image
 }
 
 // idempotent is what an idempotency key remembers: the body it came with
@@ -139,6 +149,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		files: map[string]File{}, parses: map[string]Parse{}, pages: map[pageKey]document.Page{},
 		images: map[pageKey]render.Image{}, documents: map[string]document.Document{}, keys: map[string]idempotent{},
+		read: map[string]readPage{},
 	}
 }
 
@@ -308,18 +319,34 @@ func (m *Memory) ListParses(owner string, f Filter, after string, limit int) (ou
 	return all, false
 }
 
-// Reusable returns an owner's succeeded parse of the same bytes with the
-// same options, when there is one.
-func (m *Memory) Reusable(owner, contentSHA, fingerprint string) (Parse, bool) {
+// KeepRead keeps a page's result under a key that names what was read:
+// the owner, the file's bytes, the page, and the readers. A later parse of
+// the same owner that would do the same read takes the result and calls no
+// model. Only a page that was read whole is kept: a failed or cut page is
+// read again.
+func (m *Memory) KeepRead(owner, key string, page document.Page, img *render.Image) {
+	if key == "" || page.State != document.PageSucceeded || page.Truncated {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.read[owner+"\x00"+key] = readPage{page: page, image: img}
+}
+
+// Read returns the result kept under a key, when there is one. The blocks
+// are a copy: the caller may change them.
+func (m *Memory) Read(owner, key string) (document.Page, *render.Image, bool) {
+	if key == "" {
+		return document.Page{}, nil, false
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var best Parse
-	for _, p := range m.parses {
-		if p.Owner == owner && p.State == StateSucceeded && p.ContentSHA == contentSHA && p.Fingerprint == fingerprint && p.ID > best.ID {
-			best = p
-		}
+	kept, ok := m.read[owner+"\x00"+key]
+	if !ok {
+		return document.Page{}, nil, false
 	}
-	return best, best.ID != ""
+	kept.page.Blocks = slices.Clone(kept.page.Blocks)
+	return kept.page, kept.image, true
 }
 
 // DeleteParse removes an owner's parse and everything it wrote. A parse

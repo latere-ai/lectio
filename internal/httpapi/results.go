@@ -147,9 +147,8 @@ func (s *Server) page(owner, parseID string, n int) (document.Page, error) {
 	page, ok := s.Store.Page(p.ID, n)
 	if !ok {
 		if p.Terminal() {
-			// The parse ended without reaching the page: it was canceled or
-			// ran out of time, and the page will not come.
-			return document.Page{}, fault.New(fault.PageNotFound, "parse %s ended before page %d was read", p.ID, n)
+			// The parse ended before it knew its pages, so there is none.
+			return document.Page{}, fault.New(fault.PageNotFound, "parse %s ended with no page %d", p.ID, n)
 		}
 		return document.Page{}, fault.New(fault.PageNotReady, "page %d of parse %s has not been read yet", n, p.ID)
 	}
@@ -213,6 +212,42 @@ func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, owner string) 
 	return nil
 }
 
+// listBlocks serves the blocks of every page read so far, one JSON object
+// per line, in page and reading order. It is the bulk read: a caller that
+// wants all of a long document asks once and not once per page. It answers
+// while the parse runs, with what has been read.
+func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, owner string) error {
+	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	if err != nil {
+		return err
+	}
+	var only []int
+	if selection := r.URL.Query().Get("pages"); selection != "" {
+		if p.Manifest == nil {
+			return fault.New(fault.DocumentNotReady, "parse %s has not counted its pages yet", p.ID)
+		}
+		if only, err = pages.Select(selection, p.Manifest.PagesTotal); err != nil {
+			return err
+		}
+	}
+
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	for _, page := range s.Store.Pages(p.ID) {
+		if only != nil && !slices.Contains(only, page.Number) {
+			continue
+		}
+		for _, block := range page.Blocks {
+			if err := enc.Encode(block); err != nil {
+				return err
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	_, _ = w.Write(out.Bytes())
+	return nil
+}
+
 // listChunks serves the document cut into chunks, one JSON object per
 // line. The cut is made now, so another strategy or size is another read.
 func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, owner string) error {
@@ -252,6 +287,7 @@ type readerView struct {
 	Image   imageView       `json:"image"`
 	Boxes   bool            `json:"boxes"`
 	Kinds   []document.Kind `json:"kinds,omitempty"`
+	Version string          `json:"version,omitempty"`
 	Default bool            `json:"default,omitempty"`
 }
 
@@ -280,7 +316,7 @@ func (s *Server) listReaders(w http.ResponseWriter, _ *http.Request, _ string) e
 		}
 		d := rd.Describe()
 		out.Readers = append(out.Readers, readerView{
-			Name: name, Accepts: d.Accepts, Boxes: d.Boxes, Kinds: d.Kinds,
+			Name: name, Accepts: d.Accepts, Boxes: d.Boxes, Kinds: d.Kinds, Version: d.Version,
 			Image:   imageView{DPI: d.Image.DPI, LongEdge: d.Image.LongEdge, Format: d.Image.Format},
 			Default: i == 0 && len(s.Chain) > 0,
 		})

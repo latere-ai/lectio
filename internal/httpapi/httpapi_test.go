@@ -269,20 +269,36 @@ func TestAFileIsParsedAndRead(t *testing.T) {
 		t.Fatalf("chunks: %d %q", chunks.status, chunks.body)
 	}
 
-	// The same work again is the same parse, unless the caller says not.
-	again := e.do("POST", "/parses", `{"source":{"file":"`+id+`"},"languages":["de"],"class":"batch"}`)
-	if again.status != http.StatusOK || again.json(t)["id"] != pid || again.json(t)["reused"] != true {
-		t.Fatalf("reuse: %d %s", again.status, again.body)
+	// The same file again is a parse of its own, with its own labels. What
+	// is not repeated is the reading: the page is taken from the earlier
+	// read and no model is called, unless the caller says not.
+	again := e.parsed(id, `,"languages":["de"],"class":"batch","labels":{"batch":"nov"}`)
+	if again["id"] == pid || at(again, "labels", "batch") != "nov" || at(again, "progress", "pages_reused") != 1.0 || at(again, "usage", "input_tokens") != nil {
+		t.Fatalf("a second parse of the same file: %v", again)
 	}
-	fresh := e.do("POST", "/parses", `{"source":{"file":"`+id+`"},"languages":["de"],"reuse":false}`, "Prefer", "wait=20")
-	if fresh.status != http.StatusOK || fresh.json(t)["id"] == pid || fresh.json(t)["reused"] != nil {
-		t.Fatalf("no reuse: %d %s", fresh.status, fresh.body)
+	if reused := e.do("GET", "/parses/"+again["id"].(string)+"/pages/1", nil).json(t); reused["reused"] != true || len(reused["blocks"].([]any)) != 3 {
+		t.Fatalf("its page: %v", reused)
 	}
-	if other := e.parsed(id, `,"pages":"1-"`); other["id"] == pid {
-		t.Fatal("other options are other work")
+	if fresh := e.parsed(id, `,"languages":["de"],"reuse":false`); at(fresh, "progress", "pages_reused") != nil || at(fresh, "usage", "input_tokens") == nil {
+		t.Fatalf("no reuse: %v", fresh)
+	}
+	if other := e.parsed(id, `,"languages":["en"]`); at(other, "progress", "pages_reused") != nil {
+		t.Fatalf("other hints are another read: %v", other)
 	}
 	if pinned := e.parsed(id, `,"reader":"stub"`); pinned["id"] == pid || pinned["reader"] != "stub" {
-		t.Fatalf("a named reader is other work: %v", pinned)
+		t.Fatalf("a named reader: %v", pinned)
+	}
+
+	// Every block of a parse in one read, one per line.
+	bulk := e.do("GET", "/parses/"+pid+"/blocks", nil)
+	if lines := strings.Split(strings.TrimSpace(string(bulk.body)), "\n"); bulk.status != http.StatusOK || bulk.header.Get("Content-Type") != "application/x-ndjson" || len(lines) != 3 || !strings.Contains(lines[1], `"ref":"1.2"`) {
+		t.Fatalf("blocks: %d %q", bulk.status, bulk.body)
+	}
+	if none := e.do("GET", "/parses/"+pid+"/blocks?pages=1", nil); len(strings.Split(strings.TrimSpace(string(none.body)), "\n")) != 3 {
+		t.Fatalf("blocks of page 1: %q", none.body)
+	}
+	if bad := e.do("GET", "/parses/"+pid+"/blocks?pages=9", nil); bad.status != http.StatusBadRequest || bad.code(t) != "invalid_pages" {
+		t.Fatalf("blocks of a page that is not there: %d %s", bad.status, bad.body)
 	}
 
 	// Deleting a parse deletes what it wrote; the file goes when no parse
@@ -290,7 +306,7 @@ func TestAFileIsParsedAndRead(t *testing.T) {
 	if del := e.do("DELETE", "/parses/"+pid, nil); del.status != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", del.status, del.body)
 	}
-	for _, path := range []string{"", "/pages", "/pages/1", "/pages/1/image", "/blocks/1.1", "/document", "/chunks"} {
+	for _, path := range []string{"", "/pages", "/pages/1", "/pages/1/image", "/blocks", "/blocks/1.1", "/document", "/chunks"} {
 		if got := e.do("GET", "/parses/"+pid+path, nil); got.status != http.StatusNotFound || got.code(t) != "parse_not_found" {
 			t.Errorf("%s after the delete: %d %s", path, got.status, got.body)
 		}
@@ -400,6 +416,10 @@ func TestAParseIsReadWhileItRunsAndCanBeCanceled(t *testing.T) {
 	if got := e.do("GET", "/parses/"+pid+"/pages/9", nil); got.status != http.StatusNotFound || got.code(t) != "page_not_found" {
 		t.Fatalf("a page the parse does not read: %d %s", got.status, got.body)
 	}
+	// The bulk read answers while the parse runs, with what was read.
+	if mid := e.do("GET", "/parses/"+pid+"/blocks", nil); mid.status != http.StatusOK || strings.Count(string(mid.body), "\n") != 6 {
+		t.Fatalf("blocks mid-run: %d %q", mid.status, mid.body)
+	}
 	if del := e.do("DELETE", "/parses/"+pid, nil); del.status != http.StatusConflict || del.code(t) != "not_terminal" {
 		t.Fatalf("delete mid-run: %d %s", del.status, del.body)
 	}
@@ -417,12 +437,23 @@ func TestAParseIsReadWhileItRunsAndCanBeCanceled(t *testing.T) {
 	if c := e.do("POST", "/parses/"+pid+"/cancel", nil); c.status != http.StatusConflict || c.code(t) != "already_terminal" {
 		t.Fatalf("cancel again: %d %s", c.status, c.body)
 	}
-	// What was read stays; what was not read will not come.
-	if got := e.do("GET", "/parses/"+pid+"/pages/2", nil); got.status != http.StatusOK {
+	// What was read stays, as pages and as a document. What was not read
+	// is recorded as skipped: nothing went wrong with it.
+	if got := e.do("GET", "/parses/"+pid+"/pages/2", nil); got.status != http.StatusOK || got.json(t)["state"] != "succeeded" {
 		t.Fatalf("a page read before the cancel: %d %s", got.status, got.body)
 	}
-	if got := e.do("GET", "/parses/"+pid+"/pages/3", nil); got.status != http.StatusNotFound || got.code(t) != "page_not_found" {
+	if got := e.do("GET", "/parses/"+pid+"/pages/3", nil); got.status != http.StatusOK || got.json(t)["state"] != "skipped" || got.json(t)["error"] != nil {
 		t.Fatalf("a page not read before the cancel: %d %s", got.status, got.body)
+	}
+	list = e.do("GET", "/parses/"+pid+"/pages", nil).json(t)["pages"].([]any)
+	if len(list) != 3 || at(list[1], "state") != "succeeded" || at(list[2], "state") != "skipped" {
+		t.Fatalf("pages after the cancel: %v", list)
+	}
+	if md := e.do("GET", "/parses/"+pid+"/document?format=markdown", nil); md.status != http.StatusOK || !strings.Contains(string(md.body), "# Page 2") || strings.Contains(string(md.body), "# Page 3") {
+		t.Fatalf("the document of a canceled parse: %d %q", md.status, md.body)
+	}
+	if blocks := e.do("GET", "/parses/"+pid+"/blocks", nil); blocks.status != http.StatusOK || !strings.Contains(string(blocks.body), `"ref":"2.1"`) {
+		t.Fatalf("its blocks: %d %q", blocks.status, blocks.body)
 	}
 	if c := e.do("POST", "/parses/prs_none/cancel", nil); c.status != http.StatusNotFound {
 		t.Fatalf("cancel of nothing: %d %s", c.status, c.body)
@@ -485,7 +516,7 @@ func TestAFailedPageFailsTheParseUnlessAllowed(t *testing.T) {
 		if at(doc["pages"].([]any)[1], "error", "code") != "page_unreadable" {
 			t.Fatalf("the document: %v", doc)
 		}
-		if md := e.do("GET", "/parses/"+pid+"/document?format=markdown&page_breaks=true&repeated=keep", nil); !strings.Contains(string(md.body), "<!-- page 3 -->\n\nPage 3") || strings.Contains(string(md.body), "Page 2") {
+		if md := e.do("GET", "/parses/"+pid+"/document?format=markdown&page_breaks=true&repeated=keep", nil); !strings.Contains(string(md.body), "<!-- page 3 -->\n\n# Page 3") || strings.Contains(string(md.body), "Page 2") {
 			t.Fatalf("markdown: %q", md.body)
 		}
 	}
@@ -512,17 +543,25 @@ func TestADocumentIsRenderedAsItIsRead(t *testing.T) {
 		return string(got.body)
 	}
 
-	// The stub's first line is the same on every page: a running header.
-	if once := read(""); strings.Count(once, "Page ") != 1 {
-		t.Fatalf("a running header printed once: %q", once)
+	// A page's number is furniture: it is printed only when everything is.
+	numbers := func(md string) (n int) {
+		for line := range strings.SplitSeq(md, "\n") {
+			if line == "1" || line == "2" || line == "3" {
+				n++
+			}
+		}
+		return n
 	}
-	if keep := read("&repeated=keep"); strings.Count(keep, "Page ") != 3 {
-		t.Fatalf("a running header kept: %q", keep)
+	if once := read(""); strings.Count(once, "# Page ") != 3 || numbers(once) != 0 {
+		t.Fatalf("the default rendering: %q", once)
 	}
-	if drop := read("&repeated=drop"); strings.Contains(drop, "Page ") {
-		t.Fatalf("a running header dropped: %q", drop)
+	if keep := read("&repeated=keep"); numbers(keep) != 3 {
+		t.Fatalf("everything kept: %q", keep)
 	}
-	if two := read("&pages=2&repeated=keep"); !strings.Contains(two, "Page 2") || strings.Contains(two, "Page 1") {
+	if drop := read("&repeated=drop"); strings.Count(drop, "# Page ") != 3 || numbers(drop) != 0 {
+		t.Fatalf("furniture dropped: %q", drop)
+	}
+	if two := read("&pages=2"); !strings.Contains(two, "# Page 2") || strings.Contains(two, "# Page 1") {
 		t.Fatalf("one page: %q", two)
 	}
 
@@ -537,8 +576,8 @@ func TestADocumentIsRenderedAsItIsRead(t *testing.T) {
 	if n := lines("?by=page&max_chars=200"); n != 3 {
 		t.Fatalf("by page: %d chunks", n)
 	}
-	if n := lines("?by=section"); n != 1 {
-		t.Fatalf("by section, with no heading: %d chunks", n)
+	if n := lines("?by=section"); n != 3 {
+		t.Fatalf("by section, one title a page: %d chunks", n)
 	}
 
 	for query, field := range map[string]string{
@@ -847,7 +886,7 @@ func TestReadersAreListedWithTheDefaultFirst(t *testing.T) {
 	if len(got) != 3 || at(got[0], "name") != "default" || at(got[0], "default") != true || at(got[1], "name") != "strong" || at(got[2], "name") != "spare" || at(got[1], "default") != nil {
 		t.Fatalf("readers: %v", got)
 	}
-	if at(got[0], "boxes") != true || at(got[0], "image", "format") != "png" || len(at(got[0], "accepts").([]any)) != 2 {
+	if at(got[0], "boxes") != true || at(got[0], "image", "format") != "png" || len(at(got[0], "accepts").([]any)) != 2 || at(got[0], "version") != "stub" {
 		t.Fatalf("a reader: %v", got[0])
 	}
 }

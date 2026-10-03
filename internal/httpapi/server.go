@@ -115,6 +115,7 @@ func (s *Server) Routes() []Route {
 		{"GET", "/parses/{parse}/pages", false, s.listPages},
 		{"GET", "/parses/{parse}/pages/{page}", false, s.getPage},
 		{"GET", "/parses/{parse}/pages/{page}/image", false, s.getPageImage},
+		{"GET", "/parses/{parse}/blocks", false, s.listBlocks},
 		{"GET", "/parses/{parse}/blocks/{ref}", false, s.getBlock},
 		{"GET", "/parses/{parse}/chunks", false, s.listChunks},
 		{"POST", "/parses/{parse}/fields", true, planned},
