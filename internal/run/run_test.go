@@ -399,7 +399,7 @@ func TestAParseThatCannotStartFails(t *testing.T) {
 		want    fault.Code
 	}{
 		"its file is gone":                {store.Parse{File: "fil_none"}, testfixtures.PNG, []string{"stub"}, fault.FileNotFound},
-		"a format this build cannot read": {store.Parse{}, testfixtures.DOCX, []string{"stub"}, fault.UnsupportedMediaType},
+		"a format this build cannot read": {store.Parse{}, testfixtures.PPTX, []string{"stub"}, fault.UnsupportedMediaType},
 		"a selection naming no page":      {store.Parse{Pages: "9"}, testfixtures.MultiTIFF, []string{"stub"}, fault.InvalidPages},
 		"no reader is configured":         {store.Parse{}, testfixtures.PNG, nil, fault.ReaderUnavailable},
 		"the reader it named is not here": {store.Parse{Reader: "other"}, testfixtures.PNG, []string{"stub"}, fault.ReaderUnavailable},

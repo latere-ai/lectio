@@ -129,11 +129,21 @@ func TestPrepareConverts(t *testing.T) {
 		t.Fatal("the working copy of a converted file is the conversion")
 	}
 
-	// A legacy word-processing file converts to a format this build does
-	// not read yet, and says so.
-	_, err = p.Prepare(context.Background(), testfixtures.Read(t, testfixtures.DOC), named("letter.doc"), "")
-	if fault.CodeOf(err) != fault.UnsupportedMediaType || conv.to != detect.MIMEDOCX {
-		t.Fatalf("a converted word-processing file: %v (converted to %s)", err, conv.to)
+	// A legacy word-processing file converts to the current format, which
+	// is then read from its own structure.
+	conv.out = testfixtures.Read(t, testfixtures.DOCX)
+	got, err = p.Prepare(context.Background(), testfixtures.Read(t, testfixtures.DOC), named("letter.doc"), "")
+	if err != nil || conv.from != detect.MIMEDOC || conv.to != detect.MIMEDOCX {
+		t.Fatalf("a converted word-processing file: %v (converted %s to %s)", err, conv.from, conv.to)
+	}
+	if got.Manifest.MediaType != detect.MIMEDOCX || got.Manifest.Source != document.SourceNative || len(got.Native) != 1 || got.Native[0].Blocks[0].Text != "Some block quotes, in different ways" {
+		t.Fatalf("manifest %+v", got.Manifest)
+	}
+	// What a converter returns is read like any file: a conversion that is
+	// not the format it was asked for is refused.
+	conv.out = testfixtures.Read(t, testfixtures.MultipagePDF)
+	if _, err := p.Prepare(context.Background(), testfixtures.Read(t, testfixtures.DOC), named("letter.doc"), ""); fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Fatalf("a conversion that is no package: %v", err)
 	}
 
 	conv.err = fault.New(fault.DocumentCorrupt, "the converter gave up")
@@ -158,7 +168,8 @@ func TestPrepareRefuses(t *testing.T) {
 		"a file over the size limit":   {small, testfixtures.Read(t, testfixtures.PNG), named("a.png"), "", fault.FileTooLarge},
 		"a file of no known type":      {pipeline(), []byte{0, 1, 2, 3}, named("blob.bin"), "", fault.UnsupportedMediaType},
 		"a format needing a converter": {pipeline(), testfixtures.Read(t, testfixtures.PPTX), named("deck.pptx"), "", fault.UnsupportedMediaType},
-		"a recognized format not read": {pipeline(), testfixtures.Read(t, testfixtures.DOCX), named("a.docx"), "", fault.UnsupportedMediaType},
+		"a recognized format not read": {pipeline(), testfixtures.Read(t, testfixtures.XLSX), named("a.xlsx"), "", fault.UnsupportedMediaType},
+		"a legacy spreadsheet":         {pipeline(), []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), named("a.xls"), "", fault.UnsupportedMediaType},
 		"too many pages":               {twoPages, testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "", fault.TooManyPages},
 		"a selection naming no page":   {pipeline(), testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "7", fault.InvalidPages},
 		"a malformed selection":        {pipeline(), testfixtures.Read(t, testfixtures.Markdown), named("a.md"), "x", fault.InvalidPages},

@@ -165,7 +165,7 @@ func (p *Pipeline) prepareNative(ctx context.Context, out Prepared, selection st
 	if !native.Reads(out.Manifest.MediaType) {
 		return Prepared{}, fault.New(fault.UnsupportedMediaType, "%s is recognized and not read by this build", out.Manifest.MediaType)
 	}
-	all, err := native.Pages(ctx, out.Working, out.Manifest.MediaType)
+	all, err := native.Pages(ctx, out.Working, out.Manifest.MediaType, p.Limits.MaxPages)
 	if err != nil {
 		return Prepared{}, err
 	}

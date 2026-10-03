@@ -121,6 +121,85 @@ order across columns, which are what a caller comes for. Using the
 text layer to check or correct the reader's transcription is noted
 under Not in this spec.
 
+### Reading a zipped office package
+
+A `.docx` is a ZIP of XML parts, and the worker reads it itself, with
+the standard library and no office suite. Such a file is small and says
+how large it becomes: its directory says how many parts it holds and how
+far each inflates, and its markup says how deep it nests. Each
+statement is checked against a bound before anything is allocated for
+it, and the reading is held to the same bound, because a statement can
+be false.
+
+| Bound | Value | Past it |
+|---|---|---|
+| bytes read to list the package's entries | 4 MiB | `file_too_large` |
+| entries | 10,000 | `file_too_large` |
+| one part, by the size its entry declares | 64 MiB | `file_too_large` |
+| all parts that are read, by the sizes their entries declare | 128 MiB | `file_too_large` |
+| a part that inflates past the size its entry declares | | `document_corrupt` |
+| elements open at once | 256 | `document_corrupt` |
+| tokens of markup, over all parts that are read | 33,554,432 | `file_too_large` |
+| bytes between two opening angle brackets: one tag, or one run of text | 1 MiB | `document_corrupt` |
+| a document type declaration | none | `document_corrupt` |
+| blocks on one page | 500,000 | `file_too_large` |
+| cells over all tables of a file, as rows times columns | 1,048,576 | `file_too_large` |
+| paragraph styles | 65,536 | `file_too_large` |
+
+A size is `file_too_large` and a file that contradicts itself or its
+format is `document_corrupt`, as for an image and a PDF. Four points
+make the bounds hold:
+
+- The directory is read through a budget. The archive reader holds
+  every entry it lists, at several times the entry's bytes, so a
+  directory of half a million entries is refused once the budget is
+  spent and is never held whole.
+- A part is refused for the size its entry declares, before a byte is
+  inflated, and a part that inflates past that size is refused as it is
+  read. So what is declared bounds what is inflated.
+- A part is read as a stream of tokens and never held whole. The
+  decoder defines no entity from a document type and fetches nothing one
+  names; a part that declares one is refused outright, since the format
+  forbids it. A start tag is decoded whole, one value per attribute,
+  which is why the distance between two brackets is bounded.
+- Nothing is read through a relationship but a part of the same
+  package. A target that says it is external, and one whose path climbs
+  out of the package, are passed over. An error's detail names a part
+  by its role, never by a name the file supplied.
+
+Every part is read to its end, where the archive checks its bytes
+against their checksum.
+
+A `.docx` is one page of blocks in document order:
+
+- A paragraph is a `title`, a `heading` with its level, a `caption`, a
+  `list_item` or `text`. The paragraph's style decides, by the name the
+  styles part gives it and not by its id, which a localized producer
+  translates; then the outline level the paragraph or its style sets;
+  then whether it is in a list. A style inherits from the style it is
+  based on. A numbered heading is a heading.
+- A table is a `table` block with its cells: a cell that spans columns
+  (`gridSpan`) or rows (`vMerge`) carries the span, and the cells of a
+  row marked to repeat as a header (`tblHeader`) are header cells. A
+  table inside a cell is read into the cell's text. A raised or lowered
+  run in a cell is marked with `^` or `_` ([[002-object-model]]).
+- A picture, a chart, a diagram or an embedded object is a `figure`
+  block with no text. Its bytes are not extracted, so it has no image
+  and cannot be described. The paragraphs of a text box follow the
+  paragraph the box is anchored in.
+- A footnote or an endnote the body refers to is a `footnote` block at
+  the end of the page, in the order of the references.
+- Text is the text of the runs: the text of a link, a tab as a tab, a
+  line break as a newline, the result of a field and not its code.
+  Tracked changes are read as accepted: what was inserted is text and
+  what was deleted is not.
+
+Not read: headers and footers, comments, the numbers and bullets a list
+shows, text in a drawing shape that is not a text box, symbol-font
+characters, and the picture inside a table cell beyond the fact of it. A
+document formatted by hand, with large bold lines in place of heading
+styles, has no headings to read.
+
 ### Conversion
 
 Conversion runs a large third-party program, an office suite, on a
@@ -294,7 +373,8 @@ Built:
   bound on directories and decoded one at a time with no copy of the
   file.
 - `internal/native`: plain text and Markdown as one page of blocks,
-  and CSV as one page holding one table.
+  CSV as one page holding one table, and `.docx` as one page of blocks,
+  read from the package under the bounds above.
 - `internal/render`: the interface above; a renderer for PNG, JPEG and
   each frame of a TIFF, with the bound on decoded pixels, scaling,
   re-encoding and the blank check; and the PDF renderer with every
@@ -305,9 +385,11 @@ Remaining:
 
 - A comparison of the PDF renderer's output against a native build of
   the engine, on a fixture set, kept as a benchmark.
-- Native reading of `.docx`, `.xlsx`, `.xlsm`, HTML and XML. They are
-  detected and accepted as uploads, and a parse of one fails with
+- Native reading of `.xlsx`, `.xlsm`, HTML and XML. They are detected
+  and accepted as uploads, and a parse of one fails with
   `unsupported_media_type`.
+- The bytes of a picture in a `.docx`. A figure of a native page has no
+  image.
 - Conversion. The step takes a converter and none is built, so the
   formats that need one are refused. The sidecar and its isolation are
   to build together: a converter with a network is not an
@@ -342,6 +424,12 @@ a test:
 | An image file of a few dozen bytes that declares 900 megapixels is refused with `file_too_large` and allocates nothing for its pixels | `TestAnImageThatDeclaresAHugeSizeIsRefusedFromItsHeader` |
 | A TIFF of more than 100,000 directories is refused with `too_many_pages`, and reading one frame of a 16 MiB file allocates no copy of it | `TestCountFramesStopsAtABoundOnDirectories`, `TestFramePNGDoesNotCopyTheFile` |
 | A page that holds one short word is not blank | `TestAPageWithOneSmallMarkIsNotBlank` |
+| A package whose entry declares more than a part may inflate to is refused with `file_too_large` before it is inflated, and one whose entry inflates past what it declares is refused with `document_corrupt` within 8 MiB of allocation | `TestAPartThatDeclaresMoreThanItsBoundIsRefusedBeforeItIsInflated`, `TestAPartThatInflatesPastWhatItDeclaresIsRefused` |
+| A package of more than 10,000 entries is refused, and a directory of half a million entries is refused within 64 MiB of allocation | `TestAPackageOfTooManyEntriesIsRefused` |
+| Markup nested past 256 elements, a tag of over 1 MiB, and tokens past their bound are each refused | `TestMarkupIsHeldToItsBounds` |
+| A part that declares a document type or an entity is refused, and nothing an entity names is read | `TestAPartThatDeclaresAnEntityIsRefused` |
+| A relationship whose target is outside the package is not followed, whatever the archive holds under that name | `TestARelationshipThatLeavesThePackageIsNotFollowed` |
+| A `.docx` keeps its headings with their levels, its list items, its tables with spans and header rows, its footnotes, and a figure for each picture | `TestAParagraphIsWhatItsStyleSays`, `TestATableKeepsItsCellsSpansAndHeaderRows`, `TestFiguresTextBoxesAndNotes` |
 | A converter has no route to any address, the worker's own included, and a document that names an external resource converts without fetching it | a test with a converter in a container and a counting server |
 | A deployment with no converter fails a parse that needs one with `unsupported_media_type` at `prepare` | a pipeline test |
 | A conversion that exceeds its time or its memory limit is killed with its children and leaves no file in the scratch directory | a test with a stub converter |

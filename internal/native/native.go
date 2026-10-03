@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"html"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -26,18 +25,28 @@ const (
 	TypeText     = "text/plain"
 	TypeMarkdown = "text/markdown"
 	TypeCSV      = "text/csv"
+	TypeDOCX     = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
 // Reads reports whether this package reads a media type.
 func Reads(mediaType string) bool {
-	return mediaType == TypeText || mediaType == TypeMarkdown || mediaType == TypeCSV
+	switch mediaType {
+	case TypeText, TypeMarkdown, TypeCSV, TypeDOCX:
+		return true
+	}
+	return false
 }
 
-// Pages reads a file into pages. Text and Markdown are one page of blocks;
-// a delimited table is one page holding one table.
-func Pages(ctx context.Context, data []byte, mediaType string) ([]document.Page, error) {
+// Pages reads a file into pages. Text, Markdown and a word-processing
+// document are one page of blocks; a delimited table is one page holding
+// one table. maxPages is the most pages a document may have, zero for no
+// limit, for a format that knows its pages before it reads them.
+func Pages(ctx context.Context, data []byte, mediaType string, maxPages int) ([]document.Page, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if mediaType == TypeDOCX {
+		return readDOCX(ctx, data, limits)
 	}
 	if !utf8.Valid(data) {
 		return nil, fault.New(fault.DocumentCorrupt, "the file is not UTF-8 text")
@@ -177,25 +186,13 @@ func delimited(data []byte) ([]document.Block, error) {
 	if len(records) == 0 {
 		return nil, nil
 	}
-	table := &document.Table{Rows: len(records)}
-	var markup, text strings.Builder
-	markup.WriteString("<table>")
+	var cells []document.Cell
+	cols := 0
 	for row, record := range records {
-		table.Cols = max(table.Cols, len(record))
-		markup.WriteString("<tr>")
+		cols = max(cols, len(record))
 		for col, value := range record {
-			table.Cells = append(table.Cells, document.Cell{Row: row, Col: col, Text: value})
-			markup.WriteString("<td>")
-			markup.WriteString(html.EscapeString(value))
-			markup.WriteString("</td>")
+			cells = append(cells, document.Cell{Row: row, Col: col, Text: value})
 		}
-		markup.WriteString("</tr>")
-		if row > 0 {
-			text.WriteByte('\n')
-		}
-		text.WriteString(strings.Join(record, " | "))
 	}
-	markup.WriteString("</table>")
-	table.HTML = markup.String()
-	return []document.Block{{Kind: document.KindTable, Table: table, Text: text.String()}}, nil
+	return []document.Block{tableOf(len(records), cols, cells)}, nil
 }

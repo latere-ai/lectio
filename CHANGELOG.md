@@ -73,3 +73,13 @@ refused before it is pushed.
 - Changed: a legacy spreadsheet (`.xls`) is refused when it is uploaded,
   with `unsupported_media_type` and a detail that says to save the
   workbook as `.xlsx`. It was accepted before and failed when parsed.
+- Added: a Word document (`.docx`) is read from the file itself, with
+  no model and no office suite: one page of blocks with headings and
+  their levels, list items, tables with merged cells and header rows,
+  footnotes, and a figure where a picture is. Tracked changes are read
+  as accepted. A parse of one failed with `unsupported_media_type`
+  before.
+- Security: a zipped office document is read under bounds on what it
+  declares and on what it inflates to, so a small crafted file cannot
+  exhaust the server: it is refused with `file_too_large` or
+  `document_corrupt`.

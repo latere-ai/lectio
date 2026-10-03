@@ -16,7 +16,7 @@ import (
 
 func read(t *testing.T, data, mediaType string) document.Page {
 	t.Helper()
-	pages, err := Pages(context.Background(), []byte(data), mediaType)
+	pages, err := Pages(context.Background(), []byte(data), mediaType, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func shape(p document.Page) []string {
 }
 
 func TestReads(t *testing.T) {
-	for mediaType, want := range map[string]bool{TypeText: true, TypeMarkdown: true, TypeCSV: true, "text/html": false, "application/pdf": false} {
+	for mediaType, want := range map[string]bool{TypeText: true, TypeMarkdown: true, TypeCSV: true, TypeDOCX: true, "text/html": false, "application/pdf": false} {
 		if Reads(mediaType) != want {
 			t.Errorf("Reads(%q) = %v", mediaType, !want)
 		}
@@ -137,7 +137,7 @@ func TestFailures(t *testing.T) {
 		"a type not read":      {"<p>x</p>", "text/html", fault.UnsupportedMediaType},
 		"a quote never closed": {"a,\"b\n", TypeCSV, fault.DocumentCorrupt},
 	} {
-		_, err := Pages(context.Background(), []byte(tc.data), tc.mediaType)
+		_, err := Pages(context.Background(), []byte(tc.data), tc.mediaType, 0)
 		if name == "a quote never closed" && err == nil {
 			// Lazy quotes read an unclosed quote as text; what cannot fail is not tested as a failure.
 			continue
@@ -149,7 +149,7 @@ func TestFailures(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Pages(ctx, []byte("x"), TypeText); err == nil {
+	if _, err := Pages(ctx, []byte("x"), TypeText, 0); err == nil {
 		t.Fatal("a canceled read must fail")
 	}
 }

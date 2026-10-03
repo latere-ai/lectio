@@ -90,9 +90,12 @@ LECTIO_DEV=true LECTIO_CONFIG=reader.yaml LECTIO_MODEL_KEY=... out/lectiod
 ```
 
 This build reads PDFs and images (PNG, JPEG, TIFF) through a reader,
-and text, Markdown and CSV from the file itself. Every PDF page is
-rendered and sent to the reader; reading the text a PDF already carries
-is designed and not built.
+and text, Markdown, CSV and Word documents (`.docx`) from the file
+itself, with no model. A Word document comes back as one page: its
+headings with their levels, its lists, its tables with merged cells and
+header rows, its footnotes, and a figure where a picture is. Every PDF
+page is rendered and sent to the reader; reading the text a PDF already
+carries is designed and not built.
 
 To check a reader against a real file, end to end:
 
