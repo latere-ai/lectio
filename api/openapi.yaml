@@ -24,7 +24,18 @@ info:
     contract and answers `501 not_implemented` until it is built.
 
     Every error has the same shape: one `code` to branch on, one `message`
-    for a person, and `details` for a developer.
+    for a person, and `details` for a developer. Any operation may answer
+    `401`, `403`, `429` and `500` in that shape; an operation lists the
+    other statuses it answers. An address that is not routed is `404
+    not_found`, and one that is routed under another method is `405
+    method_not_allowed`.
+
+    A result that does not exist yet is `409`, with `page_not_ready` or
+    `document_not_ready` and `details.retryable: true`: the address is
+    right and the answer is not there yet. `404` means it will not come.
+
+    The server also answers `GET /healthz`, outside the base path and
+    without a token.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -79,8 +90,8 @@ paths:
         "200": { description: The caller already has these bytes., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
         "201": { description: Stored., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
         "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
         "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
 
   /files/{file}:
     parameters:
@@ -131,10 +142,11 @@ paths:
         "200": { description: The parse ended within the wait, or an earlier parse was reused., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
-        "429": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
     get:
       tags: [parses]
       operationId: listParses
@@ -260,6 +272,7 @@ paths:
             text/plain: { schema: { type: string } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/pages:
     parameters:
@@ -280,10 +293,16 @@ paths:
       tags: [results]
       operationId: getPage
       summary: Read one page with its blocks.
-      description: Readable as soon as that page has been read, while the parse is still running. A page not read yet is `page_not_ready`.
+      description: |
+        Readable as soon as that page has been read, while the parse is
+        still running. A page not read yet is `409 page_not_ready`. A page
+        the parse does not read, or one it ended without reading, is
+        `404 page_not_found`.
       responses:
         "200": { description: The page., content: { application/json: { schema: { $ref: "#/components/schemas/Page" } } } }
+        "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/pages/{page}/image:
     parameters:
@@ -300,7 +319,9 @@ paths:
           content:
             image/png: { schema: { type: string, format: binary } }
             image/jpeg: { schema: { type: string, format: binary } }
+        "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/blocks/{ref}:
     parameters:
@@ -316,7 +337,9 @@ paths:
       summary: Read one block.
       responses:
         "200": { description: The block., content: { application/json: { schema: { $ref: "#/components/schemas/Block" } } } }
+        "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/chunks:
     parameters:
@@ -341,6 +364,7 @@ paths:
         "200": { description: One chunk per line., content: { application/x-ndjson: { schema: { $ref: "#/components/schemas/Chunk" } } } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
 
   /parses/{parse}/fields:
     parameters:
@@ -393,6 +417,15 @@ paths:
         "200": { description: The extraction., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
+
+  /openapi.yaml:
+    get:
+      tags: [operations]
+      operationId: getContract
+      summary: Read this document.
+      security: []
+      responses:
+        "200": { description: The contract., content: { application/yaml: { schema: { type: string } } } }
 
   /readers:
     get:
@@ -497,6 +530,8 @@ components:
                 - queue_full
                 - budget_exhausted
                 - not_implemented
+                - not_found
+                - method_not_allowed
                 - internal
             message: { type: string, description: One fixed sentence for a person. }
             details:
@@ -634,7 +669,7 @@ components:
       properties:
         code:
           type: string
-          enum: [document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
+          enum: [file_not_found, file_too_large, invalid_pages, document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
         detail: { type: string }
 
     Usage:
