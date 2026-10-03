@@ -20,6 +20,8 @@ test is a claim, and no claim is listed here.
 |---|---|---|
 | the network around the server | a source URL is fetched only from a publicly routable address, checked at dial time and after every redirect | `TestFetchRefusesNonPublicAddresses` |
 | a model credential | it is passed to a reader per call and never appears in an error, a log line, or a stored result | `TestCredentialNeverLeaves` |
+| a caller's files and parses | every operation needs a token and is scoped to its owner; another caller's file or parse is not found, whatever is asked of it | `TestACallerIsKnownAndSeesOnlyItsOwn` |
+| what an error tells a caller | an error nobody classified is logged and answered as `internal` with no detail | `TestAnErrorNobodyClassifiedIsInternalAndSaysNothing` |
 
 ## What is out of scope
 
