@@ -328,11 +328,13 @@ type Chunk struct {
 	Blocks []string `json:"blocks"`
 }
 
-// FieldState is how an extraction ended.
+// FieldState is where an extraction is: asked for and not done yet, or how
+// it ended.
 type FieldState string
 
 // The states of a field.
 const (
+	FieldPending   FieldState = "pending"
 	FieldSucceeded FieldState = "succeeded"
 	FieldFailed    FieldState = "failed"
 )
