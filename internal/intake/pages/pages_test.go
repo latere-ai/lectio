@@ -442,3 +442,32 @@ func TestCheckAgreesWithSelectOnWhatIsMalformed(t *testing.T) {
 		}
 	}
 }
+
+// A file of object stream headers that name a compressed stream and never
+// close it. Each one was searched to the end of the file for the keyword
+// that ends a stream, so the count took time in the square of the file's
+// size: 12 seconds at 2 MiB, three minutes at 8.
+func TestCountPDFIsNotQuadraticInUnclosedStreams(t *testing.T) {
+	unit := []byte("<</Type/ObjStm/Filter/FlateDecode>>stream\n")
+	file := append([]byte("%PDF-1.5\n"), bytes.Repeat(unit, (2<<20)/len(unit))...)
+	began := time.Now()
+	_, err := CountPDF(file)
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("counting a 2 MiB file of unclosed streams took %s", took)
+	}
+	if fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Fatalf("a file that names no page: %v", err)
+	}
+
+	// The same headers with one end far away: every header's search would
+	// run to it. The work is bounded and the file refused.
+	closed := append(slices.Clone(file), []byte("endstream\n")...)
+	began = time.Now()
+	_, err = CountPDF(closed)
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("counting a 2 MiB file of streams that share one end took %s", took)
+	}
+	if fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Fatalf("a file whose streams cannot be told apart: %v", err)
+	}
+}

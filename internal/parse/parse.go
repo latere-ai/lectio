@@ -36,6 +36,14 @@ type Converter interface {
 	Convert(ctx context.Context, data []byte, from, to string) ([]byte, error)
 }
 
+// PDFCounter counts the pages of a PDF. A renderer that holds a PDF engine
+// is one, and its count is the one a parse goes by: the engine walks the
+// page tree the way a viewer does, and the pages are then rendered by the
+// same engine, so the count and the pages cannot disagree.
+type PDFCounter interface {
+	CountPDF(ctx context.Context, data []byte) (int, error)
+}
+
 // Manifest is what Prepare found out about a file: everything a page's
 // work needs to know that is not the page itself.
 type Manifest struct {
@@ -126,7 +134,13 @@ func (p *Pipeline) Prepare(ctx context.Context, data []byte, declared detect.Dec
 	out.Manifest.Source = document.SourceReader
 	switch mediaType {
 	case detect.MIMEPDF:
-		out.Manifest.PagesTotal, err = pages.CountPDF(data)
+		// A count read off the file's bytes can be led to say more pages
+		// than there are, or fewer. It stands only where no engine counts.
+		if counter, ok := p.Renderer.(PDFCounter); ok {
+			out.Manifest.PagesTotal, err = counter.CountPDF(ctx, data)
+		} else {
+			out.Manifest.PagesTotal, err = pages.CountPDF(data)
+		}
 	case detect.MIMETIFF:
 		out.Manifest.PagesTotal, err = pages.CountTIFF(data)
 	default:
@@ -225,7 +239,7 @@ func (p *Pipeline) ReadPage(ctx context.Context, m Manifest, working []byte, n i
 		return Page{}, err
 	}
 
-	page.Reader, page.Model = desc.Name, res.Model
+	page.Reader, page.Model, page.Truncated = desc.Name, res.Model, res.Truncated
 	page.Blocks = document.Number(n, res.Blocks)
 	usage := res.Usage
 	page.Usage = &usage

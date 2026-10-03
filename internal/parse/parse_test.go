@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -253,5 +254,93 @@ func TestReadPageFailures(t *testing.T) {
 	}
 	if _, err := p.ReadPage(context.Background(), Manifest{MediaType: detect.MIMEPDF}, []byte("%PDF"), 1, &stub.Reader{}, PageOptions{}); fault.CodeOf(err) != fault.UnsupportedMediaType {
 		t.Fatalf("a page that cannot be rendered: %v", err)
+	}
+}
+
+// pdfOf writes objects, numbered from 1, as a PDF with a correct
+// cross-reference table. The first object is the catalog.
+func pdfOf(objects ...string) []byte {
+	var out bytes.Buffer
+	out.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, body := range objects {
+		offsets[i] = out.Len()
+		fmt.Fprintf(&out, "%d 0 obj\n%s\nendobj\n", i+1, body)
+	}
+	xref := out.Len()
+	fmt.Fprintf(&out, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, at := range offsets {
+		fmt.Fprintf(&out, "%010d 00000 n \n", at)
+	}
+	fmt.Fprintf(&out, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return out.Bytes()
+}
+
+// engines renders and counts PDFs for the tests below. Loading it compiles
+// the engine, which is done once.
+var engines = render.NewPages()
+
+// A count read off a PDF's bytes can be made wrong in both directions. A
+// parse goes by the count of the engine that renders the pages.
+func TestPrepareCountsAPDFsPagesWithTheEngineThatRendersThem(t *testing.T) {
+	// A page tree of two levels, 80 nodes of 2 pages. The root writes its
+	// kids before its count, which puts the count past where a scan of the
+	// bytes looks, so the scan reports a node's count: 2 pages of 160.
+	const nodes, each = 80, 2
+	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", ""}
+	var kids strings.Builder
+	for i := range nodes {
+		node := len(objects) + 1
+		fmt.Fprintf(&kids, " %d 0 R", node)
+		objects = append(objects, fmt.Sprintf("<< /Type /Pages /Parent 2 0 R /Count %d /Kids [ %d 0 R %d 0 R ] >>", each, node+1, node+2))
+		for range each {
+			objects = append(objects, fmt.Sprintf("<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] >>", node))
+		}
+		_ = i
+	}
+	objects[1] = "<< /Type /Pages /Kids [" + kids.String() + " ] /Count " + fmt.Sprint(nodes*each) + " >>"
+	deep := pdfOf(objects...)
+
+	// A tree of 3 pages, and an object nothing refers to that claims 40.
+	orphan := pdfOf(
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [ 3 0 R 4 0 R 5 0 R ] /Count 3 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+		"<< /Type /Pages /Kids [ ] /Count 40 >>",
+	)
+
+	for name, tc := range map[string]struct {
+		file           []byte
+		scanned, pages int
+	}{
+		"a count the scan does not reach":        {deep, each, nodes * each},
+		"a count on an object nothing refers to": {orphan, 40, 3},
+	} {
+		if scanned, err := pages.CountPDF(tc.file); err != nil || scanned != tc.scanned {
+			t.Fatalf("%s: the bytes say %d, %v; this test expects them to say %d", name, scanned, err, tc.scanned)
+		}
+		p := &Pipeline{Limits: pages.DefaultLimits(), Renderer: engines}
+		got, err := p.Prepare(context.Background(), tc.file, named("file.pdf"), "")
+		if err != nil || got.Manifest.PagesTotal != tc.pages || len(got.Manifest.Selected) != tc.pages {
+			t.Errorf("%s: %d pages, %v; the file has %d", name, got.Manifest.PagesTotal, err, tc.pages)
+		}
+		// Without an engine the scan is all there is.
+		got, err = pipeline().Prepare(context.Background(), tc.file, named("file.pdf"), "")
+		if err != nil || got.Manifest.PagesTotal != tc.scanned {
+			t.Errorf("%s, with no engine: %d pages, %v", name, got.Manifest.PagesTotal, err)
+		}
+	}
+
+	// The limit on pages is applied to the engine's count.
+	two := &Pipeline{Limits: pages.Limits{MaxPages: 2}, Renderer: engines}
+	if _, err := two.Prepare(context.Background(), orphan, named("file.pdf"), ""); fault.CodeOf(err) != fault.TooManyPages {
+		t.Errorf("three pages against a limit of two: %v", err)
+	}
+	// A PDF the engine cannot open is refused, whatever its bytes claim.
+	claims := []byte("%PDF-1.4\n<< /Type /Pages /Count 5 >>\n")
+	if _, err := (&Pipeline{Renderer: engines}).Prepare(context.Background(), claims, named("file.pdf"), ""); fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Errorf("bytes that claim five pages and hold no document: %v", err)
 	}
 }

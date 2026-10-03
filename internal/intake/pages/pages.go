@@ -166,6 +166,12 @@ var (
 // those nodes usually sit in Flate-compressed object streams, so those are
 // inflated before the scan.
 //
+// The count is what the file's bytes say and no more. A file can be
+// written so that they say more or fewer pages than a viewer shows: an
+// object nothing refers to, a count placed where the scan does not look. A
+// caller that renders the pages takes the count from the engine that
+// renders them, and uses this one only where it has no engine.
+//
 // The counts are read off a bounded scan of the bytes; the object graph is
 // not parsed. Following indirect references means walking that graph
 // recursively, and a document can nest arrays and dictionaries deeply enough
@@ -267,10 +273,20 @@ func pdfEnclosingDict(region []byte, at int) []byte {
 func inflatePDFObjectStreams(b []byte) [][]byte {
 	var out [][]byte
 	budget := maxPDFInflatedBytes
+	// read is where the last stream that was found ends. Streams lie one
+	// after another in a file, so a marker before it sits inside a stream
+	// body that was already searched: it is that body's bytes and not a
+	// header. Skipping it keeps the searches for the end of a stream from
+	// overlapping, so together they read the file at most once however the
+	// file was written.
+	read := 0
 
 	for _, loc := range pdfObjStmKey.FindAllIndex(b, -1) {
 		if len(out) >= maxPDFObjectStreams || budget <= 0 {
 			break
+		}
+		if loc[0] < read {
+			continue
 		}
 		// The stream body starts at the stream keyword after the dictionary
 		// that named /ObjStm.
@@ -296,8 +312,11 @@ func inflatePDFObjectStreams(b []byte) [][]byte {
 		abs := loc[1] + len(tail) - len(body)
 		endIdx := bytes.Index(b[abs:], []byte("endstream"))
 		if endIdx < 0 {
-			continue
+			// No stream from here to the end of the file is closed, so no
+			// later header's is either.
+			break
 		}
+		read = abs + endIdx
 
 		zr, err := zlib.NewReader(bytes.NewReader(b[abs : abs+endIdx]))
 		if err != nil {

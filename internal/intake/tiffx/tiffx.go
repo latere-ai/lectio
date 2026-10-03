@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"image/png"
+	"io"
 
 	// The import also registers the TIFF format with the image package, so
 	// image.Decode and image.DecodeConfig read a TIFF anywhere in a process
@@ -39,6 +40,12 @@ var ErrFrameTooLarge = errors.New("tiff: frame is too large to decode")
 // allocated. 40 megapixels admits an A4 page scanned at 600 dpi, about 34.8
 // megapixels, so a full-quality print scan passes.
 const MaxFramePixels = 40_000_000
+
+// MaxFrames bounds how many directories a walk follows. Each directory is a
+// page, and a directory takes six bytes, so a small file can declare
+// millions. No document has this many pages, and a file that says it does
+// is refused before a list of them is built.
+const MaxFrames = 100_000
 
 // header is the 8-byte TIFF header: byte order, the magic number 42, and the
 // offset of the first IFD.
@@ -73,8 +80,9 @@ func readHeader(b []byte) (header, error) {
 }
 
 // frameOffsets returns the file offset of every IFD, in chain order. Each IFD
-// is one frame. A cycle or an offset past the end of the buffer is corrupt, so
-// the walk is bounded by the input and not by the chain it is reading.
+// is one frame. A cycle or an offset past the end of the buffer is corrupt,
+// and a chain past MaxFrames is too many pages, so the walk is bounded
+// whatever chain it is reading.
 func frameOffsets(b []byte) (header, []uint32, error) {
 	h, err := readHeader(b)
 	if err != nil {
@@ -85,6 +93,9 @@ func frameOffsets(b []byte) (header, []uint32, error) {
 	for off := h.first; off != 0; {
 		if seen[off] || int(off)+2 > len(b) {
 			return header{}, nil, corrupt()
+		}
+		if len(offsets) == MaxFrames {
+			return header{}, nil, fault.New(fault.TooManyPages, "the TIFF has more than %d frames", MaxFrames)
 		}
 		seen[off] = true
 		entries := h.order.Uint16(b[off : off+2])
@@ -103,7 +114,8 @@ func frameOffsets(b []byte) (header, []uint32, error) {
 
 // CountFrames returns how many frames a TIFF carries, one per IFD. A
 // single-frame TIFF returns 1. Input that is not a readable TIFF fails with
-// fault.DocumentCorrupt over ErrCorrupt.
+// fault.DocumentCorrupt over ErrCorrupt, and one with more than MaxFrames
+// frames with fault.TooManyPages.
 func CountFrames(b []byte) (int, error) {
 	_, offsets, err := frameOffsets(b)
 	if err != nil {
@@ -115,10 +127,11 @@ func CountFrames(b []byte) (int, error) {
 // FramePNG decodes the 1-based frame n and encodes it as a PNG. It returns
 // the encoded bytes and the frame's width and height in pixels.
 //
-// The frame is isolated by rewriting a copy of the whole file: the header
-// points at frame n's IFD and that IFD ends the chain. Every other offset in
-// the file (strip data, color maps) stays valid because the copy keeps the
-// original layout, so no tag is rewritten and b is not modified.
+// The frame is isolated by reading the file through two patches: the
+// header points at frame n's IFD and that IFD ends the chain. Every other
+// offset in the file (strip data, color maps) stays valid because the
+// layout is the original's, so no tag is rewritten, b is not modified, and
+// the file is not copied.
 //
 // A container that cannot be walked and a frame that cannot be decoded fail
 // with fault.DocumentCorrupt, and a frame over MaxFramePixels fails with
@@ -134,16 +147,14 @@ func FramePNG(b []byte, n int) (out []byte, width, height int, err error) {
 		return nil, 0, 0, fmt.Errorf("tiff: frame %d out of range (%d frames)", n, len(offsets))
 	}
 
-	single := bytes.Clone(b)
 	off := offsets[n-1]
-	h.order.PutUint32(single[4:8], off)
-	entries := h.order.Uint16(single[off : off+2])
-	next := int(off) + 2 + int(entries)*12
-	h.order.PutUint32(single[next:next+4], 0)
+	entries := h.order.Uint16(b[off : off+2])
+	single := &patched{file: b, next: int64(off) + 2 + int64(entries)*12}
+	h.order.PutUint32(single.first[:], off)
 
 	// DecodeConfig reads only the IFD, so the bound is enforced before Decode
 	// allocates the pixel buffer.
-	cfg, err := tiff.DecodeConfig(bytes.NewReader(single))
+	cfg, err := tiff.DecodeConfig(single)
 	if err != nil {
 		return nil, 0, 0, fault.Wrap(fault.DocumentCorrupt, err, "TIFF frame %d has an unreadable header", n)
 	}
@@ -152,7 +163,7 @@ func FramePNG(b []byte, n int) (out []byte, width, height int, err error) {
 			"TIFF frame %d declares %d pixels, limit %d", n, pixels, MaxFramePixels)
 	}
 
-	img, err := tiff.Decode(bytes.NewReader(single))
+	img, err := tiff.Decode(single)
 	if err != nil {
 		return nil, 0, 0, fault.Wrap(fault.DocumentCorrupt, err, "TIFF frame %d cannot be decoded", n)
 	}
@@ -163,3 +174,39 @@ func FramePNG(b []byte, n int) (out []byte, width, height int, err error) {
 	bounds := img.Bounds()
 	return buf.Bytes(), bounds.Dx(), bounds.Dy(), nil
 }
+
+// patched reads a TIFF as if two of its fields had been rewritten: the
+// offset of the first IFD, at bytes 4 to 8 of the header, reads as first,
+// and the four bytes at next, the chosen IFD's pointer to the one after it,
+// read as zero. The decoder asks for the file by offset, so the file
+// underneath is never copied or changed.
+type patched struct {
+	file  []byte
+	first [4]byte
+	next  int64
+}
+
+// ReadAt reads the file with the two patches laid over it.
+func (p *patched) ReadAt(out []byte, off int64) (int, error) {
+	if off < 0 || off >= int64(len(p.file)) {
+		return 0, io.EOF
+	}
+	n := copy(out, p.file[off:])
+	lay := func(at int64, with []byte) {
+		for i, v := range with {
+			if pos := at + int64(i) - off; pos >= 0 && pos < int64(n) {
+				out[pos] = v
+			}
+		}
+	}
+	lay(4, p.first[:])
+	lay(p.next, []byte{0, 0, 0, 0})
+	if n < len(out) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// Read is here because the decoder's argument is a reader. The decoder
+// reads through ReadAt and never calls it.
+func (p *patched) Read([]byte) (int, error) { return 0, io.EOF }

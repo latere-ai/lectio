@@ -10,6 +10,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"runtime"
 	"testing"
 
 	"golang.org/x/image/tiff"
@@ -222,5 +224,84 @@ func TestFramePNGUnreadableFrameHeader(t *testing.T) {
 	}
 	if got := fault.CodeOf(err); got != fault.DocumentCorrupt {
 		t.Errorf("code = %q, want %q", got, fault.DocumentCorrupt)
+	}
+}
+
+// A TIFF's chain of directories is as long as its bytes allow, and each one
+// is a page. A file of a few hundred kilobytes can declare more pages than
+// any document has; the walk stops at a bound and says so.
+func TestCountFramesStopsAtABoundOnDirectories(t *testing.T) {
+	// MaxFrames+1 directories with no entry each, one after another: two
+	// bytes of count and four of the next directory's offset.
+	const each = 6
+	file := make([]byte, 8+(MaxFrames+1)*each)
+	copy(file, "II")
+	binary.LittleEndian.PutUint16(file[2:], 42)
+	binary.LittleEndian.PutUint32(file[4:], 8)
+	for i := range MaxFrames + 1 {
+		at := 8 + i*each
+		next := uint32(at + each)
+		if i == MaxFrames {
+			next = 0
+		}
+		binary.LittleEndian.PutUint32(file[at+2:], next)
+	}
+	if _, err := CountFrames(file); fault.CodeOf(err) != fault.TooManyPages {
+		t.Fatalf("a chain of %d directories: %v", MaxFrames+1, err)
+	}
+	// One fewer is counted.
+	binary.LittleEndian.PutUint32(file[8+(MaxFrames-1)*each+2:], 0)
+	if n, err := CountFrames(file); err != nil || n != MaxFrames {
+		t.Fatalf("a chain of %d directories: %d, %v", MaxFrames, n, err)
+	}
+}
+
+// Taking one frame out of a file does not copy the file. A scan of many
+// pages is read once per page, and a copy per page is the file's size
+// times its page count.
+func TestFramePNGDoesNotCopyTheFile(t *testing.T) {
+	file := append(singleFrame(t, 8, 8), make([]byte, 16<<20)...)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	out, w, h, err := FramePNG(file, 1)
+	runtime.ReadMemStats(&after)
+	if err != nil || w != 8 || h != 8 || len(out) == 0 {
+		t.Fatalf("FramePNG: %dx%d, %d bytes, %v", w, h, len(out), err)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 4<<20 {
+		t.Fatalf("reading an 8 by 8 frame of a %d MiB file allocated %d KiB", len(file)>>20, grew>>10)
+	}
+}
+
+func TestPatchedReadsTheFileWithTwoFieldsRewritten(t *testing.T) {
+	file := []byte("IIxxAAAA0123456789BBBBtail")
+	p := &patched{file: file, first: [4]byte{1, 2, 3, 4}, next: 18}
+
+	whole := make([]byte, len(file))
+	if n, err := p.ReadAt(whole, 0); n != len(file) || err != nil {
+		t.Fatalf("the whole file: %d, %v", n, err)
+	}
+	if want := "IIxx\x01\x02\x03\x040123456789\x00\x00\x00\x00tail"; string(whole) != want {
+		t.Fatalf("read %q, want %q", whole, want)
+	}
+	// A read that begins inside a patch, and one that runs past the end.
+	part := make([]byte, 4)
+	if n, err := p.ReadAt(part, 6); n != 4 || err != nil || string(part) != "\x03\x0401" {
+		t.Fatalf("from inside the first patch: %q, %d, %v", part, n, err)
+	}
+	tail := make([]byte, 8)
+	if n, err := p.ReadAt(tail, 20); n != 6 || !errors.Is(err, io.EOF) || string(tail[:n]) != "\x00\x00tail" {
+		t.Fatalf("past the end: %q, %d, %v", tail[:n], n, err)
+	}
+	for _, off := range []int64{-1, int64(len(file))} {
+		if n, err := p.ReadAt(tail, off); n != 0 || !errors.Is(err, io.EOF) {
+			t.Fatalf("an offset outside the file: %d, %v", n, err)
+		}
+	}
+	if n, err := p.Read(tail); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("Read: %d, %v", n, err)
+	}
+	if string(file) != "IIxxAAAA0123456789BBBBtail" {
+		t.Fatal("the file underneath was changed")
 	}
 }
