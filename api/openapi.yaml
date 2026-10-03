@@ -1,0 +1,826 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+
+openapi: 3.1.0
+info:
+  title: Lectio
+  version: 0.0.0
+  summary: Parse a file into pages, blocks, tables, and fields.
+  description: |
+    A parse turns one file into one document. It is asynchronous: a submit
+    answers at once, and the document is read as it is built, one page at a
+    time or whole.
+
+    What a parse does is fixed at submit by a small set of options, each
+    independent of the others: which pages, which reader, in which class
+    and with which priority, how many failed pages are tolerated, and by
+    when. What a caller sees of the result is chosen when it is read: the
+    format, the pages, how tables are written. Reading a result in another
+    form never runs the parse again. Chunking is a view of a document and
+    extraction is a request against one, so neither is a submit option.
+
+    A body with a field this document does not describe is refused with
+    `unknown_field`. A route marked `x-lectio-status: planned` is part of the
+    contract and answers `501 not_implemented` until it is built.
+
+    Every error has the same shape: one `code` to branch on, one `message`
+    for a person, and `details` for a developer.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+
+servers:
+  - url: /v1
+    description: The default base path. A deployment may mount the API under another.
+
+security:
+  - bearer: []
+
+tags:
+  - name: files
+    description: Source files. A file is a snapshot with a retention period, kept for the parses that read it.
+  - name: parses
+    description: Submitting a parse and following it.
+  - name: results
+    description: Reading what a parse produced, whole or one object at a time.
+  - name: fields
+    description: Extracting an object in the shape of a schema from a parsed document.
+  - name: operations
+    description: What is configured and what is running.
+
+paths:
+  /files:
+    post:
+      tags: [files]
+      operationId: createFile
+      summary: Upload a file.
+      description: |
+        The body is the file itself, with its media type in `Content-Type`,
+        or `multipart/form-data` with one part named `file`. It is stored
+        while it is hashed and never held whole in memory. Uploading bytes
+        the caller already has returns the existing file with `200`.
+      parameters:
+        - name: name
+          in: query
+          description: The file's name, used only to help tell its type when the content does not.
+          schema: { type: string, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: The caller already has these bytes., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
+        "201": { description: Stored., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+
+  /files/{file}:
+    parameters:
+      - $ref: "#/components/parameters/file"
+    get:
+      tags: [files]
+      operationId: getFile
+      summary: Read a file's metadata.
+      responses:
+        "200": { description: The file., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [files]
+      operationId: deleteFile
+      summary: Delete a file.
+      description: Refused with `not_terminal` while a parse that has not ended reads it.
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /parses:
+    post:
+      tags: [parses]
+      operationId: createParse
+      summary: Submit a parse.
+      description: |
+        Answers `202` with the parse. With `Prefer: wait=<seconds>` the
+        answer is held until the parse ends or the wait runs out, and is
+        `200` when it ended. A submit that matches an earlier succeeded
+        parse of the same content and options answers `200` with that parse
+        and `reused: true`, unless `reuse` is false.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: Makes the submit safe to repeat for 24 hours. The same key with a different body is `idempotency_conflict`.
+          schema: { type: string, maxLength: 255 }
+        - name: Prefer
+          in: header
+          description: "`wait=<seconds>`, at most 60."
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParseRequest" }
+      responses:
+        "200": { description: The parse ended within the wait, or an earlier parse was reused., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [parses]
+      operationId: listParses
+      summary: List parses, newest first.
+      parameters:
+        - { name: state, in: query, schema: { $ref: "#/components/schemas/ParseState" } }
+        - { name: file, in: query, schema: { type: string } }
+        - { name: origin.path, in: query, description: Parses submitted with this origin path., schema: { type: string } }
+        - { name: label, in: query, description: "`key=value`; may repeat, and every one must match.", schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: A page of parses., content: { application/json: { schema: { $ref: "#/components/schemas/ParseList" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [parses]
+      operationId: getParse
+      summary: Read a parse's state, progress, and usage.
+      responses:
+        "200": { description: The parse., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [parses]
+      operationId: deleteParse
+      summary: Delete a parse and everything it wrote.
+      description: Refused with `not_terminal` for a parse that has not ended; cancel it first.
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    post:
+      tags: [parses]
+      operationId: cancelParse
+      summary: Stop a parse.
+      description: |
+        No further page is read, and a page being read is abandoned. What
+        was already read stays readable. Canceling a parse that has ended
+        is `already_terminal`.
+      responses:
+        "200": { description: The parse, canceled or on its way., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/retry:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    post:
+      tags: [parses]
+      operationId: retryParse
+      x-lectio-status: planned
+      summary: Read again the pages that failed.
+      description: Pages that succeeded are not read again.
+      responses:
+        "202": { description: Queued again., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/events:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [parses]
+      operationId: streamParse
+      x-lectio-status: planned
+      summary: Follow a parse as server-sent events.
+      description: |
+        `state`, `page` (one per page that ended, with its number and
+        state), and `progress` events. Each carries an increasing id, and
+        `Last-Event-ID` resumes after it.
+      responses:
+        "200": { description: The stream., content: { text/event-stream: { schema: { type: string } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/document:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [results]
+      operationId: getDocument
+      summary: Read the document.
+      description: |
+        As JSON this is the document's index: its pages without their
+        blocks, the tables that continue across pages, the outline, and
+        usage. As Markdown or text it is the content in reading order.
+        Readable once the parse has assembled its pages, which a parse
+        with failed pages still does.
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, markdown, text], default: json }
+        - name: pages
+          in: query
+          description: Limits a Markdown or text rendering to these pages, in the syntax of a submit's `pages`.
+          schema: { type: string }
+        - name: tables
+          in: query
+          description: How a table is written in Markdown. `auto` writes Markdown unless a cell spans.
+          schema: { type: string, enum: [auto, markdown, html], default: auto }
+        - name: repeated
+          in: query
+          description: Whether running headers and footers are printed on every page or once.
+          schema: { type: string, enum: [once, keep, drop], default: once }
+        - name: page_breaks
+          in: query
+          description: Whether a Markdown rendering marks where each page begins.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The document.
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/Document" } }
+            text/markdown: { schema: { type: string } }
+            text/plain: { schema: { type: string } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/pages:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [results]
+      operationId: listPages
+      summary: List the pages and their states, without blocks.
+      responses:
+        "200": { description: The pages., content: { application/json: { schema: { $ref: "#/components/schemas/PageList" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/pages/{page}:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+      - $ref: "#/components/parameters/page"
+    get:
+      tags: [results]
+      operationId: getPage
+      summary: Read one page with its blocks.
+      description: Readable as soon as that page has been read, while the parse is still running. A page not read yet is `page_not_ready`.
+      responses:
+        "200": { description: The page., content: { application/json: { schema: { $ref: "#/components/schemas/Page" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/pages/{page}/image:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+      - $ref: "#/components/parameters/page"
+    get:
+      tags: [results]
+      operationId: getPageImage
+      summary: Read the image of a page that a reader saw.
+      description: The image is the one sent to the reader, so a block's box drawn over it lines up. A page read natively has none.
+      responses:
+        "200":
+          description: The image.
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/blocks/{ref}:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+      - name: ref
+        in: path
+        required: true
+        description: "`<page>.<order>`"
+        schema: { type: string, pattern: '^[1-9][0-9]*\.[1-9][0-9]*$' }
+    get:
+      tags: [results]
+      operationId: getBlock
+      summary: Read one block.
+      responses:
+        "200": { description: The block., content: { application/json: { schema: { $ref: "#/components/schemas/Block" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/chunks:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    get:
+      tags: [results]
+      operationId: listChunks
+      summary: Read the document as chunks for retrieval.
+      description: |
+        Chunks are computed when they are read, from the stored blocks, so
+        another strategy or size needs no new parse. Each chunk lists the
+        pages and blocks it covers.
+      parameters:
+        - name: by
+          in: query
+          schema: { type: string, enum: [page, section], default: section }
+        - name: max_chars
+          in: query
+          description: A chunk longer than this is split at block boundaries.
+          schema: { type: integer, minimum: 200, maximum: 100000, default: 6000 }
+      responses:
+        "200": { description: One chunk per line., content: { application/x-ndjson: { schema: { $ref: "#/components/schemas/Chunk" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/fields:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+    post:
+      tags: [fields]
+      operationId: createField
+      x-lectio-status: planned
+      summary: Extract an object in the shape of a schema.
+      description: |
+        May be requested while the parse is running; it waits for the
+        document. Reads no page again. A second request with a name already
+        used is `conflict`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldRequest" }
+      responses:
+        "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [fields]
+      operationId: listFields
+      x-lectio-status: planned
+      summary: List a parse's extractions.
+      responses:
+        "200": { description: The extractions., content: { application/json: { schema: { $ref: "#/components/schemas/FieldList" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /parses/{parse}/fields/{name}:
+    parameters:
+      - $ref: "#/components/parameters/parse"
+      - { name: name, in: path, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' } }
+    get:
+      tags: [fields]
+      operationId: getField
+      x-lectio-status: planned
+      summary: Read one extraction.
+      parameters:
+        - name: resolve
+          in: query
+          description: Returns each citation with its page and box, and not as a ref alone.
+          schema: { type: boolean, default: false }
+      responses:
+        "200": { description: The extraction., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /readers:
+    get:
+      tags: [operations]
+      operationId: listReaders
+      summary: List the configured readers and what each accepts.
+      responses:
+        "200": { description: The readers., content: { application/json: { schema: { $ref: "#/components/schemas/ReaderList" } } } }
+
+  /usage:
+    get:
+      tags: [operations]
+      operationId: getUsage
+      x-lectio-status: planned
+      summary: Read what was consumed, summed by a key over fixed intervals.
+      parameters:
+        - { name: by, in: query, schema: { type: string, enum: [group, owner, reader, model], default: group } }
+        - { name: interval, in: query, schema: { type: string, enum: [hour, day], default: hour } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: The sums., content: { application/json: { schema: { type: object } } } }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /queue:
+    get:
+      tags: [operations]
+      operationId: getQueue
+      x-lectio-status: planned
+      summary: Read what is waiting and running, per group.
+      responses:
+        "200": { description: The queue., content: { application/json: { schema: { type: object } } } }
+        "501": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+
+  parameters:
+    file:
+      name: file
+      in: path
+      required: true
+      schema: { type: string, pattern: '^fil_[0-9A-Z]{26}$' }
+    parse:
+      name: parse
+      in: path
+      required: true
+      schema: { type: string, pattern: '^prs_[0-9A-Z]{26}$' }
+    page:
+      name: page
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    Error:
+      description: The request was refused or failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: What a caller branches on.
+              enum:
+                - invalid_request
+                - unknown_field
+                - invalid_pages
+                - invalid_schema
+                - unsupported_media_type
+                - file_too_large
+                - too_many_pages
+                - source_unreachable
+                - missing_token
+                - invalid_token
+                - forbidden
+                - reader_not_permitted
+                - reader_not_found
+                - file_not_found
+                - parse_not_found
+                - page_not_found
+                - page_not_ready
+                - block_not_found
+                - document_not_ready
+                - conflict
+                - idempotency_conflict
+                - not_terminal
+                - already_terminal
+                - rate_limited
+                - queue_full
+                - budget_exhausted
+                - not_implemented
+                - internal
+            message: { type: string, description: One fixed sentence for a person. }
+            details:
+              type: object
+              description: For a developer. `reason` says what happened in this instance, and `retryable` whether the same request may succeed later.
+              properties:
+                reason: { type: string }
+                retryable: { type: boolean }
+                field: { type: string }
+
+    File:
+      type: object
+      required: [id, size, sha256, media_type, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string }
+        media_type: { type: string, description: What the content was detected to be. }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    ParseRequest:
+      type: object
+      additionalProperties: false
+      required: [source]
+      properties:
+        source:
+          description: Where the bytes come from. Exactly one member.
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          maxProperties: 1
+          properties:
+            file: { type: string, description: The id of an uploaded file. }
+            url: { type: string, format: uri, description: Fetched once, before any page is read. Only a publicly routable address is fetched. }
+        origin:
+          description: Where the file lives for the caller. Stored, returned, and filterable; never interpreted.
+          type: object
+          additionalProperties: false
+          properties:
+            store: { type: string, maxLength: 64 }
+            path: { type: string, maxLength: 1024 }
+            version: { type: string, maxLength: 64 }
+        pages:
+          type: string
+          description: Which pages, counted from 1, as ranges and numbers separated by commas. An open range runs to the end. Absent means all.
+          examples: ["1-3,7", "5-"]
+        reader:
+          type: string
+          description: The name of a configured reader. Naming one pins it, and the parse never falls back to another. Absent, the routing policy decides.
+        languages:
+          type: array
+          maxItems: 8
+          description: Hints for the reader, most likely first, as BCP 47 tags.
+          items: { type: string, maxLength: 35 }
+        class:
+          type: string
+          enum: [interactive, batch]
+          default: interactive
+          description: Interactive work goes ahead of batch work and never starves it.
+        priority:
+          type: integer
+          default: 0
+          description: Orders the caller's own parses. It never moves one caller ahead of another.
+        allow_failed_pages:
+          type: integer
+          minimum: 0
+          default: 0
+          description: How many pages may fail and still leave the parse succeeded. Pages that were read are kept either way.
+        deadline:
+          type: string
+          description: How long the parse may take from submit, as a duration such as `10m`. Past it the parse fails with `deadline_exceeded`.
+        reuse:
+          type: boolean
+          default: true
+          description: Whether an earlier succeeded parse of the same content and options may be returned in place of new work.
+        labels:
+          type: object
+          maxProperties: 16
+          description: The caller's own keys and values, returned and filterable.
+          additionalProperties: { type: string, maxLength: 256 }
+
+    ParseState:
+      type: string
+      enum: [queued, running, succeeded, failed, canceled]
+
+    Parse:
+      type: object
+      required: [id, state, class, priority, file, progress, usage, created_at]
+      properties:
+        id: { type: string }
+        owner: { type: string }
+        state: { $ref: "#/components/schemas/ParseState" }
+        reused: { type: boolean, description: Present and true when this answer is an earlier parse. }
+        class: { type: string, enum: [interactive, batch] }
+        priority: { type: integer }
+        file: { type: string }
+        origin: { type: object }
+        pages: { type: string }
+        reader: { type: string }
+        languages: { type: array, items: { type: string } }
+        allow_failed_pages: { type: integer }
+        labels: { type: object, additionalProperties: { type: string } }
+        progress:
+          type: object
+          required: [stage, pages_total, pages_done, pages_failed]
+          properties:
+            stage: { type: string, enum: [queued, preparing, reading, assembling, done] }
+            pages_total: { type: integer }
+            pages_done: { type: integer }
+            pages_failed: { type: integer }
+            waiting:
+              type: string
+              enum: [turn, capacity]
+              description: Why nothing is moving, when nothing is.
+        usage: { $ref: "#/components/schemas/Usage" }
+        error: { $ref: "#/components/schemas/Problem" }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+
+    ParseList:
+      type: object
+      required: [parses]
+      properties:
+        parses: { type: array, items: { $ref: "#/components/schemas/Parse" } }
+        next_cursor: { type: string }
+
+    Problem:
+      type: object
+      required: [code]
+      description: Why a page, an extraction, or a parse failed.
+      properties:
+        code:
+          type: string
+          enum: [document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
+        detail: { type: string }
+
+    Usage:
+      type: object
+      properties:
+        pages: { type: integer }
+        input_tokens: { type: integer, format: int64 }
+        output_tokens: { type: integer, format: int64 }
+        cost: { type: string, description: Present only when the model endpoint reported a cost. }
+        currency: { type: string }
+
+    Kind:
+      type: string
+      description: What a block is. The set is closed; a label a reader returns outside it becomes `text`.
+      enum: [title, heading, text, list_item, table, figure, formula, form, key_value, caption, footnote, page_header, page_footer, page_number, signature, barcode, code]
+
+    Box:
+      description: "`[x0, y0, x1, y1]` as fractions of the page's width and height, origin at the top left. Null when the position is unknown."
+      type: [array, "null"]
+      minItems: 4
+      maxItems: 4
+      items: { type: number, minimum: 0, maximum: 1 }
+
+    Block:
+      type: object
+      required: [ref, kind, order, box, text]
+      properties:
+        ref: { type: string, description: "`<page>.<order>`, stable for the life of the parse." }
+        kind: { $ref: "#/components/schemas/Kind" }
+        order: { type: integer, minimum: 1, description: Reading order within the page. }
+        box: { $ref: "#/components/schemas/Box" }
+        text: { type: string, description: The content as plain text. A table's cells joined row by row; a figure's description. }
+        level: { type: integer, minimum: 1, maximum: 6, description: The depth of a title or heading. }
+        table: { $ref: "#/components/schemas/Table" }
+        repeated: { type: boolean, description: A running header or footer after its first occurrence. }
+        flags:
+          type: array
+          description: What validation did to the block.
+          items: { type: string, enum: [box_clamped, kind_coerced, truncated] }
+
+    Table:
+      type: object
+      required: [rows, cols]
+      properties:
+        rows: { type: integer }
+        cols: { type: integer }
+        cells: { type: array, items: { $ref: "#/components/schemas/Cell" } }
+        html: { type: string, description: The table's markup as it was produced, kept because it carries merged cells without loss. }
+
+    Cell:
+      type: object
+      required: [row, col, text]
+      properties:
+        row: { type: integer, minimum: 0 }
+        col: { type: integer, minimum: 0 }
+        row_span: { type: integer, minimum: 2 }
+        col_span: { type: integer, minimum: 2 }
+        text: { type: string }
+        box: { $ref: "#/components/schemas/Box" }
+
+    Page:
+      type: object
+      required: [number, width, height, state, blocks]
+      properties:
+        number: { type: integer, minimum: 1 }
+        width: { type: number, description: Points for paged formats, pixels for images. Boxes do not depend on it. }
+        height: { type: number }
+        rotation: { type: integer }
+        state: { type: string, enum: [pending, succeeded, failed] }
+        source: { type: string, enum: [reader, native], description: Whether a model read the page or the format carried its own structure. }
+        reader: { type: string }
+        model: { type: string }
+        attempts: { type: integer }
+        blocks: { type: array, items: { $ref: "#/components/schemas/Block" } }
+        usage: { $ref: "#/components/schemas/Usage" }
+        error: { $ref: "#/components/schemas/Problem" }
+
+    PageSummary:
+      type: object
+      required: [number, state, blocks]
+      properties:
+        number: { type: integer }
+        state: { type: string, enum: [pending, succeeded, failed] }
+        source: { type: string, enum: [reader, native] }
+        blocks: { type: integer, description: How many blocks the page holds. }
+        error: { $ref: "#/components/schemas/Problem" }
+
+    PageList:
+      type: object
+      required: [pages]
+      properties:
+        pages: { type: array, items: { $ref: "#/components/schemas/PageSummary" } }
+
+    Document:
+      type: object
+      required: [parse, pages, usage]
+      properties:
+        parse: { type: string }
+        pages: { type: array, items: { $ref: "#/components/schemas/PageSummary" } }
+        spans:
+          type: array
+          description: Tables that continue across pages, as joins of the table blocks that hold their parts.
+          items:
+            type: object
+            required: [id, parts, rows, cols]
+            properties:
+              id: { type: string }
+              parts: { type: array, items: { type: string } }
+              rows: { type: integer }
+              cols: { type: integer }
+        outline:
+          type: array
+          items:
+            type: object
+            required: [ref, level, text, page]
+            properties:
+              ref: { type: string }
+              level: { type: integer }
+              text: { type: string }
+              page: { type: integer }
+        usage: { $ref: "#/components/schemas/Usage" }
+        renderings: { type: array, items: { type: string } }
+        fields: { type: array, items: { type: string } }
+
+    Chunk:
+      type: object
+      required: [id, text, pages, blocks]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        pages: { type: array, items: { type: integer } }
+        blocks: { type: array, items: { type: string } }
+
+    FieldRequest:
+      type: object
+      additionalProperties: false
+      required: [name, schema]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        schema: { type: object, description: A JSON Schema, draft 2020-12, whose root is an object. }
+        instructions: { type: string, maxLength: 4000 }
+        citations: { type: boolean, default: true }
+        extractor: { type: string, description: The name of a configured extractor. Absent, the routing policy decides. }
+
+    Field:
+      type: object
+      required: [name, state, constrained]
+      properties:
+        name: { type: string }
+        state: { type: string, enum: [pending, succeeded, failed] }
+        data: { description: The object, in the shape of the schema. }
+        citations:
+          type: object
+          description: A JSON pointer into `data`, to the refs of the blocks the value was read from.
+          additionalProperties: { type: array, items: { type: string } }
+        model: { type: string }
+        constrained: { type: boolean, description: Whether the schema was enforced by the model's decoding. }
+        attempts: { type: integer }
+        windows: { type: integer }
+        usage: { $ref: "#/components/schemas/Usage" }
+        error: { $ref: "#/components/schemas/Problem" }
+
+    FieldList:
+      type: object
+      required: [fields]
+      properties:
+        fields: { type: array, items: { $ref: "#/components/schemas/Field" } }
+
+    Reader:
+      type: object
+      required: [name, accepts, image, boxes]
+      properties:
+        name: { type: string }
+        accepts: { type: array, items: { type: string } }
+        image:
+          type: object
+          properties:
+            dpi: { type: integer }
+            long_edge: { type: integer }
+            format: { type: string, enum: [png, jpeg] }
+        boxes: { type: boolean, description: Whether the reader returns a position for each block. }
+        kinds: { type: array, items: { $ref: "#/components/schemas/Kind" } }
+        default: { type: boolean, description: Whether the routing policy tries this reader first. }
+
+    ReaderList:
+      type: object
+      required: [readers]
+      properties:
+        readers: { type: array, items: { $ref: "#/components/schemas/Reader" } }
