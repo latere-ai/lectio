@@ -60,7 +60,21 @@ func Normalize(raws []Raw, grid Grid) []document.Block {
 		if !known {
 			b.Flags = append(b.Flags, document.FlagKindCoerced)
 		}
-		if kind != document.KindTitle && kind != document.KindHeading {
+		switch kind {
+		case document.KindTitle, document.KindHeading:
+			// An engine that writes text as Markdown puts a heading's
+			// depth in its marks. The marks give the level when the
+			// engine named none, and are not part of the text.
+			if marks, rest, ok := headingMarks(b.Text); ok {
+				b.Text = rest
+				if b.Level == 0 {
+					b.Level = marks
+				}
+			}
+		case document.KindFormula:
+			b.Level = 0
+			b.Text = mathBody(b.Text)
+		default:
 			b.Level = 0
 		}
 
@@ -96,6 +110,30 @@ func Normalize(raws []Raw, grid Grid) []document.Block {
 		blocks[i].Ref = ""
 	}
 	return blocks
+}
+
+// headingMarks reads the Markdown marks a heading's text begins with: one
+// to six number signs and a space. It returns how many there are and the
+// text after them.
+func headingMarks(text string) (marks int, rest string, ok bool) {
+	rest = strings.TrimLeft(text, "#")
+	marks = len(text) - len(rest)
+	if marks < 1 || marks > 6 || !strings.HasPrefix(rest, " ") {
+		return 0, text, false
+	}
+	return marks, strings.TrimSpace(rest), true
+}
+
+// mathBody returns a formula without the delimiters an engine wrapped it
+// in. The text of a formula block is the formula; a rendering adds the
+// delimiters its format needs.
+func mathBody(text string) string {
+	for _, pair := range [][2]string{{"$$", "$$"}, {`\[`, `\]`}, {`\(`, `\)`}, {"$", "$"}} {
+		if len(text) >= len(pair[0])+len(pair[1]) && strings.HasPrefix(text, pair[0]) && strings.HasSuffix(text, pair[1]) {
+			return strings.TrimSpace(text[len(pair[0]) : len(text)-len(pair[1])])
+		}
+	}
+	return text
 }
 
 // scale turns an engine's box into a fraction of the page.
@@ -228,6 +266,13 @@ func TableFromHTML(markup string) (table *document.Table, ok bool) {
 				col += colSpan
 			case "br":
 				text.WriteByte(' ')
+			case "sup", "sub":
+				// A raised or lowered run is part of the value: n squared
+				// is not n2. Plain text marks it the way plain-text math
+				// does, with a caret or an underscore.
+				if cell != nil {
+					text.WriteString(map[string]string{"sup": "^", "sub": "_"}[string(name)])
+				}
 			}
 		case html.EndTagToken:
 			if name, _ := z.TagName(); string(name) == "td" || string(name) == "th" {

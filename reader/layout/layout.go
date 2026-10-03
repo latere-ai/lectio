@@ -7,7 +7,7 @@
 // model. Anything that can answer the contract below can read pages for
 // Lectio, whatever model is behind it.
 //
-// The request is a POST of multipart/form-data with one file field, image,
+// The request is a POST of multipart/form-data with one file field, file,
 // holding the page as a PNG or a JPEG, and an optional field, languages,
 // holding comma-separated hints. A key, when one is configured for the
 // call, is sent as a bearer.
@@ -146,7 +146,7 @@ func (r *Reader) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
 	header := textproto.MIMEHeader{}
-	header.Set("Content-Disposition", `form-data; name="image"; filename="page"`)
+	header.Set("Content-Disposition", `form-data; name="file"; filename="page"`)
 	header.Set("Content-Type", page.MediaType)
 	// Writes to a bytes.Buffer do not fail, so neither do the form's.
 	part, _ := form.CreatePart(header)

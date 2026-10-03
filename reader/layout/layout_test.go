@@ -38,7 +38,7 @@ func serve(t *testing.T) *engine {
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Errorf("the request is not a form: %v", err)
 		}
-		if f, h, err := r.FormFile("image"); err == nil {
+		if f, h, err := r.FormFile("file"); err == nil {
 			raw, _ := io.ReadAll(f)
 			e.image, e.mediaType = string(raw), h.Header.Get("Content-Type")
 		}

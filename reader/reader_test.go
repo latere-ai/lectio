@@ -290,3 +290,42 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("a short reply is not judged: %v", err)
 	}
 }
+
+// An engine that writes Markdown puts a heading's depth in its marks and
+// wraps a formula in delimiters. Neither is part of the block's text.
+func TestNormalizeReadsWhatAnEngineWritesAsMarkdown(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw   Raw
+		text  string
+		level int
+	}{
+		"a heading's marks give its level":      {Raw{Label: "Section-header", Text: "### 3.2.1 Scaled Dot-Product Attention"}, "3.2.1 Scaled Dot-Product Attention", 3},
+		"a level the engine named is kept":      {Raw{Label: "Section-header", Text: "## Results", Level: 4}, "Results", 4},
+		"a title with one mark":                 {Raw{Label: "Title", Text: "# Attention Is All You Need"}, "Attention Is All You Need", 1},
+		"a heading with no mark":                {Raw{Label: "Section-header", Text: "4 Why Self-Attention"}, "4 Why Self-Attention", 0},
+		"a number sign that is not a mark":      {Raw{Label: "Section-header", Text: "#hashtag"}, "#hashtag", 0},
+		"seven signs are not a heading's marks": {Raw{Label: "Section-header", Text: "####### deep"}, "####### deep", 0},
+		"text keeps its number signs":           {Raw{Label: "Text", Text: "## not a heading"}, "## not a heading", 0},
+		"a formula in display delimiters":       {Raw{Label: "Formula", Text: "$$\nE = mc^2 \\quad (1)\n$$"}, "E = mc^2 \\quad (1)", 0},
+		"a formula in bracket delimiters":       {Raw{Label: "Formula", Text: `\[ a + b \]`}, "a + b", 0},
+		"a formula in inline delimiters":        {Raw{Label: "Formula", Text: "$x_i$", Level: 2}, "x_i", 0},
+		"a formula with none":                   {Raw{Label: "Formula", Text: "a^2 + b^2"}, "a^2 + b^2", 0},
+		"a lone delimiter is the formula":       {Raw{Label: "Formula", Text: "$"}, "$", 0},
+	} {
+		got := Normalize([]Raw{tc.raw}, Grid{1000, 1000})
+		if len(got) != 1 || got[0].Text != tc.text || got[0].Level != tc.level {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+}
+
+func TestATableCellKeepsWhatIsRaisedOrLowered(t *testing.T) {
+	table, ok := TableFromHTML(`<table><tr><td>O(n<sup>2</sup> · d)</td><td>O(log<sub>k</sub>(n))</td></tr></table>`)
+	if !ok || len(table.Cells) != 2 || table.Cells[0].Text != "O(n^2 · d)" || table.Cells[1].Text != "O(log_k(n))" {
+		t.Fatalf("cells: %+v", table)
+	}
+	// Outside a cell the marks are not text.
+	if table, ok := TableFromHTML(`<table><sup>x</sup><tr><td>a</td></tr></table>`); !ok || table.Cells[0].Text != "a" {
+		t.Fatalf("a mark outside a cell: %+v", table)
+	}
+}
