@@ -57,3 +57,6 @@ refused before it is pushed.
   reader cannot.
 - Added: `make live` with `LECTIO_LIVE_DESCRIBE=1` also describes the
   figures of the file it parses.
+- Changed: every operation's `summary` in `api/openapi.yaml` is a short
+  label with no closing period, and the sentence it replaced opens the
+  operation's description, so a reference renders the document as it is.

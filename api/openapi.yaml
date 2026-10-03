@@ -66,7 +66,7 @@ paths:
     post:
       tags: [files]
       operationId: createFile
-      summary: Upload a file.
+      summary: Upload a file
       description: |
         The body is the file itself, with its media type in `Content-Type`,
         or `multipart/form-data` with one part named `file`. It is stored
@@ -101,14 +101,14 @@ paths:
     get:
       tags: [files]
       operationId: getFile
-      summary: Read a file's metadata.
+      summary: Read a file's metadata
       responses:
         "200": { description: The file., content: { application/json: { schema: { $ref: "#/components/schemas/File" } } } }
         "404": { $ref: "#/components/responses/Error" }
     delete:
       tags: [files]
       operationId: deleteFile
-      summary: Delete a file.
+      summary: Delete a file
       description: Refused with `not_terminal` while a parse that has not ended reads it.
       responses:
         "204": { description: Deleted. }
@@ -119,7 +119,7 @@ paths:
     post:
       tags: [parses]
       operationId: createParse
-      summary: Submit a parse.
+      summary: Submit a parse
       description: |
         Answers `202` with the parse. With `Prefer: wait=<seconds>` the
         answer is held until the parse ends or the wait runs out, and is
@@ -157,7 +157,7 @@ paths:
     get:
       tags: [parses]
       operationId: listParses
-      summary: List parses, newest first.
+      summary: List parses, newest first
       parameters:
         - { name: state, in: query, schema: { $ref: "#/components/schemas/ParseState" } }
         - { name: file, in: query, schema: { type: string } }
@@ -175,15 +175,19 @@ paths:
     get:
       tags: [parses]
       operationId: getParse
-      summary: Read a parse's state, progress, and usage.
+      summary: Read a parse
+      description: Read a parse's state, progress, and usage.
       responses:
         "200": { description: The parse., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "404": { $ref: "#/components/responses/Error" }
     delete:
       tags: [parses]
       operationId: deleteParse
-      summary: Delete a parse and everything it wrote.
-      description: Refused with `not_terminal` for a parse that has not ended; cancel it first.
+      summary: Delete a parse
+      description: |
+        Delete a parse and everything it wrote.
+
+        Refused with `not_terminal` for a parse that has not ended; cancel it first.
       responses:
         "204": { description: Deleted. }
         "404": { $ref: "#/components/responses/Error" }
@@ -195,7 +199,7 @@ paths:
     post:
       tags: [parses]
       operationId: cancelParse
-      summary: Stop a parse.
+      summary: Stop a parse
       description: |
         No further page is read, and a page being read is abandoned. What
         was already read stays readable. Canceling a parse that has ended
@@ -212,8 +216,11 @@ paths:
       tags: [parses]
       operationId: retryParse
       x-lectio-status: planned
-      summary: Read again the pages that failed.
-      description: Pages that succeeded are not read again.
+      summary: Retry failed pages
+      description: |
+        Read again the pages that failed.
+
+        Pages that succeeded are not read again.
       responses:
         "202": { description: Queued again., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -227,8 +234,10 @@ paths:
       tags: [parses]
       operationId: streamParse
       x-lectio-status: planned
-      summary: Follow a parse as server-sent events.
+      summary: Follow a parse
       description: |
+        Follow a parse as server-sent events.
+
         `state`, `page` (one per page that ended, with its number and
         state), and `progress` events. Each carries an increasing id, and
         `Last-Event-ID` resumes after it.
@@ -243,7 +252,7 @@ paths:
     get:
       tags: [results]
       operationId: getDocument
-      summary: Read the document.
+      summary: Read the document
       description: |
         As JSON this is the document's index: its pages without their
         blocks, the tables that continue across pages, the outline, and
@@ -287,7 +296,8 @@ paths:
     get:
       tags: [results]
       operationId: listPages
-      summary: List the pages and their states, without blocks.
+      summary: List pages
+      description: List the pages and their states, without blocks.
       responses:
         "200": { description: The pages., content: { application/json: { schema: { $ref: "#/components/schemas/PageList" } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -299,8 +309,10 @@ paths:
     get:
       tags: [results]
       operationId: getPage
-      summary: Read one page with its blocks.
+      summary: Read one page
       description: |
+        Read one page with its blocks.
+
         Readable as soon as that page has been read, while the parse is
         still running. A page not read yet is `409 page_not_ready`. A page
         the parse does not read, or one it ended without reading, is
@@ -318,8 +330,11 @@ paths:
     get:
       tags: [results]
       operationId: getPageImage
-      summary: Read the image of a page that a reader saw.
-      description: The image is the one sent to the reader, so a block's box drawn over it lines up. A page read natively has none.
+      summary: Read a page image
+      description: |
+        Read the image of a page that a reader saw.
+
+        The image is the one sent to the reader, so a block's box drawn over it lines up. A page read natively has none.
       responses:
         "200":
           description: The image.
@@ -336,8 +351,10 @@ paths:
     get:
       tags: [results]
       operationId: listBlocks
-      summary: Read every block of the pages read so far.
+      summary: Read every block
       description: |
+        Read every block of the pages read so far.
+
         The bulk read: all blocks in page and reading order, one per line,
         in one answer. It answers while the parse runs, with the pages
         read so far. A block's `ref` says which page it is on.
@@ -363,7 +380,7 @@ paths:
     get:
       tags: [results]
       operationId: getBlock
-      summary: Read one block.
+      summary: Read one block
       responses:
         "200": { description: The block., content: { application/json: { schema: { $ref: "#/components/schemas/Block" } } } }
         "400": { $ref: "#/components/responses/Error" }
@@ -381,8 +398,10 @@ paths:
     get:
       tags: [results]
       operationId: getBlockImage
-      summary: Read a block as it looks on its page.
+      summary: Read a block image
       description: |
+        Read a block as it looks on its page.
+
         The page's image cut to the block's box: a figure, a table, a
         signature as an image of its own. The page image is the one the
         reader saw, so the cut is the region the box names. A block with
@@ -403,8 +422,10 @@ paths:
     post:
       tags: [figures]
       operationId: createFigures
-      summary: Describe the figures of a parse.
+      summary: Describe figures
       description: |
+        Describe the figures of a parse.
+
         A reader that finds a figure says where it is. This asks a
         describer what each figure shows: the figure is cut from its
         page's image and described alone, and the answer is written onto
@@ -445,8 +466,11 @@ paths:
     get:
       tags: [figures]
       operationId: listFigures
-      summary: List a parse's figures and the run that describes them.
-      description: Every figure block of the parse, described or not. `run` is absent when no run was started.
+      summary: List figures
+      description: |
+        List a parse's figures and the run that describes them.
+
+        Every figure block of the parse, described or not. `run` is absent when no run was started.
       responses:
         "200": { description: The figures., content: { application/json: { schema: { $ref: "#/components/schemas/Figures" } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -457,8 +481,10 @@ paths:
     get:
       tags: [results]
       operationId: listChunks
-      summary: Read the document as chunks for retrieval.
+      summary: Read chunks for retrieval
       description: |
+        Read the document as chunks for retrieval.
+
         Chunks are computed when they are read, from the stored blocks, so
         another strategy or size needs no new parse. Each chunk lists the
         pages and blocks it covers.
@@ -483,8 +509,10 @@ paths:
       tags: [fields]
       operationId: createField
       x-lectio-status: planned
-      summary: Extract an object in the shape of a schema.
+      summary: Extract an object
       description: |
+        Extract an object in the shape of a schema.
+
         May be requested while the parse is running; it waits for the
         document. Reads no page again. A second request with a name already
         used is `conflict`.
@@ -503,7 +531,7 @@ paths:
       tags: [fields]
       operationId: listFields
       x-lectio-status: planned
-      summary: List a parse's extractions.
+      summary: List a parse's extractions
       responses:
         "200": { description: The extractions., content: { application/json: { schema: { $ref: "#/components/schemas/FieldList" } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -517,7 +545,7 @@ paths:
       tags: [fields]
       operationId: getField
       x-lectio-status: planned
-      summary: Read one extraction.
+      summary: Read one extraction
       parameters:
         - name: resolve
           in: query
@@ -532,7 +560,7 @@ paths:
     get:
       tags: [operations]
       operationId: getContract
-      summary: Read this document.
+      summary: Read this document
       security: []
       responses:
         "200": { description: The contract., content: { application/yaml: { schema: { type: string } } } }
@@ -541,7 +569,8 @@ paths:
     get:
       tags: [operations]
       operationId: listReaders
-      summary: List the configured readers and what each accepts.
+      summary: List the configured readers
+      description: List the configured readers and what each accepts.
       responses:
         "200": { description: The readers., content: { application/json: { schema: { $ref: "#/components/schemas/ReaderList" } } } }
 
@@ -550,7 +579,8 @@ paths:
       tags: [operations]
       operationId: getUsage
       x-lectio-status: planned
-      summary: Read what was consumed, summed by a key over fixed intervals.
+      summary: Read usage
+      description: Read what was consumed, summed by a key over fixed intervals.
       parameters:
         - { name: by, in: query, schema: { type: string, enum: [group, owner, reader, model], default: group } }
         - { name: interval, in: query, schema: { type: string, enum: [hour, day], default: hour } }
@@ -565,7 +595,8 @@ paths:
       tags: [operations]
       operationId: getQueue
       x-lectio-status: planned
-      summary: Read what is waiting and running, per group and project.
+      summary: Read the queue
+      description: Read what is waiting and running, per group and project.
       responses:
         "200": { description: The queue., content: { application/json: { schema: { type: object } } } }
         "501": { $ref: "#/components/responses/Error" }
