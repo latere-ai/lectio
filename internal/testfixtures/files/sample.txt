@@ -1,0 +1,2 @@
+Lectio plain text fixture.
+Line two.
