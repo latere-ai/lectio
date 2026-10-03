@@ -20,6 +20,7 @@ import (
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/render"
+	"latere.ai/x/lectio/reader"
 )
 
 // File is a source snapshot.
@@ -128,6 +129,8 @@ type Memory struct {
 	documents map[string]document.Document
 	keys      map[string]idempotent
 	read      map[string]readPage
+	runs      map[string]FigureRun
+	figures   map[string]reader.FigureResult
 }
 
 // readPage is one page's result as a reader gave it, kept under what was
@@ -149,7 +152,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		files: map[string]File{}, parses: map[string]Parse{}, pages: map[pageKey]document.Page{},
 		images: map[pageKey]render.Image{}, documents: map[string]document.Document{}, keys: map[string]idempotent{},
-		read: map[string]readPage{},
+		read: map[string]readPage{}, runs: map[string]FigureRun{}, figures: map[string]reader.FigureResult{},
 	}
 }
 
@@ -349,6 +352,118 @@ func (m *Memory) Read(owner, key string) (document.Page, *render.Image, bool) {
 	return kept.page, kept.image, true
 }
 
+// The states of a run that describes a parse's figures.
+const (
+	RunRunning   = "running"
+	RunSucceeded = "succeeded"
+	RunFailed    = "failed"
+)
+
+// FigureRun is one request to describe the figures of a parse, and where
+// it stands. A parse has at most one: a later request replaces an earlier
+// one that has ended.
+type FigureRun struct {
+	State string
+
+	// Total is how many figures the run set out to describe. Done and
+	// Failed count the ones that ended, and Reused those of Done that were
+	// taken from an earlier description and cost no call.
+	Total, Done, Failed, Reused int
+
+	// Failures says why each figure that failed did, by its block's ref.
+	Failures map[string]document.Error
+
+	// Usage is what the run's calls consumed.
+	Usage document.Usage
+
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
+// StartFigureRun records a run for a parse. It is refused while an earlier
+// run of the same parse has not ended: two runs would describe the same
+// figures twice and write over each other.
+func (m *Memory) StartFigureRun(parseID string, run FigureRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if have, ok := m.runs[parseID]; ok && have.State == RunRunning {
+		return fault.New(fault.Conflict, "the figures of parse %s are being described", parseID)
+	}
+	m.runs[parseID] = run
+	return nil
+}
+
+// FigureRun returns the run of a parse's figures, when one was started.
+func (m *Memory) FigureRun(parseID string) (FigureRun, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	run, ok := m.runs[parseID]
+	if ok {
+		run.Failures = maps.Clone(run.Failures)
+	}
+	return run, ok
+}
+
+// UpdateFigureRun changes a parse's run under the store's lock. A run
+// whose parse was deleted meanwhile is left alone.
+func (m *Memory) UpdateFigureRun(parseID string, change func(*FigureRun)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.runs[parseID]
+	if !ok {
+		return
+	}
+	run.Failures = maps.Clone(run.Failures)
+	change(&run)
+	m.runs[parseID] = run
+}
+
+// UpdateBlock changes one block of a stored page under the store's lock.
+// The page's blocks are copied first, so a page that is being served is
+// not changed under its reader, and two changes to one page do not lose
+// each other. It reports whether the block is there.
+func (m *Memory) UpdateBlock(parseID, ref string, change func(*document.Block)) bool {
+	n, order, err := document.ParseRef(ref)
+	if err != nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := pageKey{parseID, n}
+	page, ok := m.pages[key]
+	if !ok || order > len(page.Blocks) {
+		return false
+	}
+	page.Blocks = slices.Clone(page.Blocks)
+	change(&page.Blocks[order-1])
+	m.pages[key] = page
+	return true
+}
+
+// KeepFigure keeps what a describer said of a figure under a key that
+// names the figure and the describers, per owner, the way KeepRead keeps a
+// page: the same figure is not described twice.
+func (m *Memory) KeepFigure(owner, key string, res reader.FigureResult) {
+	if key == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.figures[owner+"\x00"+key] = res
+}
+
+// Figure returns the description kept under a key, when there is one.
+func (m *Memory) Figure(owner, key string) (reader.FigureResult, bool) {
+	if key == "" {
+		return reader.FigureResult{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res, ok := m.figures[owner+"\x00"+key]
+	res.Labels = slices.Clone(res.Labels)
+	return res, ok
+}
+
 // DeleteParse removes an owner's parse and everything it wrote. A parse
 // that has not ended is not removed.
 func (m *Memory) DeleteParse(owner, id string) error {
@@ -363,6 +478,7 @@ func (m *Memory) DeleteParse(owner, id string) error {
 	}
 	delete(m.parses, id)
 	delete(m.documents, id)
+	delete(m.runs, id)
 	maps.DeleteFunc(m.pages, func(k pageKey, _ document.Page) bool { return k.parse == id })
 	maps.DeleteFunc(m.images, func(k pageKey, _ render.Image) bool { return k.parse == id })
 	return nil

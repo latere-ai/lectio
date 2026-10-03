@@ -15,6 +15,9 @@
 // the page being read. What it does not hold to, and says so here, is
 // durability, fairness between tenants, and a bound on a batch backlog's
 // wait. Those are specs 004, 006 and 007.
+//
+// It also describes a parse's figures on request, one call per figure,
+// through the same queue and with the same handling of a failed call.
 package run
 
 import (
@@ -54,6 +57,12 @@ type Runner struct {
 	Readers map[string]reader.Reader
 	Chain   []string
 
+	// Describers are the configured describers by name, and DescribeChain
+	// is the routing policy's order for them. With none configured a
+	// request to describe figures is refused.
+	Describers    map[string]reader.Describer
+	DescribeChain []string
+
 	// Credential returns the key an owner's pages are read with. Nil means
 	// every call is made without one.
 	Credential func(owner string) reader.Credential
@@ -72,7 +81,9 @@ type Runner struct {
 	queue   queue
 	base    context.Context
 	running map[string]*handle
-	wg      sync.WaitGroup
+	// describing holds the runs that describe figures, by parse.
+	describing map[string]*handle
+	wg         sync.WaitGroup
 }
 
 // handle is what the runner keeps for a parse that has not ended.
@@ -81,16 +92,22 @@ type handle struct {
 	done   chan struct{}
 }
 
-// job is one page waiting to be read.
+// job is one call waiting for a worker: a page to read, or a figure to
+// describe. The queue orders jobs by their parse's class, owner and
+// priority and by seq, and knows nothing else about them.
 type job struct {
-	ctx      context.Context
-	parse    store.Parse
+	ctx   context.Context
+	parse store.Parse
+	seq   int
+	wg    *sync.WaitGroup
+	// do is the work, run by the worker that takes the job.
+	do func()
+
+	// What a page job reads.
 	manifest parse.Manifest
 	working  []byte
 	chain    []string
 	page     int
-	seq      int
-	wg       *sync.WaitGroup
 }
 
 // jobs is one owner's waiting pages in one class, kept sorted with the
@@ -200,7 +217,7 @@ func (r *Runner) Start(ctx context.Context) {
 	r.mu.Lock()
 	r.cond = sync.NewCond(&r.mu)
 	r.base = ctx
-	r.running = map[string]*handle{}
+	r.running, r.describing = map[string]*handle{}, map[string]*handle{}
 	workers := r.Workers
 	if workers <= 0 {
 		workers = 4
@@ -315,7 +332,9 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 		if r.base.Err() == nil {
 			for i, n := range prepared.Manifest.Selected {
 				pages.Add(1)
-				r.queue.push(&job{ctx: ctx, parse: p, manifest: prepared.Manifest, working: prepared.Working, chain: chain, page: n, seq: i, wg: &pages})
+				j := &job{ctx: ctx, parse: p, manifest: prepared.Manifest, working: prepared.Working, chain: chain, page: n, seq: i, wg: &pages}
+				j.do = func() { r.read(j) }
+				r.queue.push(j)
 			}
 			r.cond.Broadcast()
 		}
@@ -385,7 +404,7 @@ func (r *Runner) update(id string, change func(*store.Parse)) {
 	_, _ = r.Store.UpdateParse(id, change)
 }
 
-// work is one worker: it takes the next page in dispatch order and reads
+// work is one worker: it takes the next job in dispatch order and does
 // it, until the runner stops.
 func (r *Runner) work() {
 	for {
@@ -403,7 +422,7 @@ func (r *Runner) work() {
 		}
 		j := r.queue.pop()
 		r.mu.Unlock()
-		r.read(j)
+		j.do()
 		j.wg.Done()
 	}
 }
@@ -413,10 +432,6 @@ func (r *Runner) work() {
 func (r *Runner) read(j *job) {
 	if j.ctx.Err() != nil {
 		return
-	}
-	attempts := r.Attempts
-	if attempts <= 0 {
-		attempts = 3
 	}
 	opt := parse.PageOptions{Languages: j.parse.Languages}
 	if r.Credential != nil {
@@ -436,12 +451,69 @@ func (r *Runner) read(j *job) {
 		}
 	}
 
-	// at is the reader in the chain the page is with. It moves down the
-	// chain when a reader cannot be the one to read this page.
-	at, attempt, invalid, waits, escalated := 0, 0, 0, 0, false
+	var got parse.Page
+	attempt, failure, gone := r.try(j.ctx, pageUnit, len(j.chain),
+		func(at int) bool { return r.Readers[j.chain[at]] != nil },
+		func(at int) (err error) {
+			got, err = r.Pipeline.ReadPage(j.ctx, j.manifest, j.working, j.page, r.Readers[j.chain[at]], opt)
+			return err
+		})
+	switch {
+	case gone:
+		// The parse ended while the page was being read: whatever came
+		// back is dropped, so nothing is written after a cancel.
+	case failure != nil:
+		r.fail(j, attempt, failure)
+	default:
+		got.Page.Attempts = attempt
+		r.Store.PutPage(j.parse.ID, got.Page, &got.Image)
+		r.Store.KeepRead(j.parse.Owner, key, got.Page, &got.Image)
+		r.update(j.parse.ID, func(p *store.Parse) { p.PagesDone++ })
+	}
+}
+
+// unit names what a call is made for, in the reasons a failure is
+// recorded with.
+type unit struct {
+	name       string     // "page" or "figure"
+	unreadable fault.Code // the code of a unit no reader could take
+}
+
+var (
+	pageUnit   = unit{"page", fault.PageUnreadable}
+	figureUnit = unit{"figure", fault.FigureUnreadable}
+)
+
+// try makes one piece of work, a page to read or a figure to describe,
+// succeed against a chain of n candidates, and is the one place that
+// decides what a failed call means. do makes one call with the candidate
+// at a position in the chain; usable says whether a position holds one.
+//
+// What happens next follows from the class of the error and from nothing
+// else. A rate limit is waited out and spends no attempt. A spent budget
+// and a unit the candidate cannot take end the work. A candidate that
+// declined the content, or whose endpoint rejects the request itself,
+// passes the work down the chain. An unusable reply and a failure that may
+// pass spend an attempt, and two unusable replies move the work to the
+// next candidate once.
+//
+// It returns the attempts the last candidate was given and why the work
+// failed, or nil when it succeeded. gone reports that ctx ended first.
+func (r *Runner) try(ctx context.Context, u unit, n int, usable func(at int) bool, do func(at int) error) (attempt int, failure *document.Error, gone bool) {
+	attempts := r.Attempts
+	if attempts <= 0 {
+		attempts = 3
+	}
+	failed := func(code fault.Code, format string, args ...any) *document.Error {
+		return &document.Error{Code: string(code), Detail: fmt.Sprintf(format, args...)}
+	}
+
+	// at is the candidate the work is with. It moves down the chain when a
+	// candidate cannot be the one to do this work.
+	at, invalid, waits, escalated := 0, 0, 0, false
 	next := func() bool {
-		for at+1 < len(j.chain) {
-			if at++; r.Readers[j.chain[at]] != nil {
+		for at+1 < n {
+			if at++; usable(at) {
 				attempt, invalid = 0, 0
 				return true
 			}
@@ -450,24 +522,17 @@ func (r *Runner) read(j *job) {
 	}
 	for {
 		attempt++
-		got, err := r.Pipeline.ReadPage(j.ctx, j.manifest, j.working, j.page, r.Readers[j.chain[at]], opt)
-		if j.ctx.Err() != nil {
-			// The parse ended while the page was being read: whatever came
-			// back is dropped, so nothing is written after a cancel.
-			return
+		err := do(at)
+		if ctx.Err() != nil {
+			return attempt, nil, true
 		}
 		if err == nil {
-			got.Page.Attempts = attempt
-			r.Store.PutPage(j.parse.ID, got.Page, &got.Image)
-			r.Store.KeepRead(j.parse.Owner, key, got.Page, &got.Image)
-			r.update(j.parse.ID, func(p *store.Parse) { p.PagesDone++ })
-			return
+			return attempt, nil, false
 		}
-		// A failure of the file itself is not the reader's: no other
-		// attempt or reader changes it.
+		// A failure of the file itself is not the candidate's: no other
+		// attempt or candidate changes it.
 		if f, ok := errors.AsType[*fault.Error](err); ok {
-			r.fail(j, attempt, f.Code, f.Detail)
-			return
+			return attempt, &document.Error{Code: string(f.Code), Detail: f.Detail}, false
 		}
 
 		switch reader.ClassOf(err) {
@@ -475,52 +540,45 @@ func (r *Runner) read(j *job) {
 			// Waiting for capacity is not failing: it spends no attempt.
 			attempt--
 			if waits++; waits > maxWaits {
-				r.fail(j, attempt, fault.ReaderUnavailable, "the reader stayed rate limited")
-				return
+				return attempt, failed(fault.ReaderUnavailable, "the reader stayed rate limited"), false
 			}
-			if !sleep(j.ctx, max(reader.RetryAfterOf(err), r.backoff(waits))) {
-				return
+			if !sleep(ctx, max(reader.RetryAfterOf(err), r.backoff(waits))) {
+				return attempt, nil, true
 			}
 			continue
 		case reader.Budget:
-			r.fail(j, attempt, fault.BudgetExhausted, "the key's budget is spent")
-			return
+			return attempt, failed(fault.BudgetExhausted, "the key's budget is spent"), false
 		case reader.Permanent:
-			r.fail(j, attempt, fault.PageUnreadable, "the reader cannot take the page as it is")
-			return
+			return attempt, failed(u.unreadable, "the reader cannot take the %s as it is", u.name), false
 		case reader.Refused:
-			// The reader is healthy and declined this page. Another may
-			// read it; the same one will decline again.
+			// The candidate is healthy and declined this content. Another
+			// may take it; the same one will decline again.
 			if next() {
 				continue
 			}
-			r.fail(j, attempt, fault.PageUnreadable, "the model declined to read the page")
-			return
+			return attempt, failed(u.unreadable, "the model declined the %s", u.name), false
 		case reader.Misconfigured:
-			// The endpoint rejected the request itself, as it will for
-			// every page. The failure is the reader's and not the page's.
+			// The endpoint rejected the request itself, as it will every
+			// time. The failure is the candidate's and not the work's.
 			if next() {
 				continue
 			}
-			r.fail(j, attempt, fault.ReaderUnavailable, "the reader's endpoint rejected the request; its configuration needs to change")
-			return
+			return attempt, failed(fault.ReaderUnavailable, "the reader's endpoint rejected the request; its configuration needs to change"), false
 		case reader.Invalid:
-			// Two unusable replies send the page to the next reader, once.
+			// Two unusable replies move the work to the next candidate, once.
 			if invalid++; invalid == 2 && !escalated && next() {
 				escalated = true
 				continue
 			}
 		}
 		if attempt >= attempts {
-			code, detail := fault.ReaderUnavailable, "the reader could not be reached"
 			if reader.ClassOf(err) == reader.Invalid {
-				code, detail = fault.PageUnreadable, "the reader's replies were not usable"
+				return attempt, failed(u.unreadable, "the reader's replies were not usable"), false
 			}
-			r.fail(j, attempt, code, detail)
-			return
+			return attempt, failed(fault.ReaderUnavailable, "the reader could not be reached"), false
 		}
-		if !sleep(j.ctx, r.backoff(attempt)) {
-			return
+		if !sleep(ctx, r.backoff(attempt)) {
+			return attempt, nil, true
 		}
 	}
 }
@@ -551,10 +609,10 @@ func (r *Runner) readKey(j *job) string {
 }
 
 // fail records a page that could not be read.
-func (r *Runner) fail(j *job, attempts int, code fault.Code, detail string) {
+func (r *Runner) fail(j *job, attempts int, why *document.Error) {
 	r.Store.PutPage(j.parse.ID, document.Page{
 		Number: j.page, State: document.PageFailed, Source: document.SourceReader, Attempts: attempts,
-		Blocks: []document.Block{}, Error: &document.Error{Code: string(code), Detail: detail},
+		Blocks: []document.Block{}, Error: why,
 	}, nil)
 	r.update(j.parse.ID, func(p *store.Parse) { p.PagesFailed++ })
 }

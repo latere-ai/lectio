@@ -11,6 +11,7 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/render"
+	"latere.ai/x/lectio/reader"
 )
 
 func TestFiles(t *testing.T) {
@@ -245,5 +246,92 @@ func TestTerminal(t *testing.T) {
 		if got := (Parse{State: state}).Terminal(); got != want {
 			t.Errorf("%s: Terminal() = %v", state, got)
 		}
+	}
+}
+
+// A run of a parse's figures is one at a time, changed under the store's
+// lock, and goes with its parse.
+func TestFigureRuns(t *testing.T) {
+	m := NewMemory()
+	if _, _, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", State: StateSucceeded}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.FigureRun("prs_1"); ok {
+		t.Fatal("a parse nobody asked to describe has no run")
+	}
+	if err := m.StartFigureRun("prs_1", FigureRun{State: RunRunning, Total: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.StartFigureRun("prs_1", FigureRun{State: RunRunning}); fault.CodeOf(err) != fault.Conflict {
+		t.Fatalf("a second run while one is in flight: %v", err)
+	}
+	m.UpdateFigureRun("prs_1", func(r *FigureRun) {
+		r.Done, r.State = 1, RunSucceeded
+		r.Failures = map[string]document.Error{"2.1": {Code: "figure_unreadable"}}
+	})
+	got, ok := m.FigureRun("prs_1")
+	if !ok || got.Done != 1 || got.State != RunSucceeded || got.Failures["2.1"].Code != "figure_unreadable" {
+		t.Fatalf("run = %+v, %v", got, ok)
+	}
+	// What is handed out is a copy.
+	got.Failures["9.9"] = document.Error{}
+	if again, _ := m.FigureRun("prs_1"); len(again.Failures) != 1 {
+		t.Fatal("a run handed out shares its failures with the one kept")
+	}
+	// A run that ended may be followed by another.
+	if err := m.StartFigureRun("prs_1", FigureRun{State: RunRunning, Total: 5}); err != nil {
+		t.Fatal(err)
+	}
+	m.UpdateFigureRun("prs_none", func(*FigureRun) { t.Fatal("a run that is not there is not changed") })
+
+	if err := m.DeleteParse("alice", "prs_1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.FigureRun("prs_1"); ok {
+		t.Fatal("a deleted parse leaves no run")
+	}
+}
+
+func TestABlockIsChangedOnACopyOfItsPage(t *testing.T) {
+	m := NewMemory()
+	m.PutPage("prs_1", document.Page{Number: 2, State: document.PageSucceeded, Blocks: []document.Block{
+		{Ref: "2.1", Kind: document.KindText, Text: "body"}, {Ref: "2.2", Kind: document.KindFigure},
+	}}, nil)
+	served, _ := m.Page("prs_1", 2)
+
+	if !m.UpdateBlock("prs_1", "2.2", func(b *document.Block) { b.Description = "A chart." }) {
+		t.Fatal("the block is there")
+	}
+	if now, _ := m.Page("prs_1", 2); now.Blocks[1].Description != "A chart." || now.Blocks[0].Text != "body" {
+		t.Fatalf("page = %+v", now)
+	}
+	// A page handed out before the change does not move under its reader.
+	if served.Blocks[1].Description != "" {
+		t.Fatal("a page that was being served changed")
+	}
+	for _, ref := range []string{"2.3", "3.1", "figure", "0.1"} {
+		if m.UpdateBlock("prs_1", ref, func(*document.Block) { t.Fatalf("%s is no block of the page", ref) }) {
+			t.Errorf("UpdateBlock(%s) reports a block", ref)
+		}
+	}
+}
+
+func TestADescriptionIsKeptForItsOwner(t *testing.T) {
+	m := NewMemory()
+	m.KeepFigure("alice", "key", reader.FigureResult{Type: "chart", Description: "A chart.", Labels: []string{"Q1"}})
+	got, ok := m.Figure("alice", "key")
+	if !ok || got.Description != "A chart." || got.Labels[0] != "Q1" {
+		t.Fatalf("Figure = %+v, %v", got, ok)
+	}
+	got.Labels[0] = "changed"
+	if again, _ := m.Figure("alice", "key"); again.Labels[0] != "Q1" {
+		t.Fatal("a description handed out shares its labels with the one kept")
+	}
+	if _, ok := m.Figure("bob", "key"); ok {
+		t.Fatal("another owner takes a description that is not theirs")
+	}
+	m.KeepFigure("alice", "", reader.FigureResult{Description: "no key"})
+	if _, ok := m.Figure("alice", ""); ok {
+		t.Fatal("a description was kept under no key")
 	}
 }

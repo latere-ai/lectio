@@ -52,6 +52,7 @@ const (
 const (
 	DocumentCorrupt    Code = "document_corrupt"
 	PageUnreadable     Code = "page_unreadable"
+	FigureUnreadable   Code = "figure_unreadable"
 	ReaderUnavailable  Code = "reader_unavailable"
 	BudgetExhausted    Code = "budget_exhausted"
 	DeadlineExceeded   Code = "deadline_exceeded"
