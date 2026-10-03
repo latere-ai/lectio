@@ -30,8 +30,8 @@ type Image struct {
 	MediaType string
 	// Width and Height are in pixels.
 	Width, Height int
-	// Blank reports that every sampled pixel has the same color: a page
-	// with nothing on it, which needs no reader.
+	// Blank reports that every pixel has the same color: a page with
+	// nothing on it, which needs no reader.
 	Blank bool
 }
 
@@ -105,17 +105,18 @@ func (Images) Render(ctx context.Context, data []byte, mediaType string, n int, 
 	return out, nil
 }
 
-// blank reports whether an image is one color. It samples a grid of points
-// and compares each with the first, within a tolerance that absorbs the
-// noise of a scan and of lossy compression.
+// blank reports whether an image is one color: every pixel is within a
+// tolerance of the first, which absorbs the noise of lossy compression.
+// Every pixel is looked at. A sample would miss a page that holds one
+// short line, and a page taken for blank is never shown to a reader, so
+// what it held would be lost without a trace. A page with content ends the
+// scan at its first mark, so the whole image is read only when it is empty.
 func blank(img image.Image) bool {
-	const grid, tolerance = 32, 0x0600 // on the 16-bit scale color.RGBA returns
+	const tolerance = 0x0600 // on the 16-bit scale color.RGBA returns
 	b := img.Bounds()
 	r0, g0, b0, _ := img.At(b.Min.X, b.Min.Y).RGBA()
-	for i := range grid {
-		for j := range grid {
-			x := b.Min.X + (b.Dx()-1)*i/(grid-1)
-			y := b.Min.Y + (b.Dy()-1)*j/(grid-1)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
 			r, g, bl, _ := img.At(x, y).RGBA()
 			if differ(r, r0, tolerance) || differ(g, g0, tolerance) || differ(bl, b0, tolerance) {
 				return false
