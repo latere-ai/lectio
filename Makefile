@@ -3,7 +3,7 @@
 
 GO ?= go
 
-.PHONY: build check clean fmt hooks openapi run specs
+.PHONY: build check clean fmt hooks live openapi run specs
 
 # The whole bar. Every gate lives in latere.ai/x/ci-gate, pinned as a tool
 # in go.mod and configured in .lateregate.yaml, so this target is a name for
@@ -45,6 +45,14 @@ run: build
 # specs checks the spec tree alone.
 specs:
 	@$(GO) tool lateregate spec-lint
+
+# live parses a real file with a real reader, end to end. It calls a model,
+# so it is never part of `make check`:
+#   LECTIO_LIVE_CONFIG=reader.yaml LECTIO_LIVE_FILE=paper.pdf make live
+# LECTIO_LIVE_PAGES selects pages (default 1-3) and LECTIO_LIVE_OUT is a
+# directory the result is written to.
+live:
+	@$(GO) test ./cmd/lectiod -run '^TestLiveReader$$' -count=1 -v -timeout 40m
 
 # openapi checks that api/openapi.yaml and the router agree.
 openapi:
