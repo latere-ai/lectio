@@ -1,6 +1,6 @@
 ---
 title: "Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps"
-status: drafted
+status: in-progress
 track: core
 depends_on:
   - specs/001-architecture.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/tasks/, internal/store/]
 effort: xlarge
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

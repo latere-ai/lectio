@@ -1,6 +1,6 @@
 ---
 title: "Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/004-durable-tasks.md
@@ -9,7 +9,7 @@ depends_on:
 affects: [internal/telemetry/, internal/worker/, internal/httpapi/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

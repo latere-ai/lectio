@@ -1,6 +1,6 @@
 ---
 title: "Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/002-object-model.md
@@ -9,7 +9,7 @@ depends_on:
 affects: [internal/fetch/, internal/httpapi/, internal/store/, internal/objects/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

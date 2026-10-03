@@ -26,36 +26,35 @@ flowchart LR
   complete --> superseded
 ```
 
-Specs 001 to 016 are `drafted`: the set is under review as a whole,
-and none is validated until that review ends. A scaffold of the parsing
-path and the API exists beside the specs, and each spec says under
-`Implementation status` what of it is built and what remains. The set
-was reviewed once, by three readers working apart, and the control
-plane, the reader interface, the prompts, assembly and intake were
-revised from what they found. Spec 017 is `vague`: a problem statement
-with a proposed shape and the questions that have to be answered before
-it is a design.
+Specs 001 to 016 are `validated`: the set was reviewed as a whole, by
+three readers working apart, and the control plane, the reader
+interface, the prompts, assembly and intake were revised from what they
+found. Specs 004 to 007, the control plane, are `in-progress`. A
+scaffold of the parsing path and the API exists beside the specs, and
+each spec says under `Implementation status` what of it is built and
+what remains. Spec 017 is `vague`: a problem statement with a proposed
+shape and the questions that have to be answered before it is a design.
 
 ## Index
 
 | # | Spec | Effort | Status | Builds on |
 |---|---|---|---|---|
-| [001](001-architecture.md) | Architecture: one binary in two roles, Postgres for state and the queue, an object store for bytes, a model endpoint for pages | large | drafted | |
-| [002](002-object-model.md) | Object model: file, parse, document, page, block, table, field, and where each is stored | medium | drafted | 001 |
-| [003](003-api.md) | API: files, parses, pages, blocks, fields, events, and the errors a caller branches on | large | drafted | 001, 002 |
-| [004](004-durable-tasks.md) | Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps | xlarge | drafted | 001, 002 |
-| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails | large | drafted | 002, 004 |
-| [006](006-fairness-and-priority.md) | Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | drafted | 004, 005 |
-| [007](007-model-capacity.md) | Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback | large | drafted | 004, 006 |
-| [008](008-readers.md) | Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy | large | drafted | 002, 005, 007 |
-| [009](009-intake.md) | Intake: detect the type, unwrap, convert, extract natively, count and render pages | large | drafted | 002, 005 |
-| [010](010-assembly.md) | Assembly: from page results to one document, with running headers, tables across pages, an outline, and the views a result is read in | medium | drafted | 002, 005 |
-| [011](011-structured-extraction.md) | Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from | large | drafted | 008, 010 |
-| [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | drafted | 001, 003 |
-| [013](013-limits-and-usage.md) | Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records | medium | drafted | 005, 006, 012 |
-| [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | drafted | 002, 003, 004 |
-| [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | drafted | 004, 006, 007 |
-| [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | drafted | 001 |
+| [001](001-architecture.md) | Architecture: one binary in two roles, Postgres for state and the queue, an object store for bytes, a model endpoint for pages | large | validated | |
+| [002](002-object-model.md) | Object model: file, parse, document, page, block, table, field, and where each is stored | medium | validated | 001 |
+| [003](003-api.md) | API: files, parses, pages, blocks, fields, events, and the errors a caller branches on | large | validated | 001, 002 |
+| [004](004-durable-tasks.md) | Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps | xlarge | in-progress | 001, 002 |
+| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails | large | in-progress | 002, 004 |
+| [006](006-fairness-and-priority.md) | Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | in-progress | 004, 005 |
+| [007](007-model-capacity.md) | Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback | large | in-progress | 004, 006 |
+| [008](008-readers.md) | Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy | large | validated | 002, 005, 007 |
+| [009](009-intake.md) | Intake: detect the type, unwrap, convert, extract natively, count and render pages | large | validated | 002, 005 |
+| [010](010-assembly.md) | Assembly: from page results to one document, with running headers, tables across pages, an outline, and the views a result is read in | medium | validated | 002, 005 |
+| [011](011-structured-extraction.md) | Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from | large | validated | 008, 010 |
+| [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | validated | 001, 003 |
+| [013](013-limits-and-usage.md) | Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records | medium | validated | 005, 006, 012 |
+| [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | validated | 002, 003, 004 |
+| [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | validated | 004, 006, 007 |
+| [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | validated | 001 |
 | [017](017-agent-driven-parsing.md) | Agent-driven parsing: reader tiers, the text layer, reading a page again, and what an agent needs from the core | xlarge | vague | 002, 003, 008, 009 |
 
 ## Build order

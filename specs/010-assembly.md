@@ -1,6 +1,6 @@
 ---
 title: "Assembly: from page results to one document, with running headers, tables across pages, an outline, and the views a result is read in"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/002-object-model.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/assemble/, document/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

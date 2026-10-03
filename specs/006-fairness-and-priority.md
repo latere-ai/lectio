@@ -1,6 +1,6 @@
 ---
 title: "Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in"
-status: drafted
+status: in-progress
 track: core
 depends_on:
   - specs/004-durable-tasks.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/dispatch/, internal/store/]
 effort: xlarge
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

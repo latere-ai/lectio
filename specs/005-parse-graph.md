@@ -1,6 +1,6 @@
 ---
 title: "Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails"
-status: drafted
+status: in-progress
 track: core
 depends_on:
   - specs/002-object-model.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/parse/, internal/run/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

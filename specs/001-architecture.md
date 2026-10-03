@@ -1,12 +1,12 @@
 ---
 title: "Architecture: one binary in two roles, Postgres for state and the queue, an object store for bytes, a model endpoint for pages"
-status: drafted
+status: validated
 track: core
 depends_on: []
 affects: [cmd/lectiod/, internal/, authorizer/, api/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

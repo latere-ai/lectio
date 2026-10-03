@@ -1,13 +1,13 @@
 ---
 title: "Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/001-architecture.md
 affects: [cmd/, internal/config/, deploy/, test/, tools/, Makefile, Dockerfile, .github/, .githooks/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: "Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/008-readers.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [reader/, document/, internal/httpapi/, internal/extract/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 
@@ -227,8 +227,8 @@ refs, the schema check and the validator, the choice between a
 constrained and a prompted schema, the repair loop, windows and their
 merge, the field store, the routes' handlers, the slot and the charge
 per call, and the policy's `extract` chain, which is read from the
-configuration and not applied. The name of the resource, `fields` or
-`extractions`, is open ([[003-api]]).
+configuration and not applied. The resource keeps the name `fields`
+([[003-api]]).
 
 ## Acceptance criteria
 

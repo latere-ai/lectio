@@ -1,6 +1,6 @@
 ---
 title: "Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/001-architecture.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [authorizer/, internal/auth/, internal/httpapi/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

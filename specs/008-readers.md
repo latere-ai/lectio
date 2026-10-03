@@ -1,6 +1,6 @@
 ---
 title: "Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/002-object-model.md
@@ -9,7 +9,7 @@ depends_on:
 affects: [reader/, internal/config/, internal/prompts/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

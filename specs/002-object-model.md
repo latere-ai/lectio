@@ -1,13 +1,13 @@
 ---
 title: "Object model: file, parse, document, page, block, table, field, and where each is stored"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/001-architecture.md
 affects: [document/, internal/store/, internal/objects/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

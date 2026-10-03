@@ -1,6 +1,6 @@
 ---
 title: "Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/005-parse-graph.md
@@ -9,7 +9,7 @@ depends_on:
 affects: [internal/limits/, internal/usage/, internal/keys/]
 effort: medium
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

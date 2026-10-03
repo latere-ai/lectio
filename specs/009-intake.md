@@ -1,6 +1,6 @@
 ---
 title: "Intake: detect the type, unwrap, convert, extract natively, count and render pages"
-status: drafted
+status: validated
 track: core
 depends_on:
   - specs/002-object-model.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/intake/, internal/native/, internal/render/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 

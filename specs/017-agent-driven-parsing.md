@@ -220,6 +220,10 @@ durably and clients depend on them.
    into it. A page needs a revision, or a block an identity that
    survives a second reading, and each block needs to say which reader
    and model produced it and how sure an engine was when it says.
+   Default taken on 2026-10-04: a stored page result carries a
+   revision, 1 for a page's first reading, so that reading a page again
+   later needs no migration of what is stored. Refs and the contract do
+   not expose it until this spec is a design.
 2. **A reader can be handed the page's own text.** The renderer
    extracts it; the page a reader receives carries it; one reader
    builds blocks from it with no model call; a vision reader may use it
@@ -241,7 +245,10 @@ seven.
 These are the owner's to answer before this spec is drafted.
 
 1. Is a region a first-class unit a reader can be given, or is the page
-   the smallest thing read, with a region only a crop of it?
+   the smallest thing read, with a region only a crop of it? Default
+   taken on 2026-10-04 so that the control plane can be built: the page
+   is the smallest thing read, and a region is a crop of it handed to a
+   second reader, as a figure is. It adds no resource to the contract.
 2. Who owns the escalation policy: the operator's policy document, the
    caller per parse, a detector per page, or an agent per page? The
    table above assumes all four, layered.
@@ -253,7 +260,8 @@ These are the owner's to answer before this spec is drafted.
    times three pages?
 6. Is there a single synchronous read, one image in and blocks out,
    for an agent that needs an answer inside a tool call? `Prefer: wait`
-   covers it with two requests today.
+   covers it with two requests today. Default taken on 2026-10-04: no
+   such route; `Prefer: wait` stays the way.
 7. Does the tool surface ship as a command line, as a tool server, or
    both?
 

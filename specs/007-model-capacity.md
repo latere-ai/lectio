@@ -1,6 +1,6 @@
 ---
 title: "Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback"
-status: drafted
+status: in-progress
 track: core
 depends_on:
   - specs/004-durable-tasks.md
@@ -8,7 +8,7 @@ depends_on:
 affects: [internal/pools/, internal/store/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-04
 author: changkun
 ---
 
