@@ -4,11 +4,13 @@
 package assemble
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"latere.ai/x/lectio/document"
 )
@@ -24,9 +26,10 @@ type View struct {
 	// "auto", which writes Markdown unless a cell spans.
 	Tables string
 
-	// Repeated is what happens to running headers and footers: "once"
-	// prints the first occurrence, "keep" prints every one, and "drop"
-	// prints none and leaves out page numbers too.
+	// Repeated is what happens to a page's furniture: "once" prints the
+	// first occurrence of a running header or footer, "keep" prints every
+	// block, and "drop" prints no header and no footer. A page number is
+	// printed only under "keep": it says nothing about the document.
 	Repeated string
 
 	// PageBreaks marks where each page begins in Markdown.
@@ -52,7 +55,7 @@ func (v View) shown(b document.Block) bool {
 	case RepeatedDrop:
 		return !furniture(b.Kind)
 	}
-	return !b.Repeated
+	return !b.Repeated && b.Kind != document.KindPageNumber
 }
 
 // selected returns the pages the view covers, in order, that succeeded.
@@ -67,9 +70,11 @@ func (v View) selected(pages []document.Page) []document.Page {
 }
 
 // Markdown writes the pages as Markdown in reading order: headings by
-// level, lists, tables, formulas in math delimiters, figures as their
-// description. levels maps a heading's ref to its level in the document's
-// outline; a heading it does not hold keeps the level its reader gave.
+// level, lists, tables, formulas in math delimiters, and a figure as what
+// its reader says it shows, marked as such, followed by the words printed
+// in it. outline gives each heading its level in the document; a heading
+// it does not hold takes the level its own text and reader give it. A
+// block with nothing to print prints nothing.
 func Markdown(w io.Writer, pages []document.Page, outline []document.Heading, v View) error {
 	levels := make(map[string]int, len(outline))
 	for _, h := range outline {
@@ -92,13 +97,17 @@ func Markdown(w io.Writer, pages []document.Page, outline []document.Heading, v 
 			if !v.shown(b) {
 				continue
 			}
+			out := markdownBlock(b, levels, v.Tables)
+			if out == "" {
+				continue
+			}
 			if !first {
 				if _, err := io.WriteString(w, "\n"); err != nil {
 					return err
 				}
 			}
 			first = false
-			if _, err := io.WriteString(w, markdownBlock(b, levels, v.Tables)+"\n"); err != nil {
+			if _, err := io.WriteString(w, out+"\n"); err != nil {
 				return err
 			}
 		}
@@ -123,10 +132,16 @@ func markdownBlock(b document.Block, levels map[string]int, tables string) strin
 	case document.KindCode:
 		return "```\n" + b.Text + "\n```"
 	case document.KindFigure:
-		if b.Text == "" {
-			return "*Figure.*"
+		// The description is the reader's own prose, so it is set apart
+		// from the words printed in the figure, which are transcription.
+		if b.Description == "" {
+			return b.Text
 		}
-		return "*Figure: " + oneLine(b.Text) + "*"
+		out := "*[Figure: " + oneLine(b.Description) + "]*"
+		if b.Text != "" {
+			out += "\n\n" + b.Text
+		}
+		return out
 	case document.KindCaption:
 		return "*" + oneLine(b.Text) + "*"
 	}
@@ -174,12 +189,14 @@ func markdownTable(b document.Block, tables string) string {
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // Text writes the pages as plain text in reading order, a blank line
-// between blocks.
+// between blocks. A figure's description is printed in brackets, so it is
+// not taken for the document's own words.
 func Text(w io.Writer, pages []document.Page, v View) error {
 	first := true
 	for _, p := range v.selected(pages) {
 		for _, b := range p.Blocks {
-			if !v.shown(b) || b.Text == "" {
+			out := plain(b)
+			if !v.shown(b) || out == "" {
 				continue
 			}
 			if !first {
@@ -188,12 +205,26 @@ func Text(w io.Writer, pages []document.Page, v View) error {
 				}
 			}
 			first = false
-			if _, err := io.WriteString(w, b.Text+"\n"); err != nil {
+			if _, err := io.WriteString(w, out+"\n"); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// plain is a block as the text view prints it: its text, and for a figure
+// what its reader says it shows, in brackets, ahead of the words printed
+// in it.
+func plain(b document.Block) string {
+	if b.Kind != document.KindFigure || b.Description == "" {
+		return b.Text
+	}
+	out := "[Figure: " + oneLine(b.Description) + "]"
+	if b.Text != "" {
+		out += "\n\n" + b.Text
+	}
+	return out
 }
 
 // The strategies Chunks cuts by.
@@ -204,15 +235,31 @@ const (
 
 // Chunks cuts the pages into runs of blocks for retrieval. By page, a chunk
 // is a page. By section, a chunk begins at each title or heading and runs
-// to the next. Either way a chunk longer than maxChars is split at block
-// boundaries, repeated headers and footers are left out, and each chunk
-// lists the pages and the blocks it covers so a hit can be shown on the
-// page. A block is never split, so a single block longer than maxChars is a
+// to the next. Either way a chunk longer than maxChars, counted in
+// characters, is split at block boundaries, and each chunk lists the pages
+// and the blocks it covers so a hit can be shown on the page.
+//
+// A chunk is cited as what the document says, so it holds transcription
+// and nothing else: page furniture is left out, and so is what a reader
+// says a figure shows.
+//
+// A heading belongs to what follows it. A chunk that would hold only
+// headings is not cut off: the next heading or the next block joins it,
+// so "Chapter 2" directly above "2.1 Overview" is the start of one chunk.
+// Only a run of headings that is itself past maxChars, a table of
+// contents read as headings, is cut.
+//
+// A block is not split, with one exception. A table longer than maxChars
+// is cut between rows into parts that each begin with the table's header
+// row and each name the table's block, so a hit in row 300 still says
+// what its columns are. Any other single block longer than maxChars is a
 // chunk of its own.
 func Chunks(pages []document.Page, by string, maxChars int) []document.Chunk {
 	var out []document.Chunk
 	var cur document.Chunk
 	var text strings.Builder
+	size := 0        // characters in text
+	headings := true // cur holds nothing but headings
 
 	flush := func() {
 		if len(cur.Blocks) == 0 {
@@ -223,31 +270,121 @@ func Chunks(pages []document.Page, by string, maxChars int) []document.Chunk {
 		out = append(out, cur)
 		cur = document.Chunk{}
 		text.Reset()
+		size, headings = 0, true
+	}
+	add := func(page int, ref, s string) {
+		if text.Len() > 0 {
+			text.WriteString("\n\n")
+			size += 2
+		}
+		text.WriteString(s)
+		size += utf8.RuneCountInString(s)
+		if !slices.Contains(cur.Blocks, ref) {
+			cur.Blocks = append(cur.Blocks, ref)
+		}
+		if !slices.Contains(cur.Pages, page) {
+			cur.Pages = append(cur.Pages, page)
+		}
 	}
 
-	view := View{Repeated: RepeatedOnce}
-	for _, p := range view.selected(pages) {
+	for _, p := range (View{}).selected(pages) {
 		if by == ByPage {
 			flush()
 		}
 		for _, b := range p.Blocks {
-			if !view.shown(b) || b.Text == "" {
+			if furniture(b.Kind) || b.Text == "" {
+				continue
+			}
+			length := utf8.RuneCountInString(b.Text)
+			if parts := tableParts(b, maxChars); len(parts) > 1 {
+				for i, part := range parts {
+					if i > 0 || !headings {
+						flush()
+					}
+					add(p.Number, b.Ref, part)
+					headings = false
+				}
+				flush()
 				continue
 			}
 			heading := b.Kind == document.KindTitle || b.Kind == document.KindHeading
-			if (by == BySection && heading) || (text.Len() > 0 && text.Len()+len(b.Text)+2 > maxChars) {
+			if (!headings || size > maxChars) && ((by == BySection && heading) || size+2+length > maxChars) {
 				flush()
 			}
-			if text.Len() > 0 {
-				text.WriteString("\n\n")
-			}
-			text.WriteString(b.Text)
-			cur.Blocks = append(cur.Blocks, b.Ref)
-			if !slices.Contains(cur.Pages, p.Number) {
-				cur.Pages = append(cur.Pages, p.Number)
-			}
+			add(p.Number, b.Ref, b.Text)
+			headings = headings && heading
 		}
 	}
 	flush()
 	return out
+}
+
+// tableParts cuts a table that is longer than maxChars into parts between
+// its rows. Each part begins with the header row, which is the rows whose
+// cells are marked as headers or, when none is, the first row, and holds
+// as many of the other rows as fit. A row is not cut, so a part may be
+// longer than maxChars when one row is. The result is nil for a block that
+// is not a table with cells, and has one part for a table that fits or has
+// no row beside its header.
+func tableParts(b document.Block, maxChars int) []string {
+	if b.Table == nil || len(b.Table.Cells) == 0 || utf8.RuneCountInString(b.Text) <= maxChars {
+		return nil
+	}
+	cells := slices.Clone(b.Table.Cells)
+	slices.SortStableFunc(cells, func(a, c document.Cell) int {
+		return cmp.Or(cmp.Compare(a.Row, c.Row), cmp.Compare(a.Col, c.Col))
+	})
+	type row struct {
+		line   string
+		header bool
+	}
+	var rows []row
+	marked := false
+	for i, at := 0, -1; i < len(cells); i++ {
+		c := cells[i]
+		if c.Row != at {
+			at = c.Row
+			rows = append(rows, row{line: c.Text})
+		} else {
+			rows[len(rows)-1].line += " | " + c.Text
+		}
+		rows[len(rows)-1].header = rows[len(rows)-1].header || c.Header
+		marked = marked || c.Header
+	}
+	if !marked {
+		rows[0].header = true
+	}
+
+	var head, body []string
+	for _, r := range rows {
+		if r.header {
+			head = append(head, r.line)
+		} else {
+			body = append(body, r.line)
+		}
+	}
+	header := strings.Join(head, "\n")
+	if len(body) == 0 {
+		return []string{header}
+	}
+
+	var parts []string
+	var part strings.Builder
+	size, held := 0, 0
+	for _, line := range body {
+		length := utf8.RuneCountInString(line) + 1
+		if held > 0 && size+length > maxChars {
+			parts = append(parts, part.String())
+			held = 0
+		}
+		if held == 0 {
+			part.Reset()
+			part.WriteString(header)
+			size = utf8.RuneCountInString(header)
+		}
+		part.WriteString("\n" + line)
+		size += length
+		held++
+	}
+	return append(parts, part.String())
 }

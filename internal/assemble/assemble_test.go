@@ -37,7 +37,8 @@ func failed(n int) document.Page {
 }
 
 // A 4-page report with a running title, "Page n of 4", and a table that
-// runs from page 2 onto page 3.
+// runs from page 2 onto page 3. The readers labeled the title a header on
+// one page and the page number on one page; the rest came back as text.
 func report() []document.Page {
 	return []document.Page{
 		page(1, text(document.KindText, "ACME Annual Report"), text(document.KindTitle, "Annual Report"), text(document.KindText, "Intro."), text(document.KindText, "Page 1 of 4")),
@@ -56,10 +57,11 @@ func TestDocumentFindsRunningHeadersAndFooters(t *testing.T) {
 		if head.Kind != document.KindPageHeader || head.Repeated != (i > 0) {
 			t.Errorf("page %d header: %+v", p.Number, head)
 		}
-		// Page 2's footer was labeled a page number by its reader; the pass
-		// looks at textual kinds, and a page number is one.
-		if foot.Kind != document.KindPageFooter || foot.Repeated != (i > 0) {
-			t.Errorf("page %d footer: %+v", p.Number, foot)
+		// "Page n of 4" is a page number on every page, the one its reader
+		// labeled and the three it did not. A page number is never a footer
+		// and never repeats: each says something else.
+		if foot.Kind != document.KindPageNumber || foot.Repeated {
+			t.Errorf("page %d page number: %+v", p.Number, foot)
 		}
 	}
 	if doc.Parse != "prs_1" || len(doc.Pages) != 4 || doc.Pages[1].Blocks != 4 {
@@ -183,7 +185,7 @@ func TestMarkdown(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"<!-- page 1 -->\n\nACME Annual Report\n\n# Annual Report\n\nIntro.\n\nPage 1 of 4\n",
+		"<!-- page 1 -->\n\nACME Annual Report\n\n# Annual Report\n\nIntro.\n\n<!-- page 2 -->\n",
 		"<!-- page 2 -->\n\n## Results\n\n| r0c0 | r0c1 |\n| --- | --- |\n| r1c0 | r1c1 |\n| r2c0 | r2c1 |\n",
 		"<!-- page 4 -->\n\n## Outlook\n\nClosing.\n",
 	} {
@@ -191,8 +193,8 @@ func TestMarkdown(t *testing.T) {
 			t.Errorf("markdown lacks:\n%s\ngot:\n%s", want, got)
 		}
 	}
-	if strings.Count(got, "ACME") != 1 || strings.Count(got, "Page ") != 1 {
-		t.Errorf("a running header and footer are printed once:\n%s", got)
+	if strings.Count(got, "ACME") != 1 || strings.Contains(got, "Page ") {
+		t.Errorf("a running header is printed once and a page number is not printed:\n%s", got)
 	}
 
 	out.Reset()
@@ -200,7 +202,7 @@ func TestMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = out.String()
-	if strings.Count(got, "ACME") != 2 || strings.Contains(got, "Outlook") || !strings.Contains(got, "<table>…</table>") || strings.Contains(got, "<!--") {
+	if strings.Count(got, "ACME") != 2 || strings.Count(got, "Page ") != 2 || strings.Contains(got, "Outlook") || !strings.Contains(got, "<table>…</table>") || strings.Contains(got, "<!--") {
 		t.Errorf("kept, limited to pages 2 and 3, tables as HTML:\n%s", got)
 	}
 
@@ -228,8 +230,8 @@ func TestMarkdownBlocks(t *testing.T) {
 		"list item":            {text(document.KindListItem, "first\n item"), "", "- first item"},
 		"formula":              {text(document.KindFormula, "E = mc^2"), "", "$$\nE = mc^2\n$$"},
 		"code":                 {text(document.KindCode, "x := 1"), "", "```\nx := 1\n```"},
-		"figure":               {text(document.KindFigure, "A bar chart."), "", "*Figure: A bar chart.*"},
-		"figure, undescribed":  {text(document.KindFigure, ""), "", "*Figure.*"},
+		"figure":               {document.Block{Kind: document.KindFigure, Description: "A bar\nchart."}, "", "*[Figure: A bar chart.]*"},
+		"figure, undescribed":  {text(document.KindFigure, ""), "", ""},
 		"caption":              {text(document.KindCaption, "Table 1"), "", "*Table 1*"},
 		"deep heading":         {document.Block{Kind: document.KindHeading, Text: "Deep", Level: 9}, "", "###### Deep"},
 		"spanning, auto":       {spanning, TablesAuto, "<table>…</table>"},
@@ -253,7 +255,7 @@ func TestText(t *testing.T) {
 	if err := Text(&out, pages, View{Pages: []int{1, 4, 5, 6}}); err != nil {
 		t.Fatal(err)
 	}
-	if want := "ACME Annual Report\n\nAnnual Report\n\nIntro.\n\nPage 1 of 4\n\nOutlook\n\nClosing.\n"; out.String() != want {
+	if want := "ACME Annual Report\n\nAnnual Report\n\nIntro.\n\nOutlook\n\nClosing.\n"; out.String() != want {
 		t.Fatalf("text:\n got %q\nwant %q", out.String(), want)
 	}
 }
@@ -274,39 +276,40 @@ func TestChunks(t *testing.T) {
 		return out
 	}
 
+	// A chunk holds what the document says: the running header and the
+	// page numbers are in none.
 	byPage := rows(Chunks(pages, ByPage, 6000))
 	if len(byPage) != 4 || byPage[0].id != "c1" || !reflect.DeepEqual(byPage[1].pages, []int{2}) || !reflect.DeepEqual(byPage[1].blocks, []string{"2.2", "2.3"}) {
 		t.Fatalf("by page: %+v", byPage)
 	}
-	if !strings.HasPrefix(byPage[0].text, "ACME Annual Report\n\nAnnual Report") || strings.Contains(byPage[1].text, "ACME") {
-		t.Fatalf("a repeated header is in the first chunk and no other: %+v", byPage)
+	if byPage[0].text != "Annual Report\n\nIntro." {
+		t.Fatalf("a page's furniture is left out of its chunk: %+v", byPage[0])
 	}
 
 	bySection := rows(Chunks(pages, BySection, 6000))
 	want := []row{
-		{"c1", "ACME Annual Report", []int{1}, []string{"1.1"}},
-		{"c2", "Annual Report\n\nIntro.\n\nPage 1 of 4", []int{1}, []string{"1.2", "1.3", "1.4"}},
-		{"c3", "Results\n\ncells\n\ncells\n\nAfter the table.", []int{2, 3}, []string{"2.2", "2.3", "3.2", "3.3"}},
-		{"c4", "Outlook\n\nClosing.", []int{4}, []string{"4.2", "4.3"}},
+		{"c1", "Annual Report\n\nIntro.", []int{1}, []string{"1.2", "1.3"}},
+		{"c2", "Results\n\ncells\n\ncells\n\nAfter the table.", []int{2, 3}, []string{"2.2", "2.3", "3.2", "3.3"}},
+		{"c3", "Outlook\n\nClosing.", []int{4}, []string{"4.2", "4.3"}},
 	}
 	if !reflect.DeepEqual(bySection, want) {
 		t.Fatalf("by section:\n got %+v\nwant %+v", bySection, want)
 	}
 
-	// Every block that is shown is in exactly one chunk, and no chunk of
-	// more than one block is past the bound.
+	// Every block of content is in exactly one chunk, and no chunk is past
+	// the bound unless it is one block or a heading with the block under it.
 	small := Chunks(pages, BySection, 30)
 	seen := map[string]int{}
 	for _, c := range small {
 		for _, ref := range c.Blocks {
 			seen[ref]++
 		}
-		if len(c.Blocks) > 1 && len(c.Text) > 30 {
+		if len(c.Blocks) > 2 && len(c.Text) > 30 {
 			t.Errorf("chunk %s is %d characters over %d blocks", c.ID, len(c.Text), len(c.Blocks))
 		}
 	}
-	if len(seen) != 10 {
-		t.Fatalf("10 blocks are shown, chunks cover %d: %v", len(seen), seen)
+	if len(seen) != 8 {
+		t.Fatalf("8 blocks are content, chunks cover %d: %v", len(seen), seen)
 	}
 	for ref, n := range seen {
 		if n != 1 {
@@ -333,9 +336,10 @@ func (f *failAfter) Write(p []byte) (int, error) {
 func TestViewsReportAWriterThatFails(t *testing.T) {
 	pages := report()
 	doc := Document("p", pages)
-	// Each count stops at a different write: a page marker, the blank line
-	// before it, a block, the blank line before a block.
-	for n := range 6 {
+	// Each count stops at a different write: the first page's marker, the
+	// blank line before a block, a block, and, at the eighth and ninth
+	// write, the blank line before the second page's marker and the marker.
+	for n := range 10 {
 		if err := Markdown(&failAfter{n}, pages, doc.Outline, View{PageBreaks: true}); err == nil {
 			t.Errorf("Markdown must report a failed write (after %d)", n)
 		}
@@ -344,8 +348,5 @@ func TestViewsReportAWriterThatFails(t *testing.T) {
 		if err := Text(&failAfter{n}, pages, View{}); err == nil {
 			t.Errorf("Text must report a failed write (after %d)", n)
 		}
-	}
-	if err := Markdown(&failAfter{16}, pages, doc.Outline, View{PageBreaks: true}); err == nil {
-		t.Error("Markdown must report a failed write at the second page's marker")
 	}
 }
