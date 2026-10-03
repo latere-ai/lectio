@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -189,7 +190,8 @@ func TestTheFigurePrompt(t *testing.T) {
 	if err != nil || !strings.Contains(got, "<caption>\n"+hostile+"\n</caption>") {
 		t.Fatalf("a caption is data: %v\n%s", err, got)
 	}
-	if FigureVersion(figureTypes) == FigureVersion(figureTypes[:3]) || FigureVersion(figureTypes) != FigureVersion(figureTypes) {
+	whole, again := FigureVersion(figureTypes), FigureVersion(slices.Clone(figureTypes))
+	if whole == FigureVersion(figureTypes[:3]) || whole != again {
 		t.Fatal("a figure prompt's version follows its types and nothing that comes with the figure")
 	}
 }
