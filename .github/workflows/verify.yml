@@ -1,0 +1,45 @@
+# Every push to main and every pull request runs the gate, the shared
+# pipeline of latere-ai/ci, and the checks that need the tree and nothing
+# else. Every third-party action is pinned by commit.
+name: verify
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes this run: its commit carries every
+# change this one would verify, and the runner is better spent on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # While the repository is private every job runs on the organization's
+  # self-hosted runner, because hosted minutes are metered for a private
+  # repository. Once it is public the two inputs become ubuntu-latest.
+  gate:
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    uses: latere-ai/ci/.github/workflows/lateregate.yml@v1
+    with:
+      runs_on: linux-vm
+      test_os: '["linux-vm"]'
+
+  tidy:
+    name: go.mod and go.sum are tidy
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: linux-vm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # The machine keeps its module cache; restoring a tarball over it
+          # fails on every file that exists.
+          cache: false
+      - run: go mod tidy -diff

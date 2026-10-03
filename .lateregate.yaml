@@ -1,8 +1,13 @@
-# The gate configuration for lectio.
-#
-# Only the spec tree is configured: the repository holds specs and no code
-# yet. The remaining blocks (license, identity, postgres, cover) arrive with
-# the scaffold, specs/016-distribution.md.
+# The shared quality bar, read by `go tool lateregate`. The gates live in
+# latere.ai/x/ci-gate, pinned in go.mod; only repository-specific values are
+# here.
+
+cover:
+  trim_prefix: latere.ai/x/lectio/
+
+license:
+  spdx: Apache-2.0
+  holder: Latere AI
 
 spec:
   archive:
@@ -29,3 +34,16 @@ spec:
     - Acceptance criteria
   require_section_by_status:
     complete: [Outcome]
+
+# The identity shape shared across the open cores. The verifier and the
+# authorizer client of spec 012 are not built yet: the development server
+# takes one static token and no production mode exists, so there is no
+# audience to declare until that spec lands.
+identity:
+  role: none
+
+# No Postgres client exists yet. The store of spec 004 declares the pooled
+# role, with LECTIO_DATABASE_URL for migrations and LECTIO_DATABASE_POOL_URL
+# for serving.
+postgres:
+  role: none
