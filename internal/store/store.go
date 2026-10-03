@@ -1,0 +1,400 @@
+// SPDX-FileCopyrightText: 2026 Latere AI
+// SPDX-License-Identifier: Apache-2.0
+
+// Package store holds what a parse reads and writes: files, parses, pages,
+// page images, and documents. Memory is the one implementation today. It
+// keeps everything in the process, so nothing survives a restart: it is for
+// a development server and for tests. The durable store, with parses and
+// tasks in Postgres and bytes in an object store, is specs/004 and 002.
+package store
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"maps"
+	"slices"
+	"sync"
+	"time"
+
+	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/parse"
+	"latere.ai/x/lectio/internal/render"
+)
+
+// File is a source snapshot.
+type File struct {
+	ID        string
+	Owner     string
+	Name      string
+	MediaType string
+	SHA256    string
+	Size      int64
+	CreatedAt time.Time
+	Data      []byte
+}
+
+// The states of a parse.
+const (
+	StateQueued    = "queued"
+	StateRunning   = "running"
+	StateSucceeded = "succeeded"
+	StateFailed    = "failed"
+	StateCanceled  = "canceled"
+)
+
+// The stages a parse reports while it runs.
+const (
+	StageQueued     = "queued"
+	StagePreparing  = "preparing"
+	StageReading    = "reading"
+	StageAssembling = "assembling"
+	StageDone       = "done"
+)
+
+// The classes of work.
+const (
+	ClassInteractive = "interactive"
+	ClassBatch       = "batch"
+)
+
+// Origin is where a file lives for the caller. It is stored and returned,
+// and never interpreted.
+type Origin struct {
+	Store   string `json:"store,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// Parse is one request to turn a file into a document, and where it stands.
+type Parse struct {
+	ID    string
+	Owner string
+	State string
+
+	// What was asked.
+	File             string
+	Origin           *Origin
+	Pages            string
+	Reader           string
+	Languages        []string
+	Class            string
+	Priority         int
+	AllowFailedPages int
+	Labels           map[string]string
+
+	// ContentSHA and Fingerprint identify the work: the bytes, and the
+	// options that change the result. Two parses of one owner that agree
+	// on both did the same work.
+	ContentSHA  string
+	Fingerprint string
+
+	// Where it stands.
+	Stage       string
+	PagesTotal  int
+	PagesDone   int
+	PagesFailed int
+	Usage       document.Usage
+	Error       *document.Error
+
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	DeadlineAt *time.Time
+
+	CancelRequested bool
+	Manifest        *parse.Manifest
+}
+
+// Terminal reports whether the parse has ended.
+func (p Parse) Terminal() bool {
+	return p.State == StateSucceeded || p.State == StateFailed || p.State == StateCanceled
+}
+
+type pageKey struct {
+	parse string
+	page  int
+}
+
+// Memory is a store that keeps everything in the process.
+type Memory struct {
+	mu        sync.RWMutex
+	files     map[string]File
+	parses    map[string]Parse
+	pages     map[pageKey]document.Page
+	images    map[pageKey]render.Image
+	documents map[string]document.Document
+	keys      map[string]idempotent
+}
+
+// idempotent is what an idempotency key remembers: the body it came with
+// and the parse it made.
+type idempotent struct {
+	body  string
+	parse string
+}
+
+// NewMemory returns an empty store.
+func NewMemory() *Memory {
+	return &Memory{
+		files: map[string]File{}, parses: map[string]Parse{}, pages: map[pageKey]document.Page{},
+		images: map[pageKey]render.Image{}, documents: map[string]document.Document{}, keys: map[string]idempotent{},
+	}
+}
+
+// Digest is the SHA-256 of a file's bytes, in hex.
+func Digest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// PutFile stores a file. When the owner already has a file with the same
+// bytes, that file is returned and created is false: the same bytes are
+// one file per owner.
+func (m *Memory) PutFile(f File) (stored File, created bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, have := range m.files {
+		if have.Owner == f.Owner && have.SHA256 == f.SHA256 {
+			return have, false
+		}
+	}
+	m.files[f.ID] = f
+	return f, true
+}
+
+// File returns an owner's file.
+func (m *Memory) File(owner, id string) (File, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	f, ok := m.files[id]
+	if !ok || f.Owner != owner {
+		return File{}, fault.New(fault.FileNotFound, "no file %s", id)
+	}
+	return f, nil
+}
+
+// DeleteFile removes an owner's file. A file that a parse which has not
+// ended reads is not removed.
+func (m *Memory) DeleteFile(owner, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	f, ok := m.files[id]
+	if !ok || f.Owner != owner {
+		return fault.New(fault.FileNotFound, "no file %s", id)
+	}
+	for _, p := range m.parses {
+		if p.File == id && !p.Terminal() {
+			return fault.New(fault.NotTerminal, "parse %s still reads the file", p.ID)
+		}
+	}
+	delete(m.files, id)
+	return nil
+}
+
+// CreateParse stores a new parse. With an idempotency key it is safe to
+// repeat: the same key with the same body returns the parse the first call
+// made, and with another body it is refused. The key and the parse are
+// written under one lock, so two calls with one key make one parse.
+func (m *Memory) CreateParse(p Parse, key, body string) (stored Parse, created bool, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if key != "" {
+		scoped := p.Owner + "\x00" + key
+		if seen, ok := m.keys[scoped]; ok {
+			if seen.body != body {
+				return Parse{}, false, fault.New(fault.IdempotencyConflict, "the idempotency key was used with another body")
+			}
+			return m.parses[seen.parse], false, nil
+		}
+		m.keys[scoped] = idempotent{body: body, parse: p.ID}
+	}
+	m.parses[p.ID] = p
+	return p, true, nil
+}
+
+// Parse returns an owner's parse.
+func (m *Memory) Parse(owner, id string) (Parse, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.parses[id]
+	if !ok || p.Owner != owner {
+		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", id)
+	}
+	return p, nil
+}
+
+// UpdateParse changes a parse under the store's lock and returns the
+// result. change sees the current parse and edits it in place.
+func (m *Memory) UpdateParse(id string, change func(*Parse)) (Parse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.parses[id]
+	if !ok {
+		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", id)
+	}
+	change(&p)
+	m.parses[id] = p
+	return p, nil
+}
+
+// Filter narrows a list of parses. A zero field matches everything.
+type Filter struct {
+	State      string
+	File       string
+	OriginPath string
+	Labels     map[string]string
+}
+
+func (f Filter) matches(p Parse) bool {
+	if f.State != "" && p.State != f.State {
+		return false
+	}
+	if f.File != "" && p.File != f.File {
+		return false
+	}
+	if f.OriginPath != "" && (p.Origin == nil || p.Origin.Path != f.OriginPath) {
+		return false
+	}
+	for k, v := range f.Labels {
+		if p.Labels[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// ListParses returns an owner's parses that match, newest first: at most
+// limit of them, starting after the parse whose id is after. more reports
+// whether others follow.
+func (m *Memory) ListParses(owner string, f Filter, after string, limit int) (out []Parse, more bool) {
+	m.mu.RLock()
+	all := make([]Parse, 0, len(m.parses))
+	for _, p := range m.parses {
+		if p.Owner == owner && f.matches(p) {
+			all = append(all, p)
+		}
+	}
+	m.mu.RUnlock()
+
+	// Ids sort by creation time, so the newest first is the largest id first.
+	slices.SortFunc(all, func(a, b Parse) int {
+		switch {
+		case a.ID > b.ID:
+			return -1
+		case a.ID < b.ID:
+			return 1
+		}
+		return 0
+	})
+	if after != "" {
+		i, _ := slices.BinarySearchFunc(all, after, func(p Parse, id string) int {
+			switch {
+			case p.ID > id:
+				return -1
+			case p.ID < id:
+				return 1
+			}
+			return 0
+		})
+		if i < len(all) && all[i].ID == after {
+			i++
+		}
+		all = all[i:]
+	}
+	if len(all) > limit {
+		return all[:limit], true
+	}
+	return all, false
+}
+
+// Reusable returns an owner's succeeded parse of the same bytes with the
+// same options, when there is one.
+func (m *Memory) Reusable(owner, contentSHA, fingerprint string) (Parse, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var best Parse
+	for _, p := range m.parses {
+		if p.Owner == owner && p.State == StateSucceeded && p.ContentSHA == contentSHA && p.Fingerprint == fingerprint && p.ID > best.ID {
+			best = p
+		}
+	}
+	return best, best.ID != ""
+}
+
+// DeleteParse removes an owner's parse and everything it wrote. A parse
+// that has not ended is not removed.
+func (m *Memory) DeleteParse(owner, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.parses[id]
+	if !ok || p.Owner != owner {
+		return fault.New(fault.ParseNotFound, "no parse %s", id)
+	}
+	if !p.Terminal() {
+		return fault.New(fault.NotTerminal, "parse %s has not ended", id)
+	}
+	delete(m.parses, id)
+	delete(m.documents, id)
+	maps.DeleteFunc(m.pages, func(k pageKey, _ document.Page) bool { return k.parse == id })
+	maps.DeleteFunc(m.images, func(k pageKey, _ render.Image) bool { return k.parse == id })
+	return nil
+}
+
+// PutPage stores a page's result, and its image when the page has one. A
+// page written twice holds the second result.
+func (m *Memory) PutPage(parseID string, page document.Page, img *render.Image) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := pageKey{parseID, page.Number}
+	m.pages[key] = page
+	if img != nil {
+		m.images[key] = *img
+	}
+}
+
+// Page returns one page of a parse. ok is false for a page not written yet.
+func (m *Memory) Page(parseID string, n int) (document.Page, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.pages[pageKey{parseID, n}]
+	return p, ok
+}
+
+// Pages returns the pages of a parse written so far, in page order.
+func (m *Memory) Pages(parseID string) []document.Page {
+	m.mu.RLock()
+	var out []document.Page
+	for k, p := range m.pages {
+		if k.parse == parseID {
+			out = append(out, p)
+		}
+	}
+	m.mu.RUnlock()
+	slices.SortFunc(out, func(a, b document.Page) int { return a.Number - b.Number })
+	return out
+}
+
+// Image returns the image of a page that a reader saw.
+func (m *Memory) Image(parseID string, n int) (render.Image, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	img, ok := m.images[pageKey{parseID, n}]
+	return img, ok
+}
+
+// PutDocument stores a parse's document index.
+func (m *Memory) PutDocument(doc document.Document) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.documents[doc.Parse] = doc
+}
+
+// Document returns a parse's document index. ok is false until the parse
+// has assembled its pages.
+func (m *Memory) Document(parseID string) (document.Document, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	doc, ok := m.documents[parseID]
+	return doc, ok
+}
