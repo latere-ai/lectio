@@ -73,6 +73,8 @@ const (
 	MIMEPPT        = "application/vnd.ms-powerpoint"
 	MIMERTF        = "application/rtf"
 	MIMEKeynote    = "application/vnd.apple.keynote"
+	MIMEODT        = "application/vnd.oasis.opendocument.text"
+	MIMEODP        = "application/vnd.oasis.opendocument.presentation"
 	MIMEPKCS7MIME  = "application/pkcs7-mime"
 	MIMEPKCS7XMIME = "application/x-pkcs7-mime"
 	MIMEPKCS7Sig   = "application/pkcs7-signature"
@@ -99,6 +101,8 @@ var classByMIME = map[string]RouteClass{
 	MIMEPPT:        ClassConvertToPDF,
 	MIMERTF:        ClassConvertToPDF,
 	MIMEKeynote:    ClassConvertToPDF,
+	MIMEODT:        ClassConvertToPDF,
+	MIMEODP:        ClassConvertToPDF,
 	MIMEPKCS7MIME:  ClassUnwrapP7M,
 	MIMEPKCS7XMIME: ClassUnwrapP7M,
 	MIMEPKCS7Sig:   ClassUnwrapP7M,
@@ -138,6 +142,8 @@ var mimeByExt = map[string]string{
 	"rtf":     MIMERTF,
 	"key":     MIMEKeynote,
 	"keynote": MIMEKeynote,
+	"odt":     MIMEODT,
+	"odp":     MIMEODP,
 	"p7m":     MIMEPKCS7MIME,
 }
 
@@ -292,6 +298,15 @@ func classifyZip(b []byte) string {
 		return MIMEXLSX
 	case has(".apxl") || has("Index/Document.iwa"):
 		return MIMEKeynote
+	// An open document package states its type in its first entry, which
+	// is stored as it is: the type stands between that entry's name and
+	// the header of the next entry. The next header is part of the match,
+	// so a template, whose type only begins the same way, is not taken
+	// for a document.
+	case has("mimetype" + MIMEODT + "PK\x03\x04"):
+		return MIMEODT
+	case has("mimetype" + MIMEODP + "PK\x03\x04"):
+		return MIMEODP
 	}
 	return MIMEOctet
 }

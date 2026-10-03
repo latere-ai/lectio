@@ -27,6 +27,13 @@ func TestDetectFixturesContentFirst(t *testing.T) {
 		{testfixtures.PPTX, MIMEPPTX, ClassConvertToPDF},
 		{testfixtures.RTF, MIMERTF, ClassConvertToPDF},
 		{testfixtures.Keynote, MIMEKeynote, ClassConvertToPDF},
+		{testfixtures.ODT, MIMEODT, ClassConvertToPDF},
+		{testfixtures.ODP, MIMEODP, ClassConvertToPDF},
+		{testfixtures.ReportDOCX, MIMEDOCX, ClassNativeDOCX},
+		{testfixtures.ReportSuiteDOCX, MIMEDOCX, ClassNativeDOCX},
+		{testfixtures.LedgerXLSX, MIMEXLSX, ClassNativeSpreadsheet},
+		{testfixtures.LedgerSuiteXLSX, MIMEXLSX, ClassNativeSpreadsheet},
+		{testfixtures.LedgerXLSM, MIMEXLSM, ClassNativeSpreadsheet},
 		{testfixtures.WrappedPDF, MIMEPKCS7MIME, ClassUnwrapP7M},
 		{testfixtures.WrappedXML, MIMEPKCS7MIME, ClassUnwrapP7M},
 		{testfixtures.HTML, MIMEHTML, ClassNativeText},
@@ -152,6 +159,8 @@ func TestDetectUnsupported(t *testing.T) {
 		// A generic binary type is never an answer.
 		{"declared generic binary", []byte("\x00\x01\x02\x03random"), DeclaredType{MIME: MIMEOctet}},
 		{"declared an unsupported type", []byte("\x00\x01\x02\x03random"), DeclaredType{MIME: "video/mp4", FileName: "clip.mp4"}},
+		// An open document template begins like a document and is none.
+		{"an open document template", append(zipHead("mimetype"+MIMEODT+"-template"), zipHead("content.xml")...), DeclaredType{}},
 		// A ZIP that is no supported office package is refused, not guessed.
 		{"plain zip", zipHead("random/file.txt"), DeclaredType{}},
 		{"plain zip declared as zip", zipHead("random/file.txt"), DeclaredType{MIME: "application/zip", FileName: "bundle.zip"}},
@@ -218,6 +227,8 @@ func TestDetectZippedPackagesByPartName(t *testing.T) {
 		{[]string{"xl/workbook.xml", "xl/vbaProject.bin"}, MIMEXLSM},
 		{[]string{"index.apxl"}, MIMEKeynote},
 		{[]string{"Index/Document.iwa"}, MIMEKeynote},
+		{[]string{"mimetype" + MIMEODT, "content.xml"}, MIMEODT},
+		{[]string{"mimetype" + MIMEODP, "content.xml"}, MIMEODP},
 	}
 	for _, tt := range tests {
 		t.Run(tt.parts[0], func(t *testing.T) {
@@ -239,12 +250,14 @@ func TestDetectZippedPackagesByPartName(t *testing.T) {
 // TestDetectAnUnknownZipFallsBackToItsName covers a package whose part names
 // lie past the head: the content says only ZIP, so the extension decides.
 func TestDetectAnUnknownZipFallsBackToItsName(t *testing.T) {
-	mime, err := Detect(zipHead("[Content_Types].xml"), DeclaredType{FileName: "report.docx"})
-	if err != nil {
-		t.Fatalf("Detect: %v", err)
-	}
-	if mime != MIMEDOCX {
-		t.Errorf("mime = %q, want %q", mime, MIMEDOCX)
+	for name, want := range map[string]string{"report.docx": MIMEDOCX, "letter.odt": MIMEODT, "deck.ODP": MIMEODP} {
+		mime, err := Detect(zipHead("[Content_Types].xml"), DeclaredType{FileName: name})
+		if err != nil {
+			t.Fatalf("Detect(%s): %v", name, err)
+		}
+		if mime != want {
+			t.Errorf("Detect(%s) = %q, want %q", name, mime, want)
+		}
 	}
 }
 
@@ -317,6 +330,8 @@ func TestEveryConvertedTypeHasAFixture(t *testing.T) {
 		MIMEPPTX:    testfixtures.PPTX,
 		MIMERTF:     testfixtures.RTF,
 		MIMEKeynote: testfixtures.Keynote,
+		MIMEODT:     testfixtures.ODT,
+		MIMEODP:     testfixtures.ODP,
 	}
 	converted := 0
 	for mime, class := range classByMIME {

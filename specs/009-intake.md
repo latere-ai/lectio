@@ -442,8 +442,7 @@ a test:
 
 - A signed container in BER encoding fails to open. Only DER is read.
 - A signed container in PEM form is detected as text.
-- WebP, `.odt` and `.odp` are in the format table and are not
-  detected.
+- WebP is in the format table and is not detected.
 - `prepare` holds the file in memory, and the scan of a PDF's bytes,
   where no engine counts, holds up to 64 MiB of inflated object
   streams beside it.

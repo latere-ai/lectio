@@ -29,6 +29,8 @@ whole set stays under 2 MB.
 | `sample.doc` | 19456 | `sample.docx` through macOS `textutil -convert doc` | Word 97 binary (OLE2) |
 | `sample.rtf` | 846 | `sample.docx` through macOS `textutil -convert rtf` | RTF |
 | `sample.ppt` | 505344 | `sample.pptx` through LibreOffice 25.2 `--convert-to ppt` | PowerPoint 97 binary (OLE2) |
+| `sample.odt` | 19394 | `sample.docx` through LibreOffice 25.2 `--convert-to odt` | open document text (ZIP) |
+| `sample.odp` | 27993 | `sample.pptx` through LibreOffice 25.2 `--convert-to odp` | open document presentation (ZIP) |
 | `sample.key` | 124499 | one slide made in Keynote 15.3.1, theme images and previews removed with `zip -d` | Keynote package in the IWA layout (ZIP) |
 
 ## Signed containers
@@ -40,8 +42,9 @@ nothing else. The signature is not meant to verify against any trust store.
 ## Files produced locally
 
 The text files hold content that no test depends on beyond its format. The
-`.doc` and `.rtf` files come from Apple's text system and the `.ppt` file from
-LibreOffice, each converted from the OOXML fixture of the same name. The
+`.doc` and `.rtf` files come from Apple's text system and the `.ppt`, `.odt`
+and `.odp` files from LibreOffice, each converted from the OOXML fixture of the
+same name. The
 Keynote package keeps only its `Index/*.iwa` parts, which carry the slide.
 
 ## Generated office documents

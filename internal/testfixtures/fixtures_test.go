@@ -13,7 +13,7 @@ import (
 var named = []string{
 	MinimalPDF, MultipagePDF, TextPDF, DOCX, XLSX, PPTX, JPEG, PNG, MultiTIFF,
 	CSV, TXT, HTML, XML, Markdown, WrappedPDF, WrappedXML,
-	DOC, PPT, RTF, Keynote,
+	DOC, PPT, RTF, Keynote, ODT, ODP,
 	ReportDOCX, LedgerXLSX, LedgerXLSM, ReportSuiteDOCX, LedgerSuiteXLSX,
 }
 

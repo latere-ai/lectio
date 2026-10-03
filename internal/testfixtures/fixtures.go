@@ -45,6 +45,8 @@ const (
 	PPT             = "files/sample.ppt"      // PowerPoint 97 binary
 	RTF             = "files/sample.rtf"
 	Keynote         = "files/sample.key" // Keynote package in the IWA layout
+	ODT             = "files/sample.odt" // open document text
+	ODP             = "files/sample.odp" // open document presentation
 )
 
 // Read returns the bytes of the fixture at name, and fails the test when no
