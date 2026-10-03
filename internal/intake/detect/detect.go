@@ -89,7 +89,6 @@ var classByMIME = map[string]RouteClass{
 	MIMEDOCX:       ClassNativeDOCX,
 	MIMEDOC:        ClassConvertDOCToDOCX,
 	MIMEXLSX:       ClassNativeSpreadsheet,
-	MIMEXLS:        ClassNativeSpreadsheet,
 	MIMEXLSM:       ClassNativeSpreadsheet,
 	MIMECSV:        ClassNativeSpreadsheet,
 	MIMETXT:        ClassNativeText,
@@ -103,6 +102,15 @@ var classByMIME = map[string]RouteClass{
 	MIMEPKCS7MIME:  ClassUnwrapP7M,
 	MIMEPKCS7XMIME: ClassUnwrapP7M,
 	MIMEPKCS7Sig:   ClassUnwrapP7M,
+}
+
+// refused maps a canonical media type that is known and not read to the
+// sentence that says so. Such a type cannot be told from its content here:
+// a legacy spreadsheet is a compound file, as a legacy word-processing file
+// and a legacy presentation are, so its name or its declared type is what
+// names it, and the refusal can say more than "no supported format".
+var refused = map[string]string{
+	MIMEXLS: "a legacy spreadsheet (.xls) is not read; save the workbook as .xlsx",
 }
 
 // mimeByExt maps a lowercase file name extension, without the dot, to a
@@ -186,17 +194,14 @@ func Detect(peek []byte, declared DeclaredType) (string, error) {
 		}
 	}
 
-	// The extension is the first fallback.
-	if mime := mimeFromExt(declared.FileName); mime != "" {
+	// The extension is the first fallback and the declared type the second.
+	// A generic binary type is in neither table, so it says nothing.
+	for _, mime := range []string{mimeFromExt(declared.FileName), Canonical(declared.MIME)} {
 		if _, ok := classByMIME[mime]; ok {
 			return mime, nil
 		}
-	}
-
-	// The declared type is the second. A generic binary type says nothing.
-	if mime := Canonical(declared.MIME); mime != "" && mime != MIMEOctet {
-		if _, ok := classByMIME[mime]; ok {
-			return mime, nil
+		if why, ok := refused[mime]; ok {
+			return "", fault.New(fault.UnsupportedMediaType, "%s", why)
 		}
 	}
 

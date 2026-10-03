@@ -108,6 +108,7 @@ declare millions.
 | `.doc` | converted to `.docx`, then native | `native` |
 | `.pptx`, `.ppt`, `.rtf`, `.key`, `.odt`, `.odp` | converted to PDF, then rendered | `reader` |
 | `.p7m` | unwrapped, then as the document inside | either |
+| `.xls` | refused with `unsupported_media_type`, with a detail that says to save the workbook as `.xlsx` | |
 | anything else | refused with `unsupported_media_type` | |
 
 A `native` page task copies blocks that `prepare` already produced and
@@ -319,8 +320,7 @@ a test:
 
 - A signed container in BER encoding fails to open. Only DER is read.
 - A signed container in PEM form is detected as text.
-- `.xls` is routed as a native spreadsheet, though it is not in this
-  spec. WebP, `.odt` and `.odp` are in the format table and are not
+- WebP, `.odt` and `.odp` are in the format table and are not
   detected.
 - `prepare` holds the file in memory, and the scan of a PDF's bytes,
   where no engine counts, holds up to 64 MiB of inflated object

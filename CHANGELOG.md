@@ -70,3 +70,6 @@ refused before it is pushed.
 - Changed: every operation's `summary` in `api/openapi.yaml` is a short
   label with no closing period, and the sentence it replaced opens the
   operation's description, so a reference renders the document as it is.
+- Changed: a legacy spreadsheet (`.xls`) is refused when it is uploaded,
+  with `unsupported_media_type` and a detail that says to save the
+  workbook as `.xlsx`. It was accepted before and failed when parsed.

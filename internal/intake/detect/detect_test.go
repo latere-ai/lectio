@@ -4,6 +4,7 @@
 package detect
 
 import (
+	"strings"
 	"testing"
 
 	"latere.ai/x/lectio/internal/fault"
@@ -165,6 +166,33 @@ func TestDetectUnsupported(t *testing.T) {
 				t.Errorf("code = %q, want %q", got, fault.UnsupportedMediaType)
 			}
 		})
+	}
+}
+
+// A legacy spreadsheet is known and not read. It is refused where it is
+// detected, with a detail that says what to do, whether its name or its
+// declared type names it.
+func TestDetectRefusesALegacySpreadsheet(t *testing.T) {
+	// The first bytes of a compound file, which is all the content says.
+	compound := []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1\x00\x00\x00\x00\x00\x00\x00\x00")
+	for _, declared := range []DeclaredType{
+		{FileName: "ledger.xls"},
+		{FileName: "LEDGER.XLS", MIME: "application/pdf"},
+		{MIME: "application/vnd.ms-excel"},
+	} {
+		mime, err := Detect(compound, declared)
+		if err == nil {
+			t.Fatalf("Detect(%+v) = %q, want a refusal", declared, mime)
+		}
+		if got := fault.CodeOf(err); got != fault.UnsupportedMediaType {
+			t.Errorf("Detect(%+v): code = %q, want %q", declared, got, fault.UnsupportedMediaType)
+		}
+		if detail := fault.DetailOf(err); !strings.Contains(detail, ".xls") || !strings.Contains(detail, ".xlsx") {
+			t.Errorf("Detect(%+v): the detail does not say what to do: %q", declared, detail)
+		}
+	}
+	if class, ok := ClassOf(MIMEXLS); ok {
+		t.Errorf("a legacy spreadsheet has the route %q, and nothing reads it", class)
 	}
 }
 
