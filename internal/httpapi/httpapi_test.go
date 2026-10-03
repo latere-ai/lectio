@@ -87,7 +87,7 @@ func serve(t *testing.T, change func(*Server, *run.Runner)) *env {
 	s := &Server{
 		Store: st, Runner: runner, Auth: Tokens{"alice-token": "alice", "bob-token": "bob"},
 		Readers: runner.Readers, Chain: runner.Chain, Limits: pages.DefaultLimits(),
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Log: slog.New(slog.DiscardHandler),
 	}
 	if change != nil {
 		change(s, runner)

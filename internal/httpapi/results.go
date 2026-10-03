@@ -11,12 +11,13 @@ import (
 	"slices"
 	"strconv"
 
+	"latere.ai/x/pkg/httpjson"
+
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/store"
-	"latere.ai/x/pkg/httpjson"
 )
 
 // The bounds of a chunk's size, in characters.
@@ -230,14 +231,17 @@ func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, owner string
 		return err
 	}
 
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	enc := json.NewEncoder(w)
+	// Encoded before the first byte is sent, as a document is, so a
+	// failure is an error response and not half a list.
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
 	for _, chunk := range assemble.Chunks(read, by, size) {
 		if err := enc.Encode(chunk); err != nil {
-			// The caller went away; there is no one left to tell.
-			return nil
+			return err
 		}
 	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	_, _ = w.Write(out.Bytes())
 	return nil
 }
 

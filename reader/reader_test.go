@@ -45,7 +45,7 @@ func TestCredentialNeverLeaves(t *testing.T) {
 
 	for name, out := range map[string]string{
 		"%v":      fmt.Sprintf("%v", c),
-		"%s":      fmt.Sprintf("%s", c),
+		"%s":      fmt.Sprintf("key %s", c),
 		"%+v":     fmt.Sprintf("%+v", Page{Credential: c}),
 		"%#v":     fmt.Sprintf("%#v", c),
 		"error":   fmt.Errorf("call with %v failed: %w", c, io.EOF).Error(),

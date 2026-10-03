@@ -77,12 +77,12 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 			return err
 		}
 	} else {
-		log.Warn("LECTIO_CONFIG is not set: pages are read by the stub reader, which calls no model and describes the page it was given")
+		log.WarnContext(ctx, "LECTIO_CONFIG is not set: pages are read by the stub reader, which calls no model and describes the page it was given")
 	}
 	for _, what := range readers.Unapplied {
-		log.Warn("the configuration sets what this build does not apply", "setting", what)
+		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
 	}
-	log.Warn("LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")
+	log.WarnContext(ctx, "LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")
 
 	limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
 	st := store.NewMemory()
@@ -110,7 +110,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	failed := make(chan error, 1)
 	go func() { failed <- srv.Serve(ln) }()
 
-	log.Info("listening", "addr", ln.Addr().String(), "base_path", s.BasePath, "readers", readers.Chain, "version", version.Version)
+	log.InfoContext(ctx, "listening", "addr", ln.Addr().String(), "base_path", s.BasePath, "readers", readers.Chain, "version", version.Version)
 	if ready != nil {
 		ready <- ln.Addr().String()
 	}
@@ -127,6 +127,6 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil
 	}
-	log.Info("stopped")
+	log.InfoContext(ctx, "stopped")
 	return err
 }

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"latere.ai/x/pkg/httpjson"
+
 	"latere.ai/x/lectio/api"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/fetch"
@@ -23,7 +25,6 @@ import (
 	"latere.ai/x/lectio/internal/run"
 	"latere.ai/x/lectio/internal/store"
 	"latere.ai/x/lectio/reader"
-	"latere.ai/x/pkg/httpjson"
 )
 
 // Authenticator says who is calling. The owner it returns is the only

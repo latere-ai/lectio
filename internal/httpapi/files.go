@@ -11,11 +11,12 @@ import (
 	"path"
 	"time"
 
+	"latere.ai/x/pkg/httpjson"
+
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/intake/detect"
 	"latere.ai/x/lectio/internal/store"
-	"latere.ai/x/pkg/httpjson"
 )
 
 // maxName is the longest file name that is kept.

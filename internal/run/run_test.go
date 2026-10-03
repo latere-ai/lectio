@@ -435,7 +435,7 @@ func TestPagesAreDispatchedByClassThenPriority(t *testing.T) {
 	eventually(t, "twelve pages wait", func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return r.queue.Len() == 12
+		return len(r.queue) == 12
 	})
 	close(release)
 	for _, id := range []string{"prs_0", "prs_1", "prs_2", "prs_3", "prs_4"} {
@@ -481,8 +481,8 @@ func TestStoppingTheRunnerEndsWhatIsRunning(t *testing.T) {
 	if p, _ := r.Store.Parse("alice", "prs_2"); p.State != store.StateCanceled {
 		t.Fatalf("submitted after the stop: %+v", p)
 	}
-	if r.queue.Len() != 0 {
-		t.Fatalf("%d pages were queued for no worker", r.queue.Len())
+	if len(r.queue) != 0 {
+		t.Fatalf("%d pages were queued for no worker", len(r.queue))
 	}
 }
 

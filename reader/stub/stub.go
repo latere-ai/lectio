@@ -131,7 +131,10 @@ func (Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (reader.
 			out.Citations["/"+name] = []string{ref}
 		}
 	}
-	// A map of strings always encodes.
-	out.Data, _ = json.Marshal(data)
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the object does not encode")
+	}
+	out.Data = encoded
 	return out, nil
 }

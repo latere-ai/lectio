@@ -16,12 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"latere.ai/x/pkg/httpjson"
+
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/store"
-	"latere.ai/x/pkg/httpjson"
 )
 
 // The bounds of a submit that the contract states.
@@ -264,7 +265,9 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, owner strin
 		return err
 	}
 	if created {
-		s.Runner.Submit(stored)
+		// A parse outlives the request that submitted it, so it runs under
+		// the runner's context and not the request's.
+		s.Runner.Submit(stored) //nolint:contextcheck
 	}
 
 	if d := wait(r); d > 0 {

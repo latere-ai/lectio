@@ -18,11 +18,11 @@
 package run
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,35 +90,43 @@ type job struct {
 	wg       *sync.WaitGroup
 }
 
-// jobs is the queue of pages, a heap in dispatch order.
+// jobs is the queue of pages, kept sorted with the page to dispatch next
+// at the end, so taking it is a truncation.
 type jobs []*job
 
-func (q jobs) Len() int { return len(q) }
-
-// Less is the dispatch order: interactive before batch, then the higher
-// priority, then the earlier position in its parse, so parses advance
-// together and a short one finishes early, then the older parse.
-func (q jobs) Less(i, j int) bool {
-	a, b := q[i], q[j]
+// later orders two jobs: negative when a is dispatched after b. The
+// dispatch order is interactive before batch, then the higher priority,
+// then the earlier position in its parse, so parses advance together and a
+// short one finishes early, then the older parse.
+func later(a, b *job) int {
 	if ai, bi := a.parse.Class == store.ClassInteractive, b.parse.Class == store.ClassInteractive; ai != bi {
-		return ai
+		if ai {
+			return 1
+		}
+		return -1
 	}
 	if a.parse.Priority != b.parse.Priority {
-		return a.parse.Priority > b.parse.Priority
+		return a.parse.Priority - b.parse.Priority
 	}
 	if a.seq != b.seq {
-		return a.seq < b.seq
+		return b.seq - a.seq
 	}
-	return a.parse.ID < b.parse.ID
+	return strings.Compare(b.parse.ID, a.parse.ID)
 }
 
-func (q jobs) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
-func (q *jobs) Push(x any)   { *q = append(*q, x.(*job)) }
-func (q *jobs) Pop() any {
-	old := *q
-	last := old[len(old)-1]
-	*q = old[:len(old)-1]
-	return last
+// push puts a job at its place in the order.
+func (q *jobs) push(j *job) {
+	at, _ := slices.BinarySearchFunc(*q, j, later)
+	*q = slices.Insert(*q, at, j)
+}
+
+// pop takes the job to dispatch next. The queue is not empty.
+func (q *jobs) pop() *job {
+	last := len(*q) - 1
+	j := (*q)[last]
+	(*q)[last] = nil
+	*q = (*q)[:last]
+	return j
 }
 
 // Start starts the workers. They stop, and running parses are abandoned,
@@ -239,7 +247,7 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 		if r.base.Err() == nil {
 			for i, n := range prepared.Manifest.Selected {
 				pages.Add(1)
-				heap.Push(&r.queue, &job{ctx: ctx, parse: p, manifest: prepared.Manifest, working: prepared.Working, chain: chain, page: n, seq: i, wg: &pages})
+				r.queue.push(&job{ctx: ctx, parse: p, manifest: prepared.Manifest, working: prepared.Working, chain: chain, page: n, seq: i, wg: &pages})
 			}
 			r.cond.Broadcast()
 		}
@@ -304,18 +312,18 @@ func (r *Runner) update(id string, change func(*store.Parse)) {
 func (r *Runner) work() {
 	for {
 		r.mu.Lock()
-		for r.queue.Len() == 0 && r.base.Err() == nil {
+		for len(r.queue) == 0 && r.base.Err() == nil {
 			r.cond.Wait()
 		}
 		if r.base.Err() != nil {
 			// The runner stopped: release every parse waiting on a page.
-			for r.queue.Len() > 0 {
-				heap.Pop(&r.queue).(*job).wg.Done()
+			for len(r.queue) > 0 {
+				r.queue.pop().wg.Done()
 			}
 			r.mu.Unlock()
 			return
 		}
-		j := heap.Pop(&r.queue).(*job)
+		j := r.queue.pop()
 		r.mu.Unlock()
 		r.read(j)
 		j.wg.Done()

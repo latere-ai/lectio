@@ -28,8 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/pkg/otel"
+
+	"latere.ai/x/lectio/internal/fault"
 )
 
 // maxRedirects is how many redirects one fetch follows.
