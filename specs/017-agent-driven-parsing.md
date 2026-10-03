@@ -168,6 +168,40 @@ it.
   blocks, and can span pages. This is where a frontier model is worth
   its price, and it reads text, not images.
 
+### Figures: the first use of a region
+
+A layout engine finds a figure and says where it is. It does not say
+what the figure shows: the specialized model used in the first runs is
+trained to return a picture's box and no text. A general vision model
+describes a figure well and places it loosely. Each does half.
+
+The object model already keeps the halves apart: a figure block has its
+box, `text` for the words printed inside it, and `description` for what
+a reader says it shows. What is missing is the step between them.
+
+1. **A block's image.** The page image is stored and a box is a
+   fraction of it, so the image of any block is a crop:
+   `GET /parses/{parse}/blocks/{ref}/image`. That alone is figure
+   extraction.
+2. **A describe step.** For each figure, the crop goes to a vision
+   reader with a prompt of its own, and the answer fills the block's
+   `description`, the labels printed in it, and its type. A first run
+   of exactly this, a figure located by the layout engine, cropped, and
+   described by a general vision model, took under ten seconds and
+   under two hundred output tokens, and named the figure's parts and
+   how they connect.
+3. **Where it runs.** As a request against a parse, the way extraction
+   is, so figures can be described later, for some pages, without
+   reading a page again; and as an option of the routing policy for
+   operators who want it on every parse.
+
+Later, on the same step: a chart's data as a table, and a diagram as
+vector graphics, which some specialized models return.
+
+This is the smallest real case of a region read by a second reader, and
+answering it settles the first open question below for one kind of
+block before it is settled for all.
+
 ### What to change before more is built on top
 
 Each of these is cheap now and expensive once results are stored
