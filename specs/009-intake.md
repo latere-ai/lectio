@@ -473,6 +473,7 @@ a test:
 | A sheet that declares every cell a sheet can have, two cells at opposite corners of one, a count of shared strings the part cannot hold, and one long string named by many cells are each refused within 16 MiB of allocation | `TestWhatASheetDeclaresIsNeverAllocatedFor` |
 | A workbook that lists more sheets than the limit on pages is refused with `too_many_pages` before a sheet is opened | `TestAWorkbookOverThePageLimitIsRefusedBeforeASheetIsRead` |
 | A workbook is one page per sheet with its merged cells as spans, its dates in ISO 8601, and its formulas as their stored values | `TestAWorkbookIsOnePagePerSheet`, `TestRender` |
+| Each office format read natively has a generated fixture and one an office suite wrote back out, and each comes out of `prepare` with the stated pages, blocks of each kind, table shape, spanned cells and texts | `TestOfficeFormatsAreReadFromTheirOwnStructure` |
 | A converter has no route to any address, the worker's own included, and a document that names an external resource converts without fetching it | a test with a converter in a container and a counting server |
 | A deployment with no converter fails a parse that needs one with `unsupported_media_type` at `prepare` | a pipeline test |
 | A conversion that exceeds its time or its memory limit is killed with its children and leaves no file in the scratch directory | a test with a stub converter |

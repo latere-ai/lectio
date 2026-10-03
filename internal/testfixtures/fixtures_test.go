@@ -14,6 +14,7 @@ var named = []string{
 	MinimalPDF, MultipagePDF, TextPDF, DOCX, XLSX, PPTX, JPEG, PNG, MultiTIFF,
 	CSV, TXT, HTML, XML, Markdown, WrappedPDF, WrappedXML,
 	DOC, PPT, RTF, Keynote,
+	ReportDOCX, LedgerXLSX, LedgerXLSM, ReportSuiteDOCX, LedgerSuiteXLSX,
 }
 
 func TestReadReturnsEveryNamedFixture(t *testing.T) {
