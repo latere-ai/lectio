@@ -28,8 +28,6 @@ import (
 	"syscall"
 	"time"
 
-	"latere.ai/x/pkg/otel"
-
 	"latere.ai/x/lectio/internal/fault"
 )
 
@@ -150,7 +148,12 @@ func (f *Fetcher) init() {
 			ResponseHeaderTimeout: 30 * time.Second,
 		}
 		f.client = &http.Client{
-			Transport: otel.Transport(transport),
+			// This is the one outbound client that carries no trace. A
+			// tracing transport records the URL it requests, and what a
+			// short-lived download link proves is in its query; it also
+			// sends this server's trace headers to a host the caller chose.
+			// Neither leaves the process from here.
+			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) > maxRedirects {
 					return errors.New("too many redirects")

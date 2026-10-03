@@ -14,6 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"latere.ai/x/lectio/internal/fault"
 )
 
@@ -232,5 +236,59 @@ func TestFetchFailures(t *testing.T) {
 	// A file with no limit set is read whole.
 	if got, err := (&Fetcher{AllowHTTP: true, Permit: only(srv)}).Fetch(context.Background(), srv.URL+"/large"); err != nil || len(got.Data) != 200 {
 		t.Errorf("no limit: %d bytes, %v", len(got.Data), err)
+	}
+}
+
+// A source URL is the caller's, and what a short-lived download link
+// proves is in its query. The fetch is the one outbound call that carries
+// no trace: it records no span that would hold the URL, and it does not
+// hand the caller-chosen host this server's trace headers.
+func TestFetchCarriesNoTraceToTheHostACallerChose(t *testing.T) {
+	var seen http.Header
+	srv, _ := server(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		_, _ = w.Write([]byte("file"))
+	})
+
+	// A process that traces: a propagator is installed, and the request's
+	// context is inside a sampled trace.
+	before := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(before) })
+	traceID, _ := trace.TraceIDFromHex("0af7651916cd43dd8448eb211c80319c")
+	spanID, _ := trace.SpanIDFromHex("b7ad6b7169203331")
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled, Remote: true,
+	}))
+
+	f := &Fetcher{AllowHTTP: true, Permit: only(srv)}
+	if _, err := f.Fetch(ctx, srv.URL+"/report.pdf?X-Signature=secret-in-the-query"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Traceparent", "Tracestate", "Baggage"} {
+		if got := seen.Get(name); got != "" {
+			t.Errorf("the host received %s: %s", name, got)
+		}
+	}
+	// A fetch that fails tells the caller neither the address nor what its
+	// query held: not when the address is refused, and not when the host
+	// answers that the file is gone.
+	refusing := &Fetcher{AllowHTTP: true}
+	for name, fetch := range map[string]func() error{
+		"refused": func() error {
+			_, err := refusing.Fetch(ctx, srv.URL+"/report.pdf?X-Signature=secret-in-the-query")
+			return err
+		},
+		"cut off": func() error {
+			gone := httptest.NewServer(http.NotFoundHandler())
+			gone.Close()
+			_, err := (&Fetcher{AllowHTTP: true, Permit: only(gone)}).Fetch(ctx, gone.URL+"/report.pdf?X-Signature=secret-in-the-query")
+			return err
+		},
+	} {
+		err := fetch()
+		if said := fault.DetailOf(err); fault.CodeOf(err) != fault.SourceUnreachable || strings.Contains(said, "secret-in-the-query") || strings.Contains(said, "X-Signature") || strings.Contains(said, "127.0.0.1") {
+			t.Errorf("a fetch that was %s says: %q (%v)", name, said, fault.CodeOf(err))
+		}
 	}
 }
