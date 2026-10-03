@@ -51,7 +51,7 @@ func shape(p document.Page) []string {
 }
 
 func TestReads(t *testing.T) {
-	for mediaType, want := range map[string]bool{TypeText: true, TypeMarkdown: true, TypeCSV: true, TypeDOCX: true, "text/html": false, "application/pdf": false} {
+	for mediaType, want := range map[string]bool{TypeText: true, TypeMarkdown: true, TypeCSV: true, TypeDOCX: true, TypeXLSX: true, TypeXLSM: true, "text/html": false, "application/pdf": false} {
 		if Reads(mediaType) != want {
 			t.Errorf("Reads(%q) = %v", mediaType, !want)
 		}

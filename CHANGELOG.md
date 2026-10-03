@@ -83,3 +83,9 @@ refused before it is pushed.
   declares and on what it inflates to, so a small crafted file cannot
   exhaust the server: it is refused with `file_too_large` or
   `document_corrupt`.
+- Added: an Excel workbook (`.xlsx`, `.xlsm`) is read from the file
+  itself: one page per sheet, hidden sheets included, each with the
+  sheet's name as its title and its cells as one table. Merged cells
+  keep their spans, a date reads as an ISO 8601 date, a percentage as a
+  percentage, and a formula as the value the workbook stored for it;
+  no formula is evaluated and no macro is opened.

@@ -26,12 +26,14 @@ const (
 	TypeMarkdown = "text/markdown"
 	TypeCSV      = "text/csv"
 	TypeDOCX     = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	TypeXLSX     = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	TypeXLSM     = "application/vnd.ms-excel.sheet.macroenabled.12"
 )
 
 // Reads reports whether this package reads a media type.
 func Reads(mediaType string) bool {
 	switch mediaType {
-	case TypeText, TypeMarkdown, TypeCSV, TypeDOCX:
+	case TypeText, TypeMarkdown, TypeCSV, TypeDOCX, TypeXLSX, TypeXLSM:
 		return true
 	}
 	return false
@@ -39,14 +41,20 @@ func Reads(mediaType string) bool {
 
 // Pages reads a file into pages. Text, Markdown and a word-processing
 // document are one page of blocks; a delimited table is one page holding
-// one table. maxPages is the most pages a document may have, zero for no
-// limit, for a format that knows its pages before it reads them.
+// one table; a workbook is one page per sheet. maxPages is the most pages a
+// document may have, zero for no limit: a workbook that lists more sheets
+// is refused before any sheet is read.
 func Pages(ctx context.Context, data []byte, mediaType string, maxPages int) ([]document.Page, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if mediaType == TypeDOCX {
+	switch mediaType {
+	case TypeDOCX:
 		return readDOCX(ctx, data, limits)
+	case TypeXLSX, TypeXLSM:
+		// A workbook with macros is read as one without: its cells are
+		// the same parts, and the macros are a part nothing here opens.
+		return readXLSX(ctx, data, maxPages, limits)
 	}
 	if !utf8.Valid(data) {
 		return nil, fault.New(fault.DocumentCorrupt, "the file is not UTF-8 text")

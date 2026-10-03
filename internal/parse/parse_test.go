@@ -165,18 +165,19 @@ func TestPrepareRefuses(t *testing.T) {
 		selection string
 		code      fault.Code
 	}{
-		"a file over the size limit":   {small, testfixtures.Read(t, testfixtures.PNG), named("a.png"), "", fault.FileTooLarge},
-		"a file of no known type":      {pipeline(), []byte{0, 1, 2, 3}, named("blob.bin"), "", fault.UnsupportedMediaType},
-		"a format needing a converter": {pipeline(), testfixtures.Read(t, testfixtures.PPTX), named("deck.pptx"), "", fault.UnsupportedMediaType},
-		"a recognized format not read": {pipeline(), testfixtures.Read(t, testfixtures.XLSX), named("a.xlsx"), "", fault.UnsupportedMediaType},
-		"a legacy spreadsheet":         {pipeline(), []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), named("a.xls"), "", fault.UnsupportedMediaType},
-		"too many pages":               {twoPages, testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "", fault.TooManyPages},
-		"a selection naming no page":   {pipeline(), testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "7", fault.InvalidPages},
-		"a malformed selection":        {pipeline(), testfixtures.Read(t, testfixtures.Markdown), named("a.md"), "x", fault.InvalidPages},
-		"a container that is not one":  {pipeline(), []byte("0\x80 not DER"), detect.DeclaredType{FileName: "a.p7m"}, "", fault.DocumentCorrupt},
-		"a PDF that is not one":        {pipeline(), []byte("%PDF-1.7\nnothing here"), named("a.pdf"), "", fault.DocumentCorrupt},
-		"a TIFF that is not one":       {pipeline(), []byte("II*\x00\xff\xff\xff\xff"), named("a.tiff"), "", fault.DocumentCorrupt},
-		"text that is not UTF-8":       {pipeline(), []byte("caf\xe9 \xff\xfe plain"), named("a.txt"), "", fault.DocumentCorrupt},
+		"a file over the size limit":    {small, testfixtures.Read(t, testfixtures.PNG), named("a.png"), "", fault.FileTooLarge},
+		"a file of no known type":       {pipeline(), []byte{0, 1, 2, 3}, named("blob.bin"), "", fault.UnsupportedMediaType},
+		"a format needing a converter":  {pipeline(), testfixtures.Read(t, testfixtures.PPTX), named("deck.pptx"), "", fault.UnsupportedMediaType},
+		"a recognized format not read":  {pipeline(), testfixtures.Read(t, testfixtures.HTML), named("a.html"), "", fault.UnsupportedMediaType},
+		"a workbook of too many sheets": {twoPages, testfixtures.Read(t, testfixtures.XLSX), named("a.xlsx"), "", fault.TooManyPages},
+		"a legacy spreadsheet":          {pipeline(), []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"), named("a.xls"), "", fault.UnsupportedMediaType},
+		"too many pages":                {twoPages, testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "", fault.TooManyPages},
+		"a selection naming no page":    {pipeline(), testfixtures.Read(t, testfixtures.MultiTIFF), named("a.tiff"), "7", fault.InvalidPages},
+		"a malformed selection":         {pipeline(), testfixtures.Read(t, testfixtures.Markdown), named("a.md"), "x", fault.InvalidPages},
+		"a container that is not one":   {pipeline(), []byte("0\x80 not DER"), detect.DeclaredType{FileName: "a.p7m"}, "", fault.DocumentCorrupt},
+		"a PDF that is not one":         {pipeline(), []byte("%PDF-1.7\nnothing here"), named("a.pdf"), "", fault.DocumentCorrupt},
+		"a TIFF that is not one":        {pipeline(), []byte("II*\x00\xff\xff\xff\xff"), named("a.tiff"), "", fault.DocumentCorrupt},
+		"text that is not UTF-8":        {pipeline(), []byte("caf\xe9 \xff\xfe plain"), named("a.txt"), "", fault.DocumentCorrupt},
 	} {
 		_, err := tc.p.Prepare(context.Background(), tc.data, tc.declared, tc.selection)
 		if fault.CodeOf(err) != tc.code {

@@ -90,10 +90,13 @@ LECTIO_DEV=true LECTIO_CONFIG=reader.yaml LECTIO_MODEL_KEY=... out/lectiod
 ```
 
 This build reads PDFs and images (PNG, JPEG, TIFF) through a reader,
-and text, Markdown, CSV and Word documents (`.docx`) from the file
-itself, with no model. A Word document comes back as one page: its
-headings with their levels, its lists, its tables with merged cells and
-header rows, its footnotes, and a figure where a picture is. Every PDF
+and text, Markdown, CSV, Word documents (`.docx`) and Excel workbooks
+(`.xlsx`, `.xlsm`) from the file itself, with no model. A Word document
+comes back as one page: its headings with their levels, its lists, its
+tables with merged cells and header rows, its footnotes, and a figure
+where a picture is. A workbook comes back as one page per sheet, each a
+table, with dates in ISO 8601 and each formula as the value the workbook
+stored for it. Every PDF
 page is rendered and sent to the reader; reading the text a PDF already
 carries is designed and not built.
 

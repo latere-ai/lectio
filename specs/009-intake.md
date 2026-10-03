@@ -123,13 +123,13 @@ under Not in this spec.
 
 ### Reading a zipped office package
 
-A `.docx` is a ZIP of XML parts, and the worker reads it itself, with
-the standard library and no office suite. Such a file is small and says
-how large it becomes: its directory says how many parts it holds and how
-far each inflates, and its markup says how deep it nests. Each
-statement is checked against a bound before anything is allocated for
-it, and the reading is held to the same bound, because a statement can
-be false.
+A `.docx`, `.xlsx` or `.xlsm` file is a ZIP of XML parts, and the
+worker reads it itself, with the standard library and no office suite.
+Such a file is small and says how large it becomes: its directory says
+how many parts it holds and how far each inflates, its markup says how
+deep it nests, and a sheet says how many cells it has. Each statement is
+checked against a bound before anything is allocated for it, and the
+reading is held to the same bound, because a statement can be false.
 
 | Bound | Value | Past it |
 |---|---|---|
@@ -144,7 +144,11 @@ be false.
 | a document type declaration | none | `document_corrupt` |
 | blocks on one page | 500,000 | `file_too_large` |
 | cells over all tables of a file, as rows times columns | 1,048,576 | `file_too_large` |
-| paragraph styles | 65,536 | `file_too_large` |
+| cells a sheet declares in its dimension | the same | `file_too_large` |
+| bytes of cell text over all sheets | 32 MiB | `file_too_large` |
+| shared strings a workbook declares | what its part's bytes can hold | `document_corrupt` |
+| sheets | `LECTIO_MAX_PAGES`, and never more than the entries | `too_many_pages` |
+| paragraph styles, cell formats | 65,536 | `file_too_large` |
 
 A size is `file_too_large` and a file that contradicts itself or its
 format is `document_corrupt`, as for an image and a PDF. Four points
@@ -199,6 +203,42 @@ shows, text in a drawing shape that is not a text box, symbol-font
 characters, and the picture inside a table cell beyond the fact of it. A
 document formatted by hand, with large bold lines in place of heading
 styles, has no headings to read.
+
+A workbook is one page per sheet, in the workbook's order: a `title`
+block with the sheet's name, and the sheet's cells as one `table`.
+
+- Every sheet the workbook lists is a page, a hidden one included. What
+  a sheet holds is content whether or not its tab is shown, and a result
+  that left it out would say nothing was there. The sheets are counted
+  from the workbook part, so a workbook over the limit on pages is
+  refused before a sheet is opened.
+- The table is the rectangle around the cells that hold a value, with
+  every position in it present, so a row reads in columns whatever the
+  sheet left empty. A merged range is one cell with its span. The size a
+  sheet declares for itself, and the number of strings a workbook
+  declares, are checked and used for nothing: no memory is taken for
+  either, and the cells and strings are what the bytes hold.
+- A cell's text is a shared or an inline string, `TRUE` or `FALSE`, an
+  error as the sheet shows it, or a number. A formula is never
+  evaluated: the cell holds the value the workbook stored beside it, and
+  no text when it stored none.
+- A number is written as the shortest decimal that is the same number,
+  which is `2.3` for a stored `2.2999999999999998`. Its format is read
+  for two things only. A date or time format makes it an ISO 8601 date,
+  time, or both, with seconds only when the format shows them. A
+  percent format makes it the number times 100 with a percent sign.
+  Separators, currency signs, rounding and padding a format would add
+  are not applied.
+- A cell that names a shared string costs a few bytes in the file and
+  the whole string in the result, which is what the bound on cell text
+  is for.
+- A sheet that is one chart is a page with its title and a `figure`.
+
+Not read from a workbook: charts, pictures and pivot tables on a sheet,
+comments, data validation, conditional formats, defined names, the
+header rows of a structured table, and the macros of an `.xlsm`, whose
+part is never opened. The locale-dependent built-in formats 27 to 36 and
+50 to 58 are read as dates, and 32 to 35 as times.
 
 ### Conversion
 
@@ -373,8 +413,9 @@ Built:
   bound on directories and decoded one at a time with no copy of the
   file.
 - `internal/native`: plain text and Markdown as one page of blocks,
-  CSV as one page holding one table, and `.docx` as one page of blocks,
-  read from the package under the bounds above.
+  CSV as one page holding one table, `.docx` as one page of blocks, and
+  `.xlsx` and `.xlsm` as one page per sheet, each read from the package
+  under the bounds above.
 - `internal/render`: the interface above; a renderer for PNG, JPEG and
   each frame of a TIFF, with the bound on decoded pixels, scaling,
   re-encoding and the blank check; and the PDF renderer with every
@@ -385,9 +426,8 @@ Remaining:
 
 - A comparison of the PDF renderer's output against a native build of
   the engine, on a fixture set, kept as a benchmark.
-- Native reading of `.xlsx`, `.xlsm`, HTML and XML. They are detected
-  and accepted as uploads, and a parse of one fails with
-  `unsupported_media_type`.
+- Native reading of HTML and XML. They are detected and accepted as
+  uploads, and a parse of one fails with `unsupported_media_type`.
 - The bytes of a picture in a `.docx`. A figure of a native page has no
   image.
 - Conversion. The step takes a converter and none is built, so the
@@ -430,6 +470,9 @@ a test:
 | A part that declares a document type or an entity is refused, and nothing an entity names is read | `TestAPartThatDeclaresAnEntityIsRefused` |
 | A relationship whose target is outside the package is not followed, whatever the archive holds under that name | `TestARelationshipThatLeavesThePackageIsNotFollowed` |
 | A `.docx` keeps its headings with their levels, its list items, its tables with spans and header rows, its footnotes, and a figure for each picture | `TestAParagraphIsWhatItsStyleSays`, `TestATableKeepsItsCellsSpansAndHeaderRows`, `TestFiguresTextBoxesAndNotes` |
+| A sheet that declares every cell a sheet can have, two cells at opposite corners of one, a count of shared strings the part cannot hold, and one long string named by many cells are each refused within 16 MiB of allocation | `TestWhatASheetDeclaresIsNeverAllocatedFor` |
+| A workbook that lists more sheets than the limit on pages is refused with `too_many_pages` before a sheet is opened | `TestAWorkbookOverThePageLimitIsRefusedBeforeASheetIsRead` |
+| A workbook is one page per sheet with its merged cells as spans, its dates in ISO 8601, and its formulas as their stored values | `TestAWorkbookIsOnePagePerSheet`, `TestRender` |
 | A converter has no route to any address, the worker's own included, and a document that names an external resource converts without fetching it | a test with a converter in a container and a counting server |
 | A deployment with no converter fails a parse that needs one with `unsupported_media_type` at `prepare` | a pipeline test |
 | A conversion that exceeds its time or its memory limit is killed with its children and leaves no file in the scratch directory | a test with a stub converter |
