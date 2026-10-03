@@ -49,8 +49,9 @@ specs:
 # live parses a real file with a real reader, end to end. It calls a model,
 # so it is never part of `make check`:
 #   LECTIO_LIVE_CONFIG=reader.yaml LECTIO_LIVE_FILE=paper.pdf make live
-# LECTIO_LIVE_PAGES selects pages (default 1-3) and LECTIO_LIVE_OUT is a
-# directory the result is written to.
+# LECTIO_LIVE_PAGES selects pages (default 1-3), LECTIO_LIVE_OUT is a
+# directory the result is written to, and LECTIO_LIVE_DESCRIBE=1 also has
+# the figures described by the Policy's describe chain.
 live:
 	@$(GO) test ./cmd/lectiod -run '^TestLiveReader$$' -count=1 -v -timeout 40m
 

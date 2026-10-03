@@ -179,6 +179,9 @@ type policySpec struct {
 	Extract struct {
 		Chain []string `yaml:"chain"`
 	} `yaml:"extract"`
+	Describe struct {
+		Chain []string `yaml:"chain"`
+	} `yaml:"describe"`
 	Escalate struct {
 		OnInvalid int `yaml:"onInvalid"`
 		Max       int `yaml:"max"`
@@ -192,6 +195,13 @@ type Readers struct {
 	Readers map[string]reader.Reader
 	Chain   []string
 
+	// Describers are the Reader documents whose adapter can also say what
+	// a figure shows, by the same names. DescribeChain is the order the
+	// policy tries them in; it is empty when the policy names none, and
+	// then a figure is described only by a describer a request names.
+	Describers    map[string]reader.Describer
+	DescribeChain []string
+
 	// Unapplied names what the documents set that this build reads and
 	// does not act on, so a start can say so and not stay silent.
 	Unapplied []string
@@ -200,7 +210,10 @@ type Readers struct {
 // Stub is the configuration of a server with none: the stub reader, which
 // calls no model.
 func Stub() Readers {
-	return Readers{Readers: map[string]reader.Reader{stub.Name: &stub.Reader{}}, Chain: []string{stub.Name}}
+	return Readers{
+		Readers: map[string]reader.Reader{stub.Name: &stub.Reader{}}, Chain: []string{stub.Name},
+		Describers: map[string]reader.Describer{stub.Name: &stub.Describer{}}, DescribeChain: []string{stub.Name},
+	}
 }
 
 // Load reads the documents at path, a file or a directory of .yaml, .yml
@@ -225,7 +238,7 @@ func Load(path string) (Readers, error) {
 		slices.Sort(files)
 	}
 
-	out := Readers{Readers: map[string]reader.Reader{}}
+	out := Readers{Readers: map[string]reader.Reader{}, Describers: map[string]reader.Describer{}}
 	policies := 0
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
@@ -249,11 +262,14 @@ func Load(path string) (Readers, error) {
 				if _, taken := out.Readers[doc.Metadata.Name]; taken {
 					return Readers{}, fmt.Errorf("%s: the name is used twice", where)
 				}
-				rd, unapplied, err := build(doc)
+				rd, describer, unapplied, err := build(doc)
 				if err != nil {
 					return Readers{}, fmt.Errorf("%s: %w", where, err)
 				}
 				out.Readers[doc.Metadata.Name] = rd
+				if describer != nil {
+					out.Describers[doc.Metadata.Name] = describer
+				}
 				out.Unapplied = append(out.Unapplied, unapplied...)
 			case "Policy":
 				if policies++; policies > 1 {
@@ -263,7 +279,7 @@ func Load(path string) (Readers, error) {
 				if err := strict(doc.Spec, &spec); err != nil {
 					return Readers{}, fmt.Errorf("%s: %w", where, err)
 				}
-				out.Chain = spec.Read.Chain
+				out.Chain, out.DescribeChain = spec.Read.Chain, spec.Describe.Chain
 				if len(spec.Extract.Chain) > 0 {
 					out.Unapplied = append(out.Unapplied, "Policy extract.chain")
 				}
@@ -294,6 +310,14 @@ func Load(path string) (Readers, error) {
 			return Readers{}, fmt.Errorf("config: the Policy's read chain names %q, which is no Reader", name)
 		}
 	}
+	for _, name := range out.DescribeChain {
+		switch {
+		case out.Readers[name] == nil:
+			return Readers{}, fmt.Errorf("config: the Policy's describe chain names %q, which is no Reader", name)
+		case out.Describers[name] == nil:
+			return Readers{}, fmt.Errorf("config: the Policy's describe chain names %q, whose adapter reads pages and cannot describe a figure", name)
+		}
+	}
 	return out, nil
 }
 
@@ -311,20 +335,23 @@ func strict(node yaml.Node, into any) error {
 	return nil
 }
 
-// build makes the reader a Reader document declares.
-func build(doc document) (rd reader.Reader, unapplied []string, err error) {
+// build makes the reader a Reader document declares, and the describer
+// when the document's adapter can say what a figure shows: one that
+// reaches a model that takes an instruction can, and one that reaches a
+// layout engine with a contract of its own cannot.
+func build(doc document) (rd reader.Reader, describer reader.Describer, unapplied []string, err error) {
 	name := doc.Metadata.Name
 	if name == "" {
-		return nil, nil, errors.New("metadata.name is empty")
+		return nil, nil, nil, errors.New("metadata.name is empty")
 	}
 	var spec readerSpec
 	if err := strict(doc.Spec, &spec); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var timeout time.Duration
 	if spec.Timeout != "" {
 		if timeout, err = time.ParseDuration(spec.Timeout); err != nil || timeout <= 0 {
-			return nil, nil, errors.New("timeout is not a duration above zero, such as 120s")
+			return nil, nil, nil, errors.New("timeout is not a duration above zero, such as 120s")
 		}
 	}
 	if spec.MaxInFlight != 0 || spec.Cost != 0 {
@@ -334,21 +361,25 @@ func build(doc document) (rd reader.Reader, unapplied []string, err error) {
 
 	switch spec.Adapter {
 	case "chat":
-		rd, err = chat.NewReader(chat.Config{
+		cfg := chat.Config{
 			Name: name, Endpoint: spec.Endpoint, Model: spec.Model, Image: img,
 			Constrain: spec.Constrained, MaxOutputTokens: spec.MaxOutputTokens, Timeout: timeout,
 			Boxes:       chat.Boxes{Order: spec.Boxes.Order, Space: spec.Boxes.Space},
 			Temperature: spec.Temperature, OutputLimit: spec.OutputLimitParam,
-		})
+		}
+		if rd, err = chat.NewReader(cfg); err == nil {
+			// The same configuration reaches the same model for a figure.
+			describer, err = chat.NewDescriber(cfg)
+		}
 	case "layout":
 		rd, err = layout.New(layout.Config{Name: name, Endpoint: spec.Endpoint, Image: img, Timeout: timeout})
 	case "stub":
-		rd = &stub.Reader{}
+		rd, describer = &stub.Reader{}, &stub.Describer{}
 	default:
 		err = fmt.Errorf("adapter is %q, want chat, layout or stub", spec.Adapter)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return rd, unapplied, nil
+	return rd, describer, unapplied, nil
 }

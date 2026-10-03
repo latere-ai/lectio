@@ -89,6 +89,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	runner := &run.Runner{
 		Store: st, Pipeline: &parse.Pipeline{Limits: limits, Renderer: render.NewPages()},
 		Readers: readers.Readers, Chain: readers.Chain, Workers: s.Workers, Attempts: s.Attempts,
+		Describers: readers.Describers, DescribeChain: readers.DescribeChain,
 		Credential: func(string) reader.Credential { return s.ModelKey },
 	}
 	api := &httpapi.Server{

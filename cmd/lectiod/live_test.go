@@ -25,6 +25,11 @@ import (
 // key the reader is called with, and LECTIO_LIVE_OUT, when set, is a
 // directory the Markdown and each page's blocks are written to for a
 // person to read.
+//
+// With LECTIO_LIVE_DESCRIBE set, the figures of the parse are then
+// described by the describe chain of the configuration's Policy, each
+// figure that has a box must come back with a description, and the
+// listing and each figure's image are written to LECTIO_LIVE_OUT.
 func TestLiveReader(t *testing.T) {
 	config, file := os.Getenv("LECTIO_LIVE_CONFIG"), os.Getenv("LECTIO_LIVE_FILE")
 	if config == "" || file == "" {
@@ -96,6 +101,10 @@ func TestLiveReader(t *testing.T) {
 			write(t, filepath.Join(out, "page-"+itoa(n)+".json"), raw)
 		}
 	}
+	if os.Getenv("LECTIO_LIVE_DESCRIBE") != "" {
+		describeFigures(t, at, out)
+	}
+
 	status, _, markdown := call(t, "GET", at+"/document?format=markdown", "dev", nil)
 	if status != http.StatusOK || len(strings.TrimSpace(string(markdown))) == 0 {
 		t.Fatalf("the document as Markdown: %d, %d bytes", status, len(markdown))
@@ -103,6 +112,49 @@ func TestLiveReader(t *testing.T) {
 	if out != "" {
 		write(t, filepath.Join(out, "document.md"), markdown)
 		t.Logf("wrote the result to %s", out)
+	}
+}
+
+// describeFigures has the figures of the parse at a URL described, waits
+// for the run, and checks that every figure that could be cut from its
+// page came back with a description.
+func describeFigures(t *testing.T, at, out string) {
+	t.Helper()
+	status, listing, raw := call(t, "POST", at+"/figures", "dev", nil)
+	if status != http.StatusAccepted && status != http.StatusOK {
+		t.Fatalf("describe figures: %d %s", status, raw)
+	}
+	began := time.Now()
+	for {
+		run, _ := listing["run"].(map[string]any)
+		if run["state"] != "running" {
+			t.Logf("figures %s: %v of %v described in %s, usage %v", run["state"], run["done"], run["total"], time.Since(began).Round(time.Second), run["usage"])
+			break
+		}
+		if time.Since(began) > 20*time.Minute {
+			t.Fatalf("the figures were not described in 20 minutes: %v", run)
+		}
+		time.Sleep(2 * time.Second)
+		_, listing, raw = call(t, "GET", at+"/figures", "dev", nil)
+	}
+	for _, f := range listing["figures"].([]any) {
+		figure := f.(map[string]any)
+		ref := figure["ref"].(string)
+		if figure["box"] == nil {
+			continue
+		}
+		if figure["description"] == nil || figure["description"] == "" {
+			t.Errorf("figure %s has no description: %v", ref, figure["error"])
+		}
+		t.Logf("figure %s (%v): %v", ref, figure["figure"], figure["description"])
+		if status, _, img := call(t, "GET", at+"/blocks/"+ref+"/image", "dev", nil); status != http.StatusOK || len(img) == 0 {
+			t.Errorf("figure %s has no image: %d", ref, status)
+		} else if out != "" {
+			write(t, filepath.Join(out, "figure-"+ref+".png"), img)
+		}
+	}
+	if out != "" {
+		write(t, filepath.Join(out, "figures.json"), raw)
 	}
 }
 

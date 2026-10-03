@@ -134,6 +134,13 @@ func TestTheDevServerParsesAFile(t *testing.T) {
 		t.Fatalf("its page: %d %s", status, raw)
 	}
 
+	// With nothing configured the stub describes figures too: the request
+	// is taken, and this page holds no figure to describe.
+	status, figures, raw := call(t, "POST", base+"/v1/parses/"+parse["id"].(string)+"/figures", "dev", nil, "Prefer", "wait=20")
+	if run, _ := figures["run"].(map[string]any); status != http.StatusOK || run["state"] != "succeeded" || run["total"] != 0.0 {
+		t.Fatalf("figures: %d %s", status, raw)
+	}
+
 	status, readers, raw := call(t, "GET", base+"/v1/readers", "dev", nil)
 	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"stub"`) || len(readers["readers"].([]any)) != 1 {
 		t.Fatalf("readers: %d %s", status, raw)
