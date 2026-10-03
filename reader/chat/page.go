@@ -8,42 +8,30 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"slices"
-	"strings"
 
 	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/prompts"
 	"latere.ai/x/lectio/reader"
 )
-
-// PromptVersion names the instruction a page is read with. It is part of
-// what makes two parses of the same file comparable, so a change to the
-// instruction changes it.
-const PromptVersion = "1"
 
 // grid is the coordinate range the model is asked to place boxes on.
 // Integers on a fixed grid are placed more reliably than fractions.
 const grid = 1000
 
-// instruction is what the model is asked for a page.
-var instruction = `You are reading one page of a document. Return every region of the page as a block, in the order a person would read them.
-
-For each block give:
-- kind: one of ` + kindList + `.
-- text: the region's content, transcribed exactly. Do not summarize, translate, correct, repeat, or invent text. Leave out what cannot be read. Write a table as HTML with rowspan and colspan, a formula as LaTeX, and a figure as one sentence saying what it shows.
-- box: the region as [x0, y0, x1, y1] on a grid where the page is 1000 wide and 1000 high and the origin is the top left corner.
-- level: the depth of a title or a heading, from 1 to 6, and null for every other kind.
-
-Mark running headers, running footers and page numbers with their own kinds. A page with nothing on it has no blocks.
-
-Reply with one JSON object and nothing else: {"blocks": [{"kind": "...", "text": "...", "box": [x0, y0, x1, y1], "level": null}]}`
-
-// kindList is the closed set of kinds as the instruction lists it.
-var kindList = func() string {
+// kinds is the closed set of kinds, by name, as the page prompt lists it.
+var kinds = func() []string {
 	names := make([]string, 0, len(document.Kinds()))
 	for _, k := range document.Kinds() {
 		names = append(names, string(k))
 	}
-	return strings.Join(names, ", ")
+	return names
 }()
+
+// PromptVersion names the instruction a page is read with: the page
+// prompt's template with this adapter's kinds and grid. It is part of what
+// makes two parses of the same file comparable, and it changes whenever the
+// template does.
+var PromptVersion = prompts.PageVersion(kinds, grid)
 
 // pageSchema is the reply schema of a page, in the subset of JSON Schema
 // that constrained decoding accepts: every property required, no additional
@@ -115,9 +103,9 @@ func (r *Reader) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 	if !slices.Contains(imageTypes, page.MediaType) {
 		return reader.Result{}, reader.Errorf(reader.Permanent, "a chat reader takes a PNG or a JPEG, and the page is %s", page.MediaType)
 	}
-	ask := instruction
-	if len(page.Languages) > 0 {
-		ask += "\n\nThe page is most likely written in: " + strings.Join(page.Languages, ", ") + "."
+	ask, err := prompts.Page(prompts.PageData{Kinds: kinds, Grid: grid, Languages: page.Languages})
+	if err != nil {
+		return reader.Result{}, &reader.Error{Class: reader.Permanent, Detail: "the page prompt does not render", Err: err}
 	}
 	req := request{
 		Model:     r.c.cfg.Model,

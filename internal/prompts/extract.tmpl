@@ -1,0 +1,29 @@
+{{- /* SPDX-FileCopyrightText: 2026 Latere AI */ -}}
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+{{- /*
+The instruction a model is given to fill a caller's schema from a document's text.
+
+  .Citations     whether each value is to name the lines it was read from
+  .Instructions  the caller's own instructions; may be empty
+  .Schema        the caller's JSON Schema, as text
+  .Problems      what an earlier reply got wrong, one per entry; empty on a first attempt
+  .Text          the document, one block per line, each line led by its ref in square brackets
+
+The reply shape named below is the one the adapter decodes and the one its
+reply schema enforces. Changing it here changes neither.
+*/ -}}
+Fill the schema below from the document that follows it. Use only what the document says. Where the document does not say, use null.
+{{if .Citations}}Every line of the document begins with a ref in square brackets. For each value you fill, list the refs of the lines it was read from.
+{{end}}Reply with one JSON object and nothing else: {"data": <the object the schema describes>, "citations": [{"pointer": "<JSON pointer into data>", "refs": ["<ref>"]}]}{{if not .Citations}} with an empty list of citations{{end}}.
+{{if .Instructions}}
+Instructions:
+{{.Instructions}}
+{{end}}
+Schema:
+{{.Schema}}
+{{if .Problems}}
+An earlier reply did not satisfy the schema. Correct these:
+{{range .Problems}}- {{.}}
+{{end}}{{end}}
+Document:
+{{.Text -}}

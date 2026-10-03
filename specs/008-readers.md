@@ -6,7 +6,7 @@ depends_on:
   - specs/002-object-model.md
   - specs/005-parse-graph.md
   - specs/007-model-capacity.md
-affects: [reader/, internal/config/]
+affects: [reader/, internal/config/, internal/prompts/]
 effort: large
 created: 2026-10-03
 updated: 2026-10-03
@@ -223,8 +223,28 @@ engine that scales to zero may load its model on the first call.
 
 ### What the model is asked
 
-The instruction is fixed text, versioned, and part of the options
-fingerprint ([[005-parse-graph]]). In substance:
+Every instruction sent to a model is a template file in one package,
+`internal/prompts`: `page.tmpl` for reading a page and `extract.tmpl`
+for filling a schema ([[011-structured-extraction]]). The files are
+compiled into the binary and parsed once at start. A prompt is rendered
+when the call is made, from that call's data, and no adapter builds one
+out of strings. Each prompt has one data struct, which is the list of
+what its template may refer to:
+
+| Prompt | Rendered with |
+|---|---|
+| `page` | the kinds, the grid, the page's language hints |
+| `extract` | whether to cite, the caller's instructions, the schema, what an earlier reply got wrong, the document text |
+
+What a caller supplies is written in as data and is never parsed as a
+template. The reply schemas are not prompts: they are the wire
+structure an adapter decodes and they stay with that code. A prompt is
+versioned by a digest of its template and its fixed inputs, so an edit
+changes the version and no number has to be raised by hand. The
+version is meant to be part of the options fingerprint
+([[005-parse-graph]]).
+
+The page prompt, in substance:
 
 - Return every region of the page as a block, in reading order.
 - Give each block one kind from the closed set ([[002-object-model]]).
@@ -240,8 +260,8 @@ The reply is one object, `{"blocks": [{kind, text, box, level}]}`, with
 null. A model that returns the bare list is read too. The grid is
 integers because models place integers more reliably than fractions;
 the adapter divides by 1000. When the page has language hints, the
-instruction ends by naming them. The instruction carries a version,
-`chat.PromptVersion`, which changes when its text does.
+instruction ends by naming them. `chat.PromptVersion` is the page
+prompt's version for this adapter's kinds and grid.
 
 ### Normalization
 
@@ -353,6 +373,8 @@ Built:
   `reader/stub` (Reader and Extractor).
 - `internal/config`: Reader and Policy documents from a file or a
   directory, strict, refused whole on any error.
+- `internal/prompts`: the two prompts as template files, rendered per
+  call, each with a test that holds its full text.
 - Escalation and the handling of each error class, in the in-process
   runner ([[005-parse-graph]]).
 
@@ -368,6 +390,13 @@ Remaining:
 - A reply is not checked against the reply schema beyond decoding;
   with `constrained: true` the endpoint enforces it.
 - `lectio-stubs`, and the tests that record and replay real exchanges.
+- A prompt an operator can change without a build. The place for it is
+  a `Prompt` document beside Reader and Policy, named from a Reader's
+  spec and loaded with them. It is not designed here: prompt tuning is
+  out of the first version.
+- The prompt's version in the reuse fingerprint. A reader does not yet
+  say which prompt version it reads with, so two parses under
+  different instructions can still be taken for the same work.
 
 ## Acceptance criteria
 

@@ -58,3 +58,8 @@ exception is reviewable rather than invisible.
 
 A model, an OCR engine, or a gateway is reached only through `reader/`.
 Nothing else in the tree knows that a model exists.
+
+An instruction to a model is written in one place, `internal/prompts/`,
+as a template file, and rendered when the call is made. An adapter that
+needs a new instruction adds a template, a data struct for it, and a
+test that holds its full text. It does not build one from strings.

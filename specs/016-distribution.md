@@ -54,6 +54,7 @@ internal/id/              prefixed, time-ordered identifiers
 internal/intake/          detect, unwrap, pages, tiffx
 internal/native/          formats read with no model
 internal/parse/           the steps of a parse: Prepare and ReadPage
+internal/prompts/         every instruction sent to a model, as template files
 internal/render/          the page renderer
 internal/run/             the in-process runner
 internal/store/           the memory store

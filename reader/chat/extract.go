@@ -6,8 +6,8 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
+	"latere.ai/x/lectio/internal/prompts"
 	"latere.ai/x/lectio/reader"
 )
 
@@ -43,33 +43,19 @@ func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (read
 		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the schema is not JSON")
 	}
 
-	var ask strings.Builder
-	ask.WriteString("Fill the schema below from the document that follows it. Use only what the document says. Where the document does not say, use null.\n")
-	if in.Citations {
-		ask.WriteString("Every line of the document begins with a ref in square brackets. For each value you fill, list the refs of the lines it was read from.\n")
+	ask, err := prompts.Extract(prompts.ExtractData{
+		Citations: in.Citations, Instructions: in.Instructions, Schema: string(in.Schema),
+		Problems: in.Problems, Text: in.Text,
+	})
+	if err != nil {
+		return reader.ExtractResult{}, &reader.Error{Class: reader.Permanent, Detail: "the extraction prompt does not render", Err: err}
 	}
-	ask.WriteString(`Reply with one JSON object and nothing else: {"data": <the object the schema describes>, "citations": [{"pointer": "<JSON pointer into data>", "refs": ["<ref>"]}]}`)
-	if !in.Citations {
-		ask.WriteString(" with an empty list of citations")
-	}
-	ask.WriteString(".\n")
-	if s := strings.TrimSpace(in.Instructions); s != "" {
-		ask.WriteString("\nInstructions:\n" + s + "\n")
-	}
-	ask.WriteString("\nSchema:\n" + string(in.Schema) + "\n")
-	if len(in.Problems) > 0 {
-		ask.WriteString("\nAn earlier reply did not satisfy the schema. Correct these:\n")
-		for _, p := range in.Problems {
-			ask.WriteString("- " + p + "\n")
-		}
-	}
-	ask.WriteString("\nDocument:\n" + in.Text)
 
 	constrain := in.Constrain && e.c.cfg.Constrain
 	req := request{
 		Model:     e.c.cfg.Model,
 		MaxTokens: e.c.cfg.MaxOutputTokens,
-		Messages:  []message{{Role: "user", Content: []part{{Type: "text", Text: ask.String()}}}},
+		Messages:  []message{{Role: "user", Content: []part{{Type: "text", Text: ask}}}},
 	}
 	if constrain {
 		wrapped := `{"type":"object","additionalProperties":false,"required":["data","citations"],"properties":{"data":` + string(in.Schema) + `,"citations":` + citationsSchema + `}}`
