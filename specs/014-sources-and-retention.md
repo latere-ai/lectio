@@ -72,12 +72,20 @@ twice cannot get an address past the check.
   request with no check of its own.
 - A URL with a user or a password, or with a scheme other than `https`,
   is refused before any connection.
-- A host in `LECTIO_FETCH_ALLOW` is fetched whatever it resolves to,
-  redirects included. That is how an operator's own object store on a
-  private network is reached.
+- A host in `LECTIO_FETCH_ALLOW`, named alone or with its port, is
+  fetched whatever it resolves to. That is how an operator's own object
+  store on a private network is reached. The allowance is the host's
+  own: a redirect from it to another address is checked like any
+  connection.
 - What the caller is told names no address. The transport's error may
   hold the address or a token in the URL's query, so it is kept out of
   the answer.
+- The fetch carries no trace. It is the one outbound call that is not
+  instrumented: a tracing transport records the URL it requests, and
+  what a short-lived download link proves is in its query, so a span
+  would hand the link to whoever reads traces. It would also send this
+  server's trace headers to a host a caller chose. What a trace keeps
+  of a fetch is its host and how it ended, never its URL.
 
 The response's file name, from the URL's path or `Content-Disposition`,
 and its `Content-Type` are hints for telling the file's type, as a
@@ -89,9 +97,9 @@ file, which proves the caller may read it, and submits the link. No
 token crosses from one service to another, Lectio needs no client for
 any particular store, and the link only has to live until `prepare`
 runs. For a parse that waits in a queue longer than the link lives,
-the fix is ordering, not a longer link: `prepare` charges nothing and
-runs ahead of pages ([[006-fairness-and-priority]]), so it is claimed
-in seconds even when the tenant's pages wait for an hour.
+the fix is ordering, not a longer link: `prepare` is ordered ahead of
+a parse's pages ([[006-fairness-and-priority]]), so it is claimed in
+seconds even when the tenant's pages wait for an hour.
 
 ### Origin
 
@@ -129,6 +137,13 @@ points to. `DELETE /parses/{parse}` and `DELETE /files/{file}` do the
 same on demand, and a File that a non-terminal parse uses is refused
 with `409 not_terminal`.
 
+Deleting a File deletes the snapshot and nothing a parse wrote. The
+page images of the parses that read it are pictures of the same
+content, and they stay, with the page results and the document, until
+each parse is deleted or its retention ends. A caller that wants a
+file's content gone deletes its parses too: `GET /parses?file=` lists
+them.
+
 Page images are the largest thing a parse stores. `output.images:
 false` on a submit, or `LECTIO_KEEP_PAGE_IMAGES=false`, deletes each
 image once its page has been read, at the cost of the image route
@@ -158,8 +173,8 @@ Built:
   size limit, type detection, and the same bytes being one File per
   owner.
 - `internal/fetch`: the fetcher with the address check above, the
-  redirect bound, the size limit while streaming, and the allowed
-  hosts.
+  redirect bound, the size limit while streaming, the allowed hosts,
+  and no trace.
 - `origin` stored, returned and filterable, and `DELETE` of a file and
   of a parse, with a file that a parse which has not ended reads being
   refused.
@@ -185,6 +200,9 @@ Remaining:
 |---|---|
 | The fetcher refuses loopback, private, link-local and metadata addresses at dial time, including after a redirect and for a name that resolves to one | tests with a resolver and redirect fixture |
 | A URL whose body exceeds the limit is stopped at the limit, not after | a streaming test |
+| A fetch sends no trace header to the host, and a fetch that fails tells the caller neither the address nor anything from the URL's query | `TestFetchCarriesNoTraceToTheHostACallerChose` |
+| A host in the allow list that redirects to an address outside it is refused | `TestFetchRefusesNonPublicAddresses` |
+| Deleting a File leaves the page images of the parses that read it, and deleting those parses removes them | a store test |
 | The same bytes uploaded twice by one owner are one File; by two owners, two Files with different keys | a store test |
 | A parse submitted with a link that expires in 60 seconds, behind a 10-minute backlog of the same group's pages, succeeds | a dispatch test with a virtual clock |
 | After the retention period, the sweep leaves no object and no row for an expired File or parse, and an interrupted sweep completes on the next run | a store test over the S3 implementation |

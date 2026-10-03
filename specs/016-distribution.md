@@ -99,14 +99,17 @@ gate.
 
 | Image | Contents |
 |---|---|
-| `lectiod` | the static binary on a distroless base; reads images and PDFs; refuses formats that need conversion |
-| `lectiod-office` | the same binary plus LibreOffice Writer and Impress; converts office formats ([[009-intake]]) |
+| `lectiod` | the static binary on a distroless base; reads images and PDFs; refuses formats that need conversion unless a converter is configured |
+| `lectio-convert` | the conversion sidecar: an office suite behind the one call of the converter interface ([[009-intake]]); holds no credential and is run with no network |
 | `lectio-stubs` | the stubs, for a consumer's own tests |
 
-Two server images because the office suite is several hundred
-megabytes and a deployment that never converts should not carry it.
-A deployment that converts runs a small pool of `-office` workers
-beside its plain ones.
+There is one server image. The office suite is several hundred
+megabytes and runs a caller's file, so it is not in the image that
+holds the model credential: a deployment that converts runs the
+sidecar beside its workers, in a container that is given no network,
+and a deployment that does not convert runs nothing extra. The task
+queue does not know which workers can convert, because every worker
+either reaches a converter or refuses the format.
 
 ### Configuration
 
@@ -237,7 +240,8 @@ Remaining:
 - Every test tier but the first. The suite today is unit tests and
   end-to-end tests of the API and the development server in one
   process; there is no store conformance suite, no dispatch
-  simulation, no soak and no live tier.
+  simulation and no soak. The live tier is one test, `make live`,
+  which reads a real file with a configured reader and is run by hand.
 - `LECTIO_DEV` holds page images in memory and has no local directory
   for objects.
 - The health probe is `GET /healthz`. Readiness and version probes
@@ -252,6 +256,6 @@ Remaining:
 | The configuration table lists every variable the binary reads and none it does not | a generator test |
 | `lectiod` without `LECTIO_DEV` and without a database names the missing variable and exits non-zero; with `LECTIO_DEV` it starts and warns | start-up tests |
 | The store conformance suite passes on the memory store, on Postgres, and on Postgres through a transaction-mode pooler | the conformance tier |
-| The plain image contains no office suite and is under 60 MiB; the `-office` image converts the presentation fixture | image tests |
+| The server image contains no office suite and is under 60 MiB; the conversion sidecar converts the presentation fixture with its network disabled | image tests |
 | A tag without a changelog section is refused by the pre-push hook and by the release workflow | the gate's own check |
 | No file in the repository contains a deployment's hostname, account or credential | a repository scan in the gate |
