@@ -71,9 +71,10 @@ CREATE TABLE tasks (
   task_id       text     NOT NULL,             -- prepare | page-<n> | assemble | extract-<name>
   kind          text     NOT NULL,
   group_id      text     NOT NULL,
+  project_id    text     NOT NULL DEFAULT '',  -- the group's project; '' is its own
   class         smallint NOT NULL,             -- 0 interactive, 1 batch
   priority      integer  NOT NULL DEFAULT 0,
-  seq           integer  NOT NULL,             -- position within the parse; orders a group's queue
+  seq           integer  NOT NULL,             -- position within the parse; orders a project's queue
   pin           text,                          -- the reader the parse named, when it named one
   state         text     NOT NULL,             -- queued | leased | succeeded | failed | canceled
   attempt       integer  NOT NULL DEFAULT 0,
@@ -95,7 +96,7 @@ CREATE TABLE tasks (
   settled_at    timestamptz,
   PRIMARY KEY (parse_id, task_id)
 );
-CREATE INDEX tasks_runnable ON tasks (group_id, class, priority DESC, seq, created_at)
+CREATE INDEX tasks_runnable ON tasks (group_id, project_id, class, priority DESC, seq, created_at)
   WHERE state = 'queued';
 CREATE INDEX tasks_leased ON tasks (lease_owner) WHERE state = 'leased';
 CREATE INDEX tasks_slots  ON tasks (reader, scope) WHERE state = 'leased' AND calling;

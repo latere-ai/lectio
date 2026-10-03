@@ -565,7 +565,7 @@ paths:
       tags: [operations]
       operationId: getQueue
       x-lectio-status: planned
-      summary: Read what is waiting and running, per group.
+      summary: Read what is waiting and running, per group and project.
       responses:
         "200": { description: The queue., content: { application/json: { schema: { type: object } } } }
         "501": { $ref: "#/components/responses/Error" }
