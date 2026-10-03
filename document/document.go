@@ -134,9 +134,14 @@ type Block struct {
 	// Box is nil when the position is unknown, which is every block of a
 	// page whose format carried its own structure.
 	Box *Box `json:"box"`
-	// Text is the content as plain text. For a table it is the cells joined
-	// row by row; for a figure it is the reader's description.
+	// Text is what is printed in the region, as plain text. For a table it
+	// is the cells joined row by row; for a figure it is the words printed
+	// inside it. Text is transcription and nothing else.
 	Text string `json:"text"`
+	// Description is what a reader says a figure shows. It is the reader's
+	// own prose, never transcription, so it is kept apart from Text: it is
+	// not what the document says and is never cited as such.
+	Description string `json:"description,omitempty"`
 	// Level is the heading depth, 1 to 6, on a title or a heading.
 	Level int `json:"level,omitempty"`
 	// Table is the structure of a block of KindTable.
@@ -158,12 +163,14 @@ type Table struct {
 
 // Cell is one cell of a table. Row and Col count from 0.
 type Cell struct {
-	Row     int    `json:"row"`
-	Col     int    `json:"col"`
-	RowSpan int    `json:"row_span,omitempty"`
-	ColSpan int    `json:"col_span,omitempty"`
-	Text    string `json:"text"`
-	Box     *Box   `json:"box,omitempty"`
+	Row     int `json:"row"`
+	Col     int `json:"col"`
+	RowSpan int `json:"row_span,omitempty"`
+	ColSpan int `json:"col_span,omitempty"`
+	// Header marks a cell of a header row or column.
+	Header bool   `json:"header,omitempty"`
+	Text   string `json:"text"`
+	Box    *Box   `json:"box,omitempty"`
 }
 
 // Ref renders a block's address.
@@ -257,12 +264,15 @@ type Page struct {
 	State    PageState  `json:"state"`
 	Source   PageSource `json:"source,omitempty"`
 	// Reader and Model name what read the page; both are empty on a native page.
-	Reader   string  `json:"reader,omitempty"`
-	Model    string  `json:"model,omitempty"`
-	Attempts int     `json:"attempts,omitempty"`
-	Blocks   []Block `json:"blocks"`
-	Usage    *Usage  `json:"usage,omitempty"`
-	Error    *Error  `json:"error,omitempty"`
+	Reader   string `json:"reader,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Attempts int    `json:"attempts,omitempty"`
+	// Truncated reports that the reader's reply ended at its output limit:
+	// the blocks are what it finished, and the page may hold more.
+	Truncated bool    `json:"truncated,omitempty"`
+	Blocks    []Block `json:"blocks"`
+	Usage     *Usage  `json:"usage,omitempty"`
+	Error     *Error  `json:"error,omitempty"`
 }
 
 // Validate reports the first thing about a page that the model forbids: a

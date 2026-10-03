@@ -701,7 +701,8 @@ components:
         kind: { $ref: "#/components/schemas/Kind" }
         order: { type: integer, minimum: 1, description: Reading order within the page. }
         box: { $ref: "#/components/schemas/Box" }
-        text: { type: string, description: The content as plain text. A table's cells joined row by row; a figure's description. }
+        text: { type: string, description: What is printed in the region, as plain text. A table's cells joined row by row; the words printed inside a figure. Transcription and nothing else. }
+        description: { type: string, description: What a reader says a figure shows. The reader's own prose, kept apart from `text` because it is not what the document says. }
         level: { type: integer, minimum: 1, maximum: 6, description: The depth of a title or heading. }
         table: { $ref: "#/components/schemas/Table" }
         repeated: { type: boolean, description: A running header or footer after its first occurrence. }
@@ -727,6 +728,7 @@ components:
         col: { type: integer, minimum: 0 }
         row_span: { type: integer, minimum: 2 }
         col_span: { type: integer, minimum: 2 }
+        header: { type: boolean, description: A cell of a header row or column. }
         text: { type: string }
         box: { $ref: "#/components/schemas/Box" }
 
@@ -743,6 +745,7 @@ components:
         reader: { type: string }
         model: { type: string }
         attempts: { type: integer }
+        truncated: { type: boolean, description: The reader's reply ended at its output limit. The blocks are what it finished, and the page may hold more. }
         blocks: { type: array, items: { $ref: "#/components/schemas/Block" } }
         usage: { $ref: "#/components/schemas/Usage" }
         error: { $ref: "#/components/schemas/Problem" }
