@@ -44,6 +44,7 @@ func (r *Reader) Describe() reader.Description {
 		Accepts: []string{"image/png", "image/jpeg"},
 		Image:   reader.ImageSpec{DPI: 72, Format: "png"},
 		Boxes:   true,
+		Version: Name,
 	}
 }
 

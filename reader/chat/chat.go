@@ -53,8 +53,24 @@ type Config struct {
 	// instruction alone.
 	Constrain bool
 
+	// Boxes is how this model is asked for positions. Model families are
+	// trained on different conventions, and a model asked in another
+	// places boxes worse, or returns valid numbers in the wrong order. The
+	// zero value asks for [x0, y0, x1, y1] on a grid of 1000.
+	Boxes Boxes
+
+	// Temperature is sent as the request's temperature when it is set. It
+	// is not set by default: several current models refuse a request that
+	// names one.
+	Temperature *float64
+
 	// MaxOutputTokens bounds the reply. Zero takes 8192.
 	MaxOutputTokens int
+
+	// OutputLimit names the request member the bound is sent as:
+	// "max_completion_tokens", the default, or "max_tokens" for an
+	// endpoint that knows only the older name.
+	OutputLimit string
 
 	// MaxInput bounds the text of one extraction call, in characters. Zero
 	// takes 400,000.
@@ -67,6 +83,32 @@ type Config struct {
 	// caller's trace to the endpoint.
 	HTTPClient *http.Client
 }
+
+// Boxes is a convention for the position of a region.
+type Boxes struct {
+	// Order is the order of the four numbers: "xyxy" for [x0, y0, x1, y1],
+	// the default, or "yxyx" for [y0, x0, y1, x1].
+	Order string
+
+	// Space is what the numbers measure: "grid", the default, a fixed
+	// range of 1000 by 1000 over the page, or "pixels", the pixels of the
+	// image as it was sent.
+	Space string
+}
+
+// The members of a box convention.
+const (
+	OrderXY     = "xyxy"
+	OrderYX     = "yxyx"
+	SpaceGrid   = "grid"
+	SpacePixels = "pixels"
+)
+
+// The names the output bound is sent under.
+const (
+	LimitCompletionTokens = "max_completion_tokens"
+	LimitTokens           = "max_tokens"
+)
 
 // maxReply bounds how much of a response body is read. A reply longer than
 // this is not a page of blocks.
@@ -103,6 +145,21 @@ func newClient(cfg Config) (*client, error) {
 	if cfg.Image.Format != "png" && cfg.Image.Format != "jpeg" {
 		return nil, fmt.Errorf("chat: reader %q asks for image format %q, which is neither png nor jpeg", cfg.Name, cfg.Image.Format)
 	}
+	if cfg.Boxes.Order == "" {
+		cfg.Boxes.Order = OrderXY
+	}
+	if cfg.Boxes.Space == "" {
+		cfg.Boxes.Space = SpaceGrid
+	}
+	if (cfg.Boxes.Order != OrderXY && cfg.Boxes.Order != OrderYX) || (cfg.Boxes.Space != SpaceGrid && cfg.Boxes.Space != SpacePixels) {
+		return nil, fmt.Errorf("chat: reader %q asks for boxes as %q in %q; the order is xyxy or yxyx and the space is grid or pixels", cfg.Name, cfg.Boxes.Order, cfg.Boxes.Space)
+	}
+	if cfg.OutputLimit == "" {
+		cfg.OutputLimit = LimitCompletionTokens
+	}
+	if cfg.OutputLimit != LimitCompletionTokens && cfg.OutputLimit != LimitTokens {
+		return nil, fmt.Errorf("chat: reader %q sends its output bound as %q, which is neither max_completion_tokens nor max_tokens", cfg.Name, cfg.OutputLimit)
+	}
 	if cfg.MaxOutputTokens <= 0 {
 		cfg.MaxOutputTokens = 8192
 	}
@@ -121,11 +178,25 @@ func newClient(cfg Config) (*client, error) {
 
 // request is the body of a chat completions call.
 type request struct {
-	Model          string          `json:"model"`
-	Temperature    float64         `json:"temperature"`
-	MaxTokens      int             `json:"max_tokens"`
-	Messages       []message       `json:"messages"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Model               string          `json:"model"`
+	Temperature         *float64        `json:"temperature,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Messages            []message       `json:"messages"`
+	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
+}
+
+// request builds a request holding one user message. It sends what the
+// configuration names and nothing else: no sampling parameter the operator
+// did not ask for, and the output bound under the one name configured.
+func (c *client) request(content []part) request {
+	req := request{Model: c.cfg.Model, Temperature: c.cfg.Temperature, Messages: []message{{Role: "user", Content: content}}}
+	if c.cfg.OutputLimit == LimitTokens {
+		req.MaxTokens = c.cfg.MaxOutputTokens
+	} else {
+		req.MaxCompletionTokens = c.cfg.MaxOutputTokens
+	}
+	return req
 }
 
 type message struct {
@@ -180,8 +251,9 @@ type completion struct {
 
 // complete sends one request and returns the model's text. Every failure is
 // a *reader.Error: a transport failure and a 5xx are retryable, a rate
-// limit says how long to wait, a spent budget is its own class, and a
-// refusal or a malformed request is permanent.
+// limit says how long to wait, a spent budget is its own class, a request
+// the endpoint rejects is the reader's misconfiguration, and content the
+// model declines is refused.
 func (c *client) complete(ctx context.Context, credential reader.Credential, req request) (completion, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -218,7 +290,7 @@ func (c *client) complete(ctx context.Context, credential reader.Credential, req
 	}
 	choice := res.Choices[0]
 	if choice.Message.Refusal != "" || choice.FinishReason == "content_filter" {
-		return completion{}, reader.Errorf(reader.Permanent, "the model refused the content")
+		return completion{}, reader.Errorf(reader.Refused, "the model declined the content")
 	}
 	return completion{
 		content:   text(choice.Message.Content),
@@ -254,5 +326,85 @@ func decode(content string, v any) error {
 	if json.Unmarshal([]byte(content), v) == nil {
 		return nil
 	}
-	return json.Unmarshal([]byte(llmjson.Repair(content)), v)
+	if json.Unmarshal([]byte(llmjson.Repair(content)), v) == nil {
+		return nil
+	}
+	return json.Unmarshal([]byte(llmjson.Repair(repairEscapes(content))), v)
 }
+
+// latex are the commands whose first letter is also a JSON escape. A model
+// that writes a formula into a JSON string with a single backslash writes
+// the command frac as a form feed followed by "rac", which is valid JSON
+// and a corrupt formula. The command is told from a real escape by its
+// whole word.
+var latex = map[string]bool{
+	"bar": true, "begin": true, "beta": true, "big": true, "bigg": true, "bigcap": true, "bigcup": true,
+	"binom": true, "bm": true, "boldsymbol": true, "bot": true, "boxed": true, "bullet": true,
+	"frac": true, "forall": true, "flat": true,
+	"nabla": true, "neq": true, "neg": true, "notin": true, "nu": true, "nmid": true, "nolimits": true,
+	"nonumber": true, "newline": true, "nleq": true, "ngeq": true,
+	"rho": true, "right": true, "rightarrow": true, "rangle": true, "rceil": true, "rfloor": true,
+	"rvert": true, "rbrace": true, "rbrack": true,
+	"tau": true, "text": true, "textbf": true, "textit": true, "textrm": true, "texttt": true, "theta": true,
+	"tilde": true, "times": true, "to": true, "top": true, "triangle": true, "tfrac": true, "tanh": true,
+	"therefore": true,
+}
+
+// repairEscapes doubles the backslashes inside JSON strings that begin a
+// LaTeX command and not a JSON escape: a backslash before a character JSON
+// does not escape (the first of alpha, or a parenthesis), a u that four
+// hex digits do not follow, and a backslash before one of the commands in
+// latex. A string that was escaped correctly is not changed.
+func repairEscapes(content string) string {
+	var out strings.Builder
+	inString := false
+	for i := 0; i < len(content); i++ {
+		c := content[i]
+		if c == '"' {
+			inString = !inString
+		}
+		if c != '\\' || !inString || i+1 >= len(content) {
+			out.WriteByte(c)
+			continue
+		}
+		next := content[i+1]
+		word := i + 1
+		for word < len(content) && (content[word] >= 'a' && content[word] <= 'z' || content[word] >= 'A' && content[word] <= 'Z') {
+			word++
+		}
+		command := content[i+1 : word]
+		switch {
+		case next == '"' || next == '\\' || next == '/':
+			// A real escape of two characters: both are kept as they are.
+			out.WriteByte(c)
+			out.WriteByte(next)
+			i++
+		case next == 'u' && hex4(content[min(i+2, len(content)):]):
+			out.WriteByte(c)
+		case strings.ContainsRune("bfnrt", rune(next)) && !latex[command]:
+			out.WriteByte(c)
+		default:
+			out.WriteString(`\\`)
+		}
+	}
+	return out.String()
+}
+
+// hex4 reports whether s begins with four hexadecimal digits.
+func hex4(s string) bool {
+	if len(s) < 4 {
+		return false
+	}
+	for _, c := range []byte(s[:4]) {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// corrupt reports whether decoded text holds a control character that no
+// transcription holds: a backspace, a form feed, a tab or a carriage
+// return, which is what a command such as beta, frac, theta or rho decodes
+// to when its backslash was not escaped.
+func corrupt(text string) bool { return strings.ContainsAny(text, "\b\f\t\r") }

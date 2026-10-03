@@ -39,9 +39,20 @@ const (
 	// for the parse and says nothing about the reader.
 	Budget
 
-	// Permanent: this call will never succeed: the input is refused, the
-	// request is malformed, the key is not accepted. It is not retried.
+	// Permanent: this page will never be read by this reader: the image is
+	// too large for it, or in a form it does not take. It is not retried.
 	Permanent
+
+	// Refused: the model, or a filter in front of it, declined the content
+	// of this page. The reader is healthy and another may read the page,
+	// so the page goes to the next reader once and is not retried here.
+	Refused
+
+	// Misconfigured: the endpoint rejected the request itself: a parameter
+	// it does not accept, a model it does not have, a key it does not
+	// know. No page succeeds on this reader until its configuration
+	// changes, so the failure is the reader's and not the page's.
+	Misconfigured
 )
 
 func (c Class) String() string {
@@ -56,6 +67,10 @@ func (c Class) String() string {
 		return "budget"
 	case Permanent:
 		return "permanent"
+	case Refused:
+		return "refused"
+	case Misconfigured:
+		return "misconfigured"
 	}
 	return "class(" + strconv.Itoa(int(c)) + ")"
 }
@@ -137,8 +152,14 @@ func FromStatus(status int, header http.Header, body []byte) *Error {
 		e.Class = RateLimited
 	case status == http.StatusRequestTimeout || status == http.StatusConflict || status >= 500:
 		e.Class = Retryable
-	default:
+	case status == http.StatusRequestEntityTooLarge || status == http.StatusUnsupportedMediaType:
+		// The page as it was sent: too large, or in a form the endpoint
+		// does not take.
 		e.Class = Permanent
+	default:
+		// Any other 4xx is about the request and not about the page: a
+		// parameter, the model's name, the key, the address.
+		e.Class = Misconfigured
 	}
 	return e
 }

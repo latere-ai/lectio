@@ -154,6 +154,16 @@ type readerSpec struct {
 	Constrained     bool `yaml:"constrained"`
 	MaxOutputTokens int  `yaml:"maxOutputTokens"`
 
+	// What differs from one model family to the next, for the chat
+	// adapter: how the model is asked for boxes, whether a temperature is
+	// sent at all, and the name the output bound is sent under.
+	Boxes struct {
+		Order string `yaml:"order"`
+		Space string `yaml:"space"`
+	} `yaml:"boxes"`
+	Temperature      *float64 `yaml:"temperature"`
+	OutputLimitParam string   `yaml:"outputLimitParam"`
+
 	// Capacity is the concern of the durable runner, which shares a
 	// reader's slots between workers. The in-process runner does not apply
 	// these two.
@@ -327,6 +337,8 @@ func build(doc document) (rd reader.Reader, unapplied []string, err error) {
 		rd, err = chat.NewReader(chat.Config{
 			Name: name, Endpoint: spec.Endpoint, Model: spec.Model, Image: img,
 			Constrain: spec.Constrained, MaxOutputTokens: spec.MaxOutputTokens, Timeout: timeout,
+			Boxes:       chat.Boxes{Order: spec.Boxes.Order, Space: spec.Boxes.Space},
+			Temperature: spec.Temperature, OutputLimit: spec.OutputLimitParam,
 		})
 	case "layout":
 		rd, err = layout.New(layout.Config{Name: name, Endpoint: spec.Endpoint, Image: img, Timeout: timeout})

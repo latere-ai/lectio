@@ -33,6 +33,8 @@ package layout
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +44,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,7 +122,17 @@ func (r *Reader) Describe() reader.Description {
 	if r.cfg.Image.Format == "jpeg" {
 		slices.Reverse(accepts)
 	}
-	return reader.Description{Name: r.cfg.Name, Accepts: accepts, Image: r.cfg.Image, Boxes: true}
+	return reader.Description{Name: r.cfg.Name, Accepts: accepts, Image: r.cfg.Image, Boxes: true, Version: r.version()}
+}
+
+// version names what this reader's configuration decides about a page's
+// result: which engine is asked, and how the page is rendered for it. What
+// model the engine runs is the engine's to say, in each reply.
+func (r *Reader) version() string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		r.cfg.Endpoint, strconv.Itoa(r.cfg.Image.DPI), strconv.Itoa(r.cfg.Image.LongEdge), r.cfg.Image.Format,
+	}, "\x00")))
+	return hex.EncodeToString(sum[:6])
 }
 
 // reply is the engine's answer.

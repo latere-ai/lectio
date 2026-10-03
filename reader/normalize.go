@@ -35,6 +35,10 @@ type Raw struct {
 
 	// HTML is a table's markup when the engine returned it apart from Text.
 	HTML string
+
+	// Description is what the engine says a figure shows, in its own
+	// words. It is kept apart from Text, which is transcription.
+	Description string
 }
 
 // Grid is the coordinate range an engine's boxes are in: the image's size
@@ -74,6 +78,11 @@ func Normalize(raws []Raw, grid Grid) []document.Block {
 		case document.KindFormula:
 			b.Level = 0
 			b.Text = mathBody(b.Text)
+		case document.KindFigure:
+			b.Level = 0
+			// Only a figure has a description: for any other kind the
+			// engine's own words about a region are not kept.
+			b.Description = strings.TrimSpace(raw.Description)
 		default:
 			b.Level = 0
 		}
@@ -212,7 +221,7 @@ func TableFromHTML(markup string) (table *document.Table, ok bool) {
 	if strings.TrimSpace(markup) == "" {
 		return nil, false
 	}
-	table = &document.Table{HTML: markup}
+	table = &document.Table{}
 	taken := map[[2]int]bool{}
 	row, col := -1, 0
 	var cell *document.Cell
@@ -233,6 +242,7 @@ func TableFromHTML(markup string) (table *document.Table, ok bool) {
 		switch z.Next() {
 		case html.ErrorToken:
 			closeCell()
+			table.HTML = tableHTML(table)
 			return table, len(table.Cells) > 0
 		case html.StartTagToken, html.SelfClosingTagToken:
 			name, hasAttr := z.TagName()
@@ -249,7 +259,7 @@ func TableFromHTML(markup string) (table *document.Table, ok bool) {
 					col++
 				}
 				rowSpan, colSpan := spans(z, hasAttr)
-				cell = &document.Cell{Row: row, Col: col}
+				cell = &document.Cell{Row: row, Col: col, Header: string(name) == "th"}
 				if rowSpan > 1 {
 					cell.RowSpan = rowSpan
 				}
@@ -309,6 +319,43 @@ func spans(z *html.Tokenizer, hasAttr bool) (rowSpan, colSpan int) {
 	return rowSpan, colSpan
 }
 
+// tableHTML writes a table's markup from its cells. The markup a reader
+// returned is not kept: it came from a model that read a file somebody
+// else wrote, and whatever that file led it to write, a script, a handler,
+// a link, would be served to whoever renders the result. Markup written
+// from the cells holds a table and nothing else.
+func tableHTML(t *document.Table) string {
+	var b strings.Builder
+	b.WriteString("<table>")
+	row := -1
+	for _, c := range t.Cells {
+		if c.Row != row {
+			if row >= 0 {
+				b.WriteString("</tr>")
+			}
+			b.WriteString("<tr>")
+			row = c.Row
+		}
+		tag := "td"
+		if c.Header {
+			tag = "th"
+		}
+		b.WriteString("<" + tag)
+		if c.RowSpan > 1 {
+			b.WriteString(` rowspan="` + strconv.Itoa(c.RowSpan) + `"`)
+		}
+		if c.ColSpan > 1 {
+			b.WriteString(` colspan="` + strconv.Itoa(c.ColSpan) + `"`)
+		}
+		b.WriteString(">" + html.EscapeString(c.Text) + "</" + tag + ">")
+	}
+	if row >= 0 {
+		b.WriteString("</tr>")
+	}
+	b.WriteString("</table>")
+	return b.String()
+}
+
 // tableText is a table as plain text: cells joined by " | " and rows by a
 // newline, which is what a text search and a text rendering read.
 func tableText(t *document.Table) string {
@@ -327,15 +374,20 @@ func tableText(t *document.Table) string {
 
 // Check decides whether a reader's result is usable. It returns nil, or an
 // Error of class Invalid saying why not: the page has content and the reply
-// has no blocks, or one line makes up most of a long reply, which is what a
-// model that has fallen into a loop produces. blank says the caller already
-// knows the page is empty.
+// has no blocks, or the reply ran to its output limit with one line making
+// up most of it, which is what a model that has fallen into a loop
+// produces. A reply that ended by itself is not a loop however much it
+// repeats: a timesheet repeats. blank says the caller already knows the
+// page is empty.
 func Check(result Result, blank bool) error {
 	if len(result.Blocks) == 0 {
 		if blank {
 			return nil
 		}
 		return Errorf(Invalid, "the reply holds no blocks for a page that is not blank")
+	}
+	if !result.Truncated {
+		return nil
 	}
 	const longReply, share = 20, 0.5
 	counts, total, top := map[string]int{}, 0, 0

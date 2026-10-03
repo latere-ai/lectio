@@ -27,7 +27,6 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"strconv"
 	"strings"
 	"text/template"
 )
@@ -53,8 +52,14 @@ type PageData struct {
 	// Kinds is the closed set of block kinds, by name.
 	Kinds []string
 
-	// Grid is the size of the grid the model places boxes on.
-	Grid int
+	// BoxOrder names a box's four numbers in the order this model is asked
+	// for them: x0, y0, x1, y1, or y0, x0, y1, x1.
+	BoxOrder []string
+
+	// Pixels says boxes are in pixels of the image. When it is false they
+	// are on a grid of Grid by Grid.
+	Pixels bool
+	Grid   int
 
 	// Languages are the languages the page is most likely written in.
 	Languages []string
@@ -62,20 +67,22 @@ type PageData struct {
 
 // ExtractData is what the extraction prompt is rendered with.
 type ExtractData struct {
-	// Citations says whether each value is to cite the lines it came from.
+	// Text is the document, each block led by its ref.
+	Text string
+
+	// Schema is the caller's JSON Schema, as text.
+	Schema string
+
+	// Citations says whether each value is to cite the blocks it came from.
 	Citations bool
 
 	// Instructions are the caller's own. Surrounding space is dropped.
 	Instructions string
 
-	// Schema is the caller's JSON Schema, as text.
-	Schema string
-
-	// Problems are what an earlier reply got wrong.
+	// Previous is the reply an earlier attempt gave, and Problems is what
+	// it got wrong. Both are empty on a first attempt.
+	Previous string
 	Problems []string
-
-	// Text is the document, one block per line, each led by its ref.
-	Text string
 }
 
 // Page renders the instruction for reading one page.
@@ -104,13 +111,18 @@ func Source(name string) (string, error) {
 	return string(raw), err
 }
 
-// PageVersion names the page prompt as it is asked: the template and the
-// two inputs that are the same for every page, the kinds and the grid. Two
-// pages read under the same version were asked the same thing, apart from
-// their languages. It is a digest of the source, so any edit to the
-// template changes it and no number has to be remembered and raised.
-func PageVersion(kinds []string, grid int) string {
-	return version(PageName, strings.Join(kinds, ","), strconv.Itoa(grid))
+// PageVersion names the page prompt as it is asked of one reader: the
+// template and everything it is rendered with that is the same for every
+// page, which is all of d but its languages. Two pages read under the same
+// version were asked the same thing. It is a digest, so any edit to the
+// template or to how a reader asks for boxes changes it, and no number has
+// to be remembered and raised.
+func PageVersion(d PageData) string {
+	d.Languages = nil
+	// The data is fixed and the template is tested, so this render does
+	// not fail; if it did, the version would still follow the source.
+	asked, _ := Page(d)
+	return version(PageName, asked)
 }
 
 // ExtractVersion names the extraction prompt as it is asked. Everything

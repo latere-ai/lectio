@@ -60,7 +60,10 @@ func TestCredentialNeverLeaves(t *testing.T) {
 }
 
 func TestClassNames(t *testing.T) {
-	want := map[Class]string{Retryable: "retryable", Invalid: "invalid", RateLimited: "rate_limited", Budget: "budget", Permanent: "permanent", Class(99): "class(99)"}
+	want := map[Class]string{
+		Retryable: "retryable", Invalid: "invalid", RateLimited: "rate_limited", Budget: "budget", Permanent: "permanent",
+		Refused: "refused", Misconfigured: "misconfigured", Class(99): "class(99)",
+	}
 	for class, name := range want {
 		if got := class.String(); got != name {
 			t.Errorf("Class(%d).String() = %q, want %q", int(class), got, name)
@@ -117,8 +120,12 @@ func TestFromStatus(t *testing.T) {
 		{"payment required", 402, "", "", Budget, 0},
 		{"a budget refusal behind another status", 429, "", `{"error":{"code":"budget_exhausted"}}`, Budget, 0},
 		{"a quota refusal", 403, "", `{"error":{"type":"insufficient_quota"}}`, Budget, 0},
-		{"bad request", 400, "", "", Permanent, 0},
-		{"unauthorized", 401, "", "", Permanent, 0},
+		{"a request the endpoint rejects", 400, "", "", Misconfigured, 0},
+		{"a key it does not know", 401, "", "", Misconfigured, 0},
+		{"a model it does not have", 404, "", "", Misconfigured, 0},
+		{"a parameter it does not take", 422, "", "", Misconfigured, 0},
+		{"a page too large for it", 413, "", "", Permanent, 0},
+		{"an image form it does not take", 415, "", "", Permanent, 0},
 		{"a date is not read", 429, "Wed, 21 Oct 2026 07:28:00 GMT", "", RateLimited, 0},
 		{"a negative wait is none", 429, "-3", "", RateLimited, 0},
 	} {
@@ -215,8 +222,12 @@ func TestNormalizeReadsATable(t *testing.T) {
 			t.Fatalf("%s: no table: %+v", name, got)
 		}
 		tb := got[0].Table
-		if tb.Rows != 2 || tb.Cols != 2 || len(tb.Cells) != 3 || tb.HTML != markup {
+		// The markup kept is written from the cells, and not the reader's own.
+		if want := `<table><tr><th colspan="2">Revenue</th></tr><tr><td>Q1</td><td>10 million</td></tr></table>`; tb.Rows != 2 || tb.Cols != 2 || len(tb.Cells) != 3 || tb.HTML != want {
 			t.Fatalf("%s: table = %+v", name, tb)
+		}
+		if !tb.Cells[0].Header || tb.Cells[1].Header {
+			t.Fatalf("%s: a th is a header cell and a td is not: %+v", name, tb.Cells)
 		}
 		if tb.Cells[0].ColSpan != 2 || tb.Cells[2].Text != "10 million" || tb.Cells[2].Row != 1 || tb.Cells[2].Col != 1 {
 			t.Fatalf("%s: cells = %+v", name, tb.Cells)
@@ -279,15 +290,60 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("two alternating lines are not a loop: %v", err)
 	}
 
-	loop := Result{Blocks: []document.Block{{Text: "Heading of the page"}, {Text: strings.Repeat("the same sentence again\n", 40)}}}
+	// A model in a loop writes one line until its output limit ends the
+	// reply. Both signs together are a loop.
+	loop := Result{Truncated: true, Blocks: []document.Block{{Text: "Heading of the page"}, {Text: strings.Repeat("the same sentence again\n", 40)}}}
 	err := Check(loop, false)
 	if ClassOf(err) != Invalid || !strings.Contains(err.Error(), "40 of the reply's 41 lines") {
-		t.Fatalf("a reply that repeats one line is invalid, got %v", err)
+		t.Fatalf("a cut reply that repeats one line is invalid, got %v", err)
 	}
 
-	short := Result{Blocks: []document.Block{{Text: strings.Repeat("the same sentence again\n", 5)}}}
+	// A reply that ended by itself is not a loop, however much it repeats:
+	// a timesheet has fifteen rows that read the same.
+	timesheet := Result{Blocks: []document.Block{{Text: strings.Repeat("08:00 | 17:00 | 8.0\n", 15) + strings.Repeat("09:00 | 18:00 | 8.0\n", 10)}}}
+	if err := Check(timesheet, false); err != nil {
+		t.Fatalf("a page of repeating rows is taken for a loop: %v", err)
+	}
+
+	short := Result{Truncated: true, Blocks: []document.Block{{Text: strings.Repeat("the same sentence again\n", 5)}}}
 	if err := Check(short, false); err != nil {
 		t.Fatalf("a short reply is not judged: %v", err)
+	}
+}
+
+// Markup a reader returned is not served: a table's markup is written from
+// its cells, so what a file led a model to write does not reach whoever
+// renders the result.
+func TestATablesMarkupHoldsATableAndNothingElse(t *testing.T) {
+	hostile := `<table><tr><td onclick="steal()">a<script>alert(1)</script><img src=x onerror=alert(2)></td><td><a href="javascript:x">b</a> &lt;b&gt;</td></tr></table>`
+	table, ok := TableFromHTML(hostile)
+	if !ok {
+		t.Fatal("no table")
+	}
+	for _, bad := range []string{"<script", "onclick", "onerror", "<img", "<a ", "javascript:", "<b>"} {
+		if strings.Contains(table.HTML, bad) {
+			t.Errorf("the markup holds %q: %s", bad, table.HTML)
+		}
+	}
+	if want := `<table><tr><td>aalert(1)</td><td>b &lt;b&gt;</td></tr></table>`; table.HTML != want {
+		t.Fatalf("markup = %s\nwant     %s", table.HTML, want)
+	}
+	if empty, ok := TableFromHTML("<table></table>"); ok || empty.HTML != "<table></table>" {
+		t.Fatalf("a table with no cell: %+v, %v", empty, ok)
+	}
+}
+
+func TestOnlyAFigureKeepsADescription(t *testing.T) {
+	got := Normalize([]Raw{
+		{Label: "Picture", Text: " Q1 Q2 Q3 ", Description: " A bar chart of revenue by quarter. "},
+		{Label: "Text", Text: "body", Description: "a paragraph"},
+		{Label: "Picture", Description: "A photograph of a bridge."},
+	}, Grid{1000, 1000})
+	if len(got) != 3 || got[0].Text != "Q1 Q2 Q3" || got[0].Description != "A bar chart of revenue by quarter." {
+		t.Fatalf("a figure: %+v", got)
+	}
+	if got[1].Description != "" || got[2].Description != "A photograph of a bridge." || got[2].Text != "" {
+		t.Fatalf("a description on anything but a figure is not kept, and a figure needs no text: %+v", got)
 	}
 }
 

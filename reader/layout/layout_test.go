@@ -155,7 +155,8 @@ func TestReadPageFailures(t *testing.T) {
 		{name: "no elements", set: func(e *engine) { e.body = `{"model":"m"}` }, class: reader.Invalid},
 		{name: "still loading", set: func(e *engine) { e.status, e.header = 503, map[string]string{"Retry-After": "30"} }, class: reader.RateLimited, wait: 30 * time.Second},
 		{name: "loading, no hint", set: func(e *engine) { e.status = 503 }, class: reader.Retryable},
-		{name: "refused", set: func(e *engine) { e.status = 400 }, class: reader.Permanent},
+		{name: "a request the engine rejects", set: func(e *engine) { e.status = 400 }, class: reader.Misconfigured},
+		{name: "an image too large for it", set: func(e *engine) { e.status = 413 }, class: reader.Permanent},
 	} {
 		e := serve(t)
 		e.body = `{"elements":[]}`

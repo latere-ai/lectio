@@ -68,6 +68,14 @@ type Description struct {
 
 	// Kinds lists the kinds the reader can return. Empty means any.
 	Kinds []document.Kind `json:"kinds,omitempty"`
+
+	// Version names everything in the reader's configuration that changes
+	// what it returns for the same page: its model, its prompt, how it
+	// asks for boxes, its parameters. Two readers with the same version
+	// read a page the same way, which is what lets an earlier parse stand
+	// in for a new one. A reader that cannot say leaves it empty, and its
+	// pages are never reused.
+	Version string `json:"version,omitempty"`
 }
 
 // ImageSpec is how a page is rendered into an image.
@@ -154,8 +162,8 @@ type ExtractRequest struct {
 	Instructions string
 
 	// Text is the document, or one window of it, in reading order. Each
-	// block is on its own line and begins with its ref in brackets, which is
-	// what a citation names.
+	// block begins with its ref in brackets, which is what a citation
+	// names. A block may run over several lines, as a table does.
 	Text string
 
 	// Citations asks for the refs each value was read from.
@@ -165,8 +173,11 @@ type ExtractRequest struct {
 	// caller sets it only for a schema that constrained decoding supports.
 	Constrain bool
 
-	// Problems are a validator's findings on an earlier reply to the same
-	// request. Set, they ask the model to repair that reply.
+	// Previous is the reply an earlier attempt at the same request gave,
+	// and Problems are a validator's findings on it. Set, they ask the
+	// model to repair that reply: it is shown what it wrote and what was
+	// wrong with it, and asked to change only that.
+	Previous string
 	Problems []string
 
 	Credential Credential
