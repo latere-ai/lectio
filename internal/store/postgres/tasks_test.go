@@ -5,6 +5,10 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -701,6 +705,90 @@ func TestTheStoreKeepsNothingOnItsConnection(t *testing.T) {
 		}
 		if prepared != 0 || locks != 0 {
 			t.Fatalf("a connection the store used holds %d prepared statements and %d advisory locks", prepared, locks)
+		}
+	})
+}
+
+// TestSubmitsCancelsAndExchangesAtOnce: submits, cancels and exchanges of
+// the same groups run at once without one waiting on another in a circle.
+// Every parse ends, succeeded or canceled, no settle is lost, and the
+// counters equal a recount of the rows.
+func TestSubmitsCancelsAndExchangesAtOnce(t *testing.T) {
+	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+		const (
+			submitters = 4
+			each       = 30
+			pagesEach  = 5
+		)
+		ctx := context.Background()
+		var wg sync.WaitGroup
+		var failed atomic.Pointer[error]
+		fail := func(err error) {
+			if err != nil {
+				failed.CompareAndSwap(nil, &err)
+			}
+		}
+		var submitted atomic.Int64
+		for s := range submitters {
+			wg.Go(func() {
+				for i := range each {
+					id := fmt.Sprintf("prs_%d_%03d", s, i)
+					_, err := h.store.Submit(ctx, filled(postgres.Submission{
+						Parse: id, Group: "g" + strconv.Itoa(i%3), Project: "p" + strconv.Itoa(s%2), Class: tasks.Class(i % 2),
+					}))
+					fail(err)
+					submitted.Add(1)
+					// Every 7th parse is canceled, at any point of its run.
+					if i%7 == 0 {
+						if err := h.store.Cancel(ctx, id); err != nil && fault.CodeOf(err) != fault.AlreadyTerminal {
+							fail(err)
+						}
+					}
+				}
+			})
+		}
+		open := func() int64 {
+			var n int64
+			fail(h.store.Decode(ctx, &n, `SELECT count(*)::text FROM parses WHERE state IN ('queued', 'running')`))
+			return n
+		}
+		for range 4 {
+			id, err := h.store.Register(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wg.Go(func() {
+				var settles []tasks.Settle
+				for failed.Load() == nil && (submitted.Load() < submitters*each || len(settles) > 0 || open() > 0) {
+					reply, err := h.store.Exchange(ctx, id, tasks.Request{Free: 4, Idle: true, Settles: settles})
+					if err != nil {
+						fail(err)
+						return
+					}
+					settles = settles[:0]
+					for _, c := range reply.Claims {
+						settle := done(c)
+						if c.Kind == tasks.Prepare {
+							settle = prepared(c, pagesEach)
+						}
+						settles = append(settles, settle)
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if err := failed.Load(); err != nil {
+			t.Fatalf("a call failed: %v", *err)
+		}
+		states := value[string](h, `SELECT string_agg(state || ':' || n, ',' ORDER BY state) FROM (SELECT state, count(*) AS n FROM parses GROUP BY state) s`)
+		if n := value[int64](h, `SELECT count(*) FROM parses WHERE state NOT IN ('succeeded', 'canceled')`); n != 0 {
+			t.Fatalf("the parses ended %s", states)
+		}
+		if n := value[int64](h, `SELECT count(*) FROM parses WHERE state = 'succeeded' AND pages_done <> $1`, pagesEach); n != 0 {
+			t.Fatalf("%d parses succeeded without all their pages", n)
+		}
+		if n := value[int64](h, `SELECT count(*) FROM tasks WHERE state IN ('queued', 'leased')`); n != 0 {
+			t.Fatalf("%d tasks are left unsettled", n)
 		}
 	})
 }
