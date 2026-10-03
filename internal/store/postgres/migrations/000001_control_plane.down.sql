@@ -3,6 +3,8 @@
 
 DROP FUNCTION IF EXISTS lectio_exchange(text, text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_claim(text, integer, boolean, settings, timestamptz);
+DROP FUNCTION IF EXISTS lectio_lanes(text[], settings);
+DROP FUNCTION IF EXISTS lectio_room(text[], text, settings, timestamptz);
 DROP FUNCTION IF EXISTS lectio_reap(text, settings, timestamptz);
 DROP FUNCTION IF EXISTS lectio_settle(text, jsonb, settings, timestamptz);
 DROP FUNCTION IF EXISTS lectio_correct(tasks, integer, boolean);
@@ -15,12 +17,13 @@ DROP FUNCTION IF EXISTS lectio_stop(text, text, jsonb, timestamptz);
 DROP FUNCTION IF EXISTS lectio_submit(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_register(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_enqueue(text, text, text, text, timestamptz);
-DROP FUNCTION IF EXISTS lectio_count(text, text, smallint, integer, integer);
+DROP FUNCTION IF EXISTS lectio_count(text, text, smallint, text, integer, integer);
 DROP FUNCTION IF EXISTS lectio_configure(text);
 DROP FUNCTION IF EXISTS lectio_lock();
 
 DROP TABLE IF EXISTS sweeps;
 DROP TABLE IF EXISTS pool_scopes;
+DROP TABLE IF EXISTS lane_service;
 DROP TABLE IF EXISTS pools;
 DROP TABLE IF EXISTS project_service;
 DROP TABLE IF EXISTS projects;

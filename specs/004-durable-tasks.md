@@ -123,6 +123,25 @@ behind them, and a tenant in that state is the one the fair queue looks
 at first. The parse and the task end the index key so that tasks equal
 in priority, `seq` and age are taken in one fixed order.
 
+```sql
+CREATE TABLE lane_service (
+  group_id text NOT NULL, project_id text NOT NULL, class smallint NOT NULL, lane text NOT NULL,
+  queued   integer NOT NULL DEFAULT 0,       -- queued tasks of the lane
+  PRIMARY KEY (group_id, project_id, class, lane)
+);
+CREATE INDEX lane_service_waiting ON lane_service (class, lane, group_id) WHERE queued > 0;
+```
+
+The queued tasks of each lane of a project are counted, in the
+transaction of each transition, beside the counters of
+[[006-fairness-and-priority]]. The claim chooses among the groups and
+the projects that hold a queued task in a lane that can run, and reads
+that from the counts. Without them a group whose every task waits for a
+full pool is still looked at, one probe of the queue per project, on
+every poll of every idle slot: with 1,000 such groups a poll that
+claims nothing took 97 ms, under the lock every exchange waits for.
+With them it takes under 1 ms.
+
 There is no table of edges and no `blocked` state. The graph of a
 parse is fixed ([[005-parse-graph]]), so the parse row counts its
 unsettled page tasks in `pages_open`, and the settle that takes the
@@ -458,8 +477,19 @@ attempt; a settle after a cancel is refused and records nothing; a
 parse whose pinned reader never admits a call fails with
 `deadline_exceeded`; a shutdown exchange returns tasks with no counter
 changed; and with a pool full for 10 minutes and 32 idle slots polling,
-no task row is written. The criteria that need a process to kill, an
-object store, or a fleet are not proven: the rows of the table below
+no task row is written. The last row of the table is proven by a test
+that reads the plan of every statement nested in the exchange through
+`auto_explain`: the claim reads the queue by an index scan of
+`tasks_runnable`, in the index's order, and nothing scans the task
+table. Its time bound is opt-in, by `LECTIO_CLAIM_ROWS=1000000`. Measured
+on a laptop, Postgres 16 in a container, one million queued rows in
+1,000 groups, as the caller sees it with the round trip: an exchange
+that settles one task and claims one takes 1.5 ms at the median and
+2.2 ms at the 99th percentile, and a poll against a full pool, which
+claims nothing, 0.7 ms and 1.3 ms. The time grows with the number of
+groups that hold queued work, which the claim orders once per task it
+hands out, and not with the rows. The criteria that need a process to
+kill, an object store, or a fleet are not proven: the rows of the table below
 that name a process-level test, a soak or a throughput test.
 
 Remaining: everything that runs. There is no worker process and no

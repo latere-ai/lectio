@@ -167,6 +167,18 @@ CREATE TABLE project_service (
   PRIMARY KEY (group_id, project_id, class)
 );
 
+-- lane_service counts the queued tasks of each lane of a project. The claim
+-- reads it to find the groups and the projects that hold a task in a lane
+-- with room, so a group whose every task waits for a reader that has none is
+-- passed over without reading a task: a poll against a full pool costs the
+-- same whether 10 tasks wait or a million.
+CREATE TABLE lane_service (
+  group_id text NOT NULL, project_id text NOT NULL, class smallint NOT NULL, lane text NOT NULL,
+  queued   integer NOT NULL DEFAULT 0,       -- queued tasks of the lane
+  PRIMARY KEY (group_id, project_id, class, lane)
+);
+CREATE INDEX lane_service_waiting ON lane_service (class, lane, group_id) WHERE queued > 0;
+
 CREATE TABLE pools (
   reader        text PRIMARY KEY,
   max_in_flight integer NOT NULL,            -- from configuration; across every scope
@@ -255,16 +267,23 @@ BEGIN
    WHERE reader NOT IN (SELECT r->>'reader' FROM jsonb_array_elements(c->'pools') r);
 END $$;
 
--- lectio_count moves the counters of queued and running tasks. The group's
--- row is written before the project's everywhere, so two transactions that
--- touch the same group never wait on each other in a circle.
-CREATE FUNCTION lectio_count(p_group text, p_project text, p_class smallint, p_queued integer, p_running integer)
-RETURNS void LANGUAGE sql AS $$
+-- lectio_count moves the counters of queued and running tasks: the group's,
+-- the project's, and for a change in what is queued the lane's. The rows are
+-- written in that order everywhere, the group's first, so two transactions
+-- that touch the same group never wait on each other in a circle.
+CREATE FUNCTION lectio_count(p_group text, p_project text, p_class smallint, p_lane text, p_queued integer, p_running integer)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
   UPDATE group_service SET queued = queued + p_queued, running = running + p_running
    WHERE group_id = p_group AND class = p_class;
   UPDATE project_service SET queued = queued + p_queued, running = running + p_running
    WHERE group_id = p_group AND project_id = p_project AND class = p_class;
-$$;
+  IF p_queued <> 0 THEN
+    INSERT INTO lane_service AS l (group_id, project_id, class, lane, queued)
+    VALUES (p_group, p_project, p_class, p_lane, p_queued)
+    ON CONFLICT (group_id, project_id, class, lane) DO UPDATE SET queued = l.queued + EXCLUDED.queued;
+  END IF;
+END $$;
 
 -- lectio_enqueue writes one task of a parse as queued. The id is fixed by
 -- the parse, so writing it twice writes nothing the second time. Tasks that
@@ -273,15 +292,17 @@ $$;
 CREATE FUNCTION lectio_enqueue(p_parse text, p_task text, p_kind text, p_pin text, p_now timestamptz)
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
-  v_p parses%ROWTYPE;
-  v_n integer;
+  v_p    parses%ROWTYPE;
+  v_lane text;
 BEGIN
   SELECT * INTO STRICT v_p FROM parses WHERE parse_id = p_parse;
   INSERT INTO tasks (parse_id, task_id, kind, group_id, project_id, class, priority, seq, pin, state, available_at, created_at)
   VALUES (p_parse, p_task, p_kind, v_p.group_id, v_p.project_id, v_p.class, v_p.priority, -1, p_pin, 'queued', p_now, p_now)
-  ON CONFLICT DO NOTHING;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_n, 0);
+  ON CONFLICT DO NOTHING
+  RETURNING lane INTO v_lane;
+  IF FOUND THEN
+    PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_lane, 1, 0);
+  END IF;
 END $$;
 
 -- lectio_register records a worker process and starts its lease.
@@ -354,9 +375,8 @@ END $$;
 CREATE FUNCTION lectio_stop(p_parse text, p_state text, p_error jsonb, p_now timestamptz)
 RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE
-  v_p       parses%ROWTYPE;
-  v_queued  integer;
-  v_running integer;
+  v_p parses%ROWTYPE;
+  v_l record;
 BEGIN
   UPDATE parses SET state = p_state, error = p_error, finished_at = p_now
    WHERE parse_id = p_parse AND state IN ('queued', 'running')
@@ -364,16 +384,20 @@ BEGIN
   IF NOT FOUND THEN
     RETURN false;
   END IF;
-  WITH hit AS (
-    SELECT task_id, state FROM tasks
-     WHERE parse_id = p_parse AND state IN ('queued', 'leased') FOR UPDATE
-  ), gone AS (
-    UPDATE tasks t SET state = 'canceled', calling = false, settled_at = p_now
-      FROM hit WHERE t.parse_id = p_parse AND t.task_id = hit.task_id
-  )
-  SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'leased')
-    INTO v_queued, v_running FROM hit;
-  PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, -v_queued, -v_running);
+  FOR v_l IN
+    WITH hit AS (
+      SELECT task_id, state, lane FROM tasks
+       WHERE parse_id = p_parse AND state IN ('queued', 'leased') FOR UPDATE
+    ), gone AS (
+      UPDATE tasks t SET state = 'canceled', calling = false, settled_at = p_now
+        FROM hit WHERE t.parse_id = p_parse AND t.task_id = hit.task_id
+    )
+    SELECT lane, count(*) FILTER (WHERE state = 'queued')::integer AS queued,
+           count(*) FILTER (WHERE state = 'leased')::integer AS running
+      FROM hit GROUP BY lane ORDER BY lane
+  LOOP
+    PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_l.lane, -v_l.queued, -v_l.running);
+  END LOOP;
   RETURN true;
 END $$;
 
@@ -407,6 +431,7 @@ DECLARE
   v_native boolean;
   v_n      integer;
   v_open   integer;
+  v_lane   text;
 BEGIN
   IF p_kind = 'extract' THEN
     -- A field's task changes its field and never the parse.
@@ -432,13 +457,17 @@ BEGIN
     END IF;
     -- Every page row is written at once: the total is known to progress from
     -- this moment, and the order inside a project interleaves parses by seq.
-    INSERT INTO tasks (parse_id, task_id, kind, group_id, project_id, class, priority, seq, pin, state, available_at, created_at)
-    SELECT p_parse, 'page-' || (e.n #>> '{}'), 'page', v_p.group_id, v_p.project_id, v_p.class, v_p.priority,
-           e.i::integer, v_p.pin, 'queued', p_now, p_now
-      FROM jsonb_array_elements(v_pages) WITH ORDINALITY AS e(n, i)
-    ON CONFLICT DO NOTHING;
-    GET DIAGNOSTICS v_n = ROW_COUNT;
-    PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_n, 0);
+    WITH written AS (
+      INSERT INTO tasks (parse_id, task_id, kind, group_id, project_id, class, priority, seq, pin, state, available_at, created_at)
+      SELECT p_parse, 'page-' || (e.n #>> '{}'), 'page', v_p.group_id, v_p.project_id, v_p.class, v_p.priority,
+             e.i::integer, v_p.pin, 'queued', p_now, p_now
+        FROM jsonb_array_elements(v_pages) WITH ORDINALITY AS e(n, i)
+      ON CONFLICT DO NOTHING
+      RETURNING lane
+    )
+    SELECT min(lane), count(*)::integer INTO v_lane, v_n FROM written;
+    -- The pages of one parse are one lane: they share its pin.
+    PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_lane, v_n, 0);
     RETURN;
   END IF;
 
@@ -543,6 +572,10 @@ BEGIN
     FROM projects p
    WHERE p.group_id = ps.group_id AND p.project_id = ps.project_id
      AND ps.group_id = p_t.group_id AND ps.project_id = p_t.project_id AND ps.class = p_t.class;
+  IF p_requeued THEN
+    UPDATE lane_service SET queued = queued + 1
+     WHERE group_id = p_t.group_id AND project_id = p_t.project_id AND class = p_t.class AND lane = p_t.lane;
+  END IF;
   IF v_delta <> 0 THEN
     UPDATE class_service SET vtime = vtime + v_delta / weight WHERE class = p_t.class;
   END IF;
@@ -692,17 +725,50 @@ BEGIN
         'detail', 'the task ended ' || (v_t.expiries + 1) || ' worker processes');
       UPDATE tasks SET state = 'failed', expiries = expiries + 1, calling = false, error = v_error, settled_at = p_now
        WHERE parse_id = v_t.parse_id AND task_id = v_t.task_id;
-      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, 0, -1);
+      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, v_t.lane, 0, -1);
       PERFORM lectio_settled(v_t.parse_id, v_t.kind, 'failed', v_error, NULL, p_now);
     ELSE
       UPDATE tasks SET state = 'queued', expiries = expiries + 1, calling = false,
              lease_owner = NULL, reader = NULL, scope = NULL, charged = 0
        WHERE parse_id = v_t.parse_id AND task_id = v_t.task_id;
-      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, 1, -1);
+      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, v_t.lane, 1, -1);
     END IF;
   END LOOP;
   DELETE FROM workers WHERE expires_at <= p_now AND worker_id <> p_worker;
 END $$;
+
+-- lectio_room answers which of the readers whose pool admits a call have
+-- room for one scope, the key a call would be made with: the scope is not
+-- paused and is below what it admits now. A scope with no row was never
+-- limited and admits what the pool does. p_wake is when the earliest pause
+-- of the scope ends, when one holds a reader back.
+CREATE FUNCTION lectio_room(p_open text[], p_scope text, p_cfg settings, p_now timestamptz,
+                            OUT p_room text[], OUT p_wake timestamptz)
+LANGUAGE sql AS $$
+  SELECT coalesce(array_agg(o.reader) FILTER (WHERE s.reader IS NULL
+           OR ((s.paused_until IS NULL OR s.paused_until <= p_now)
+               AND (SELECT count(*) FROM tasks t
+                     WHERE t.state = 'leased' AND t.calling AND t.reader = o.reader AND t.scope = p_scope)
+                   < lectio_admits(lectio_ceiling(s.ceiling, s.raised_at, p.max_in_flight, (p_cfg).pool_recovery, p_now),
+                                   s.paused_until, (p_cfg).pool_resume, p_now))), '{}'),
+         min(s.paused_until) FILTER (WHERE s.paused_until > p_now)
+    FROM unnest(p_open) AS o(reader)
+    JOIN pools p ON p.reader = o.reader
+    LEFT JOIN pool_scopes s ON s.reader = o.reader AND s.scope = p_scope;
+$$;
+
+-- lectio_lanes answers the lanes whose tasks can run when the readers of
+-- p_room have room: the lane of the tasks that call no model, the lane of
+-- each kind whose chain names a reader with room, and the lanes pinned to a
+-- reader with room.
+CREATE FUNCTION lectio_lanes(p_room text[], p_cfg settings)
+RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY['']
+      || CASE WHEN (p_cfg).read_chain && p_room THEN ARRAY['page'] ELSE '{}'::text[] END
+      || CASE WHEN (p_cfg).extract_chain && p_room THEN ARRAY['extract'] ELSE '{}'::text[] END
+      || ARRAY(SELECT 'page:' || r FROM unnest(p_room) r)
+      || ARRAY(SELECT 'extract:' || r FROM unnest(p_room) r);
+$$;
 
 -- lectio_claim hands the worker up to p_free tasks and answers them as a
 -- JSON array. Each task is the dispatch decision of
@@ -725,8 +791,8 @@ DECLARE
   v_clock  bigint;
   v_open   text[];
   v_room   text[];
-  v_shared text[];
   v_lanes  text[];
+  v_among  text[];
   v_wake   timestamptz;
   v_scope  text;
   v_reader text;
@@ -764,66 +830,60 @@ BEGIN
                                    AND t.leased_at > p.opened_at)))
        AND (SELECT count(*) FROM tasks t
              WHERE t.state = 'leased' AND t.calling AND t.reader = p.reader) < p.max_in_flight;
-    v_shared := NULL;
+    -- The lanes whose tasks can run. With one key for every group the
+    -- readers with room are the same for all of them, and so are the lanes.
+    -- With a key per group they are the group's own, read when the group is
+    -- looked at; the groups are then chosen among those that hold a task in
+    -- a lane whose pool admits a call at all.
+    IF p_cfg.scope_by_group THEN
+      v_among := lectio_lanes(v_open, p_cfg);
+    ELSE
+      SELECT r.p_room, r.p_wake INTO v_room, p_sleep FROM lectio_room(v_open, '', p_cfg, p_now) r;
+      v_lanes := lectio_lanes(v_room, p_cfg);
+      v_among := v_lanes;
+    END IF;
 
     <<decision>>
     FOR v_c IN
       SELECT class, weight, vtime, clock, greatest(vtime, v_clock) AS start
         FROM class_service ORDER BY start, class
     LOOP
+      -- A group is looked at only when it holds a queued task in a lane that
+      -- can run, which lane_service answers without reading a task. A group
+      -- whose every task waits for a reader with no room is passed over
+      -- here, at no cost that grows with its queue.
       FOR v_g IN
         SELECT gs.group_id, gs.vtime, gs.clock, g.weight, greatest(gs.vtime, v_c.clock) AS start
           FROM group_service gs JOIN groups g USING (group_id)
          WHERE gs.class = v_c.class AND gs.queued > 0
            AND (g.max_running = 0
                 OR (SELECT sum(r.running) FROM group_service r WHERE r.group_id = gs.group_id) < g.max_running)
+           AND EXISTS (SELECT 1 FROM lane_service l
+                        WHERE l.group_id = gs.group_id AND l.class = gs.class AND l.queued > 0
+                          AND l.lane = ANY (v_among))
          ORDER BY start, gs.group_id
       LOOP
-        -- The readers with room for this group: those whose pool admits a
-        -- call and whose scope, the key the call would be made with, is not
-        -- paused and is below what it admits now. A scope with no row was
-        -- never limited and admits what the pool does. With one key for
-        -- every group the answer is the same for all of them.
         v_scope := CASE WHEN p_cfg.scope_by_group THEN v_g.group_id ELSE '' END;
-        IF p_cfg.scope_by_group OR v_shared IS NULL THEN
-          SELECT coalesce(array_agg(o.reader) FILTER (WHERE s.reader IS NULL
-                   OR ((s.paused_until IS NULL OR s.paused_until <= p_now)
-                       AND (SELECT count(*) FROM tasks t
-                             WHERE t.state = 'leased' AND t.calling AND t.reader = o.reader AND t.scope = v_scope)
-                           < lectio_admits(lectio_ceiling(s.ceiling, s.raised_at, p.max_in_flight, p_cfg.pool_recovery, p_now),
-                                           s.paused_until, p_cfg.pool_resume, p_now))), '{}'),
-                 min(s.paused_until) FILTER (WHERE s.paused_until > p_now)
-            INTO v_room, v_wake
-            FROM unnest(v_open) AS o(reader)
-            JOIN pools p ON p.reader = o.reader
-            LEFT JOIN pool_scopes s ON s.reader = o.reader AND s.scope = v_scope;
-          v_shared := v_room;
-          p_sleep  := least(p_sleep, v_wake);
-        ELSE
-          v_room := v_shared;
+        IF p_cfg.scope_by_group THEN
+          SELECT r.p_room, r.p_wake INTO v_room, v_wake FROM lectio_room(v_open, v_scope, p_cfg, p_now) r;
+          v_lanes := lectio_lanes(v_room, p_cfg);
+          p_sleep := least(p_sleep, v_wake);
         END IF;
-
-        v_lanes := ARRAY[''];
-        IF p_cfg.read_chain && v_room THEN
-          v_lanes := v_lanes || 'page'::text;
-        END IF;
-        IF p_cfg.extract_chain && v_room THEN
-          v_lanes := v_lanes || 'extract'::text;
-        END IF;
-        FOREACH v_reader IN ARRAY v_room LOOP
-          v_lanes := v_lanes || ('page:' || v_reader) || ('extract:' || v_reader);
-        END LOOP;
 
         FOR v_p IN
           SELECT ps.project_id, ps.vtime, pr.weight, greatest(ps.vtime, v_g.clock) AS start
             FROM project_service ps JOIN projects pr USING (group_id, project_id)
            WHERE ps.group_id = v_g.group_id AND ps.class = v_c.class AND ps.queued > 0
+             AND EXISTS (SELECT 1 FROM lane_service l
+                          WHERE l.group_id = ps.group_id AND l.project_id = ps.project_id AND l.class = ps.class
+                            AND l.queued > 0 AND l.lane = ANY (v_lanes))
            ORDER BY start, ps.project_id
         LOOP
           -- The project's first task that can run: the best of the first
-          -- task of each lane with room, each one probe of tasks_runnable.
+          -- task of each of its lanes that can run, each one probe of
+          -- tasks_runnable.
           SELECT t.* INTO v_t
-            FROM unnest(v_lanes) AS l(lane)
+            FROM lane_service l
            CROSS JOIN LATERAL (
                  SELECT q.* FROM tasks q
                   WHERE q.state = 'queued' AND q.group_id = v_g.group_id AND q.project_id = v_p.project_id
@@ -831,6 +891,8 @@ BEGIN
                     AND q.available_at <= p_now AND (q.expiries = 0 OR v_solo)
                   ORDER BY q.priority DESC, q.seq, q.created_at, q.parse_id, q.task_id
                   LIMIT 1) t
+           WHERE l.group_id = v_g.group_id AND l.project_id = v_p.project_id AND l.class = v_c.class
+             AND l.queued > 0 AND l.lane = ANY (v_lanes)
            ORDER BY t.priority DESC, t.seq, t.created_at, t.parse_id, t.task_id
            LIMIT 1;
           IF FOUND THEN
@@ -892,6 +954,8 @@ BEGIN
     UPDATE project_service SET vtime = greatest(v_p.vtime, v_g.clock) + v_cost::bigint * 1000000 / v_p.weight,
            queued = queued - 1, running = running + 1
      WHERE group_id = v_g.group_id AND project_id = v_p.project_id AND class = v_c.class;
+    UPDATE lane_service SET queued = queued - 1
+     WHERE group_id = v_g.group_id AND project_id = v_p.project_id AND class = v_c.class AND lane = v_t.lane;
     UPDATE class_service SET clock = v_start,
            vtime = greatest(v_c.vtime, v_clock) + v_cost::bigint * 1000000 / v_c.weight
      WHERE class = v_c.class;
@@ -977,7 +1041,7 @@ BEGIN
     LOOP
       UPDATE tasks SET state = 'queued', calling = false, lease_owner = NULL, reader = NULL, scope = NULL, charged = 0
        WHERE parse_id = v_t.parse_id AND task_id = v_t.task_id;
-      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, 1, -1);
+      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, v_t.lane, 1, -1);
     END LOOP;
     DELETE FROM workers WHERE worker_id = p_worker;
   ELSE

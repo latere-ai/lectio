@@ -127,7 +127,7 @@ func (h *harness) exec(sql string, args ...any) {
 }
 
 // consistent fails the case when a counter of queued or running tasks, of a
-// group or of a project, differs from a recount of the task rows.
+// group, of a project or of a lane, differs from a recount of the task rows.
 func (h *harness) consistent() {
 	h.t.Helper()
 	if h.t.Failed() {
@@ -142,6 +142,14 @@ SELECT count(*) FROM (
   SELECT s.group_id FROM project_service s
    WHERE s.queued  <> (SELECT count(*) FROM tasks t WHERE t.group_id = s.group_id AND t.project_id = s.project_id AND t.class = s.class AND t.state = 'queued')
       OR s.running <> (SELECT count(*) FROM tasks t WHERE t.group_id = s.group_id AND t.project_id = s.project_id AND t.class = s.class AND t.state = 'leased')
+  UNION ALL
+  SELECT s.group_id FROM lane_service s
+   WHERE s.queued <> (SELECT count(*) FROM tasks t WHERE t.group_id = s.group_id AND t.project_id = s.project_id AND t.class = s.class AND t.lane = s.lane AND t.state = 'queued')
+  UNION ALL
+  SELECT t.group_id FROM tasks t
+   WHERE t.state = 'queued'
+     AND NOT EXISTS (SELECT 1 FROM lane_service s
+                      WHERE s.group_id = t.group_id AND s.project_id = t.project_id AND s.class = t.class AND s.lane = t.lane)
   UNION ALL
   SELECT t.group_id FROM tasks t
    WHERE t.state IN ('queued', 'leased')
