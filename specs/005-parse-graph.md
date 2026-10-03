@@ -146,7 +146,9 @@ error ([[008-readers]]), never from a status code:
 | retryable | spends an attempt, waits a backoff, tries again | `reader_unavailable` |
 | invalid | spends an attempt; the second invalid reply sends the page once to the next reader in the chain, which gets attempts of its own; a pinned parse stays with its reader | `page_unreadable` |
 | budget | fails the page at once | `budget_exhausted` |
-| permanent | fails the page at once | `page_unreadable` |
+| permanent | fails the page at once: this reader cannot take the page as it is | `page_unreadable` |
+| refused | the reader is healthy and declined this page: the page goes to the next reader in the chain, with no limit on how far, and is not tried again where it was declined; a pinned parse has no next reader | `page_unreadable` |
+| misconfigured | the endpoint rejected the request itself, as it will for every page: the page goes to the next reader in the chain, and the failure counts against the reader's breaker | `reader_unavailable` |
 
 A failure of the file itself, such as a page that cannot be rendered,
 is not the reader's: no other attempt or reader changes it, and the
@@ -218,15 +220,31 @@ transaction ([[004-durable-tasks]]), so reading progress is one row.
 
 ### Reuse
 
-Before any work, submit looks for a succeeded parse with the same
-owner, the same source content hash and the same options fingerprint:
-the page selection, the reader chain (the pinned reader, or the
-policy's chain), the languages, the version of the reader's
-instruction, and the routing policy's version. Options that change
-when the work runs and not what it produces, class, priority, deadline
-and labels, are not part of it. When `reuse` is true and one exists, it is
-returned. The lookup is an index on `parses (owner, content_sha256,
-options_fp)`; no separate table holds it.
+Reuse is by page and not by parse. A page task that is about to call a
+reader first looks for a result of the same read: the same owner, the
+same source content hash, the same page, the same language hints, and
+the same readers, each named by the version it describes itself with
+([[008-readers]]). The version covers the model, the prompt as that
+reader asks it, the way the page is rendered, and the parameters that
+change a reply. When such a result exists and the parse did not submit
+`reuse: false`, the task takes it, marks the page `reused`, calls no
+model and charges nothing but the floor.
+
+Every submit makes a parse of its own, with its own id, labels, origin
+and tasks. A parse of pages 1 to 3 followed by one of pages 1 to 10
+reads seven pages. A page that failed or whose reply was cut is not
+kept, so it is read again. A reader that names no version makes no
+promise about its results, and its pages are never reused.
+
+The first draft reused a whole parse: a submit that matched an earlier
+one by content and an options fingerprint was answered with the earlier
+parse. That returned an object the caller had not asked for, with
+another submit's labels and origin, ignored how many pages had failed,
+and could not reuse part of the work. The page is the unit of work, so
+it is the unit of reuse.
+
+The lookup is one indexed read per page on `(owner, read_key)`, where
+the key is a digest of the parts above.
 
 ## Not in this spec
 
@@ -254,7 +272,9 @@ Built:
   It differs from the table in one row: it has no pool and a parse may
   have no deadline, so a rate limit that does not lift ends the page as
   `reader_unavailable` after a fixed number of waits.
-- Reuse by content hash and fingerprint, in `internal/httpapi`.
+- Reuse by page, in `internal/run` over the memory store: a page read
+  whole is kept under its read key and taken by a later parse of the
+  same owner.
 
 Remaining:
 
@@ -284,5 +304,7 @@ Remaining:
 | A parse canceled while a page is being read is `canceled` when the cancel returns, and the page's result, when its call returns, is not recorded | an end-to-end test with a stub reader that blocks |
 | When a parse settles, its `succeeded` task rows are gone, its counters and usage are on the parse, and every page is still readable | a store test |
 | Two parses of one tenant, 300 pages and 2 pages, submitted in that order to one worker: the 2-page parse finishes before the 300-page parse reaches page 10 | a dispatch test |
-| A second submit of the same content and options returns the first parse with `reused: true` and creates no task | an API test |
+| A second submit of the same file makes a parse of its own whose pages are marked `reused`, and the reader's call count does not change; with `reuse: false` every page is read | a runner test with a counting stub |
+| A parse of pages 1 to 3 followed by one of pages 1 to 10 calls the reader for seven pages | the same test |
+| A page that failed, or whose reply was cut, is read again by the next parse | the same test |
 | Peak worker memory for a 500-page parse is within 10% of the peak for a 5-page parse of the same page size | a memory test |

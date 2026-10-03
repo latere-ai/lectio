@@ -223,7 +223,8 @@ is a chunk of its own.
 
 ### The document index
 
-`document.json` holds the page list with each page's state, the spans,
+The document index, an object the assemble task writes under a key that
+carries its lease token ([[002-object-model]]), holds the page list with each page's state, the spans,
 the outline, the usage totals, and the names of the renderings and
 fields present ([[002-object-model]]). It does not repeat the blocks;
 those are read by page. `GET /parses/{parse}/document?format=json`

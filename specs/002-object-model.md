@@ -64,9 +64,10 @@ flowchart LR
 Identifiers with a prefix are ULIDs, so they sort by creation time, and
 two made in the same millisecond still sort in the order they were
 made. A list ordered by id is therefore ordered by time, which is what
-a list cursor relies on ([[003-api]]). A `ref` is stable for the life
-of the parse: a retry that re-reads a page replaces that page's blocks
-and their refs together.
+a list cursor relies on ([[003-api]]). A `ref` is stable for as long as
+its page is not read again: a retry that re-reads a page replaces that
+page's blocks and their refs together. What that costs is under Open
+below.
 
 ### Page
 
@@ -86,11 +87,30 @@ and their refs together.
 `width` and `height` are in points (1/72 inch) for paged formats and in
 pixels for images. `source` is `reader` when a model read the page and
 `native` when the format carried its own structure ([[009-intake]]).
-`state` is `pending`, `succeeded` or `failed`; a failed page has an
-`error`, as `{"code", "detail"}`, and no blocks. `reader` and `model`
-are absent on a native page. `usage` is what reading the page consumed:
-`pages`, `input_tokens`, `output_tokens`, and `cost` with `currency`
-only when the model endpoint reported a cost.
+`reader` and `model` are absent on a native page. `usage` is what
+reading the page consumed: `pages`, `input_tokens`, `output_tokens`,
+and `cost` with `currency` only when the model endpoint reported a
+cost.
+
+`state` is one of four:
+
+| State | Meaning |
+|---|---|
+| `pending` | not read yet; the parse is still running |
+| `succeeded` | read; the page holds its blocks |
+| `failed` | could not be read; the page has an `error`, as `{"code", "detail"}`, and no blocks |
+| `skipped` | the parse ended, canceled or out of time, before the page was read; nothing went wrong with the page, and it has no error and no blocks |
+
+Two members say how a succeeded page came to be, and each is absent
+when false:
+
+- `truncated`: the reader's reply ended at its output limit. The
+  blocks are what the reply finished, the last of them is flagged, and
+  the page may hold more ([[008-readers]]). A truncated page is never
+  kept for reuse.
+- `reused`: the result was taken from an earlier read of the same page
+  and no model was called for it in this parse. Its `usage` is one
+  page and no tokens.
 
 ### Block
 
@@ -102,6 +122,17 @@ only when the model endpoint reported a cost.
   "box": [0.08, 0.31, 0.92, 0.58],
   "text": "Quarter | Revenue ...",
   "table": { "rows": 6, "cols": 3, "cells": [ ... ], "html": "<table>...</table>" }
+}
+```
+
+```json
+{
+  "ref": "4.1",
+  "kind": "figure",
+  "order": 1,
+  "box": [0.14, 0.07, 0.81, 0.31],
+  "text": "Q1 Q2 Q3 Q4",
+  "description": "A bar chart of revenue by quarter."
 }
 ```
 
@@ -117,8 +148,16 @@ only when the model endpoint reported a cost.
   no known position, which is every block of a `native` page, has
   `"box": null`. One coordinate system for every source is what lets a
   client draw an overlay without knowing how the page was rendered.
-- `text` is the block's content as plain text. For a table it is the
-  cells joined row by row; for a figure it is the reader's description.
+- `text` is what is printed in the region, as plain text, and nothing
+  else. For a table it is the cells joined row by row. For a figure it
+  is the words printed inside it, and empty when there are none.
+- `description` is what a reader says a figure shows, in the reader's
+  own words. It is present on a figure only. It is not transcription:
+  it is kept apart from `text` so that a rendering can mark it, a chunk
+  can leave it out, and an extraction never cites it as something the
+  document says ([[010-assembly]], [[011-structured-extraction]]). The
+  first draft put the description in `text`, where prose a model wrote
+  was indistinguishable from what the page printed.
 - `level` is the heading depth, 1 to 6, on `title` and `heading`, and
   absent on every other kind.
 - `table` is present on a block of kind `table` and on no other.
@@ -136,12 +175,21 @@ only when the model endpoint reported a cost.
 
 ### Table
 
-`cells` is a list of `{row, col, row_span, col_span, text, box}`, with
-`row` and `col` counted from 0 and the spans present only on a cell
-that spans. `html` is the reader's or the native extractor's table
-markup, kept verbatim because it is the one form that carries merged
-cells without loss. Markdown is rendered from the cells on request,
-never stored.
+`cells` is a list of `{row, col, row_span, col_span, header, text,
+box}`, with `row` and `col` counted from 0, the spans present only on a
+cell that spans, and `header` present and true on a cell of a header
+row or column. A cell's `text` keeps a raised or lowered run as `^` or
+`_`, so n squared does not become n2.
+
+`html` is the table as markup with merged cells, the one form that
+carries spans without loss. It is written from the cells and is not the
+reader's own markup. The first draft kept the reader's markup verbatim.
+That markup comes from a model that read a file somebody else wrote,
+and whatever the file led the model to write, a script, an event
+handler, a link, would be served to whoever renders the result. Markup
+written from the cells holds a table and nothing else: `table`, `tr`,
+`th`, `td`, `rowspan`, `colspan`, and escaped text. Markdown is
+rendered from the cells on request, never stored.
 
 ### Span, Field, Chunk
 
@@ -183,10 +231,10 @@ out of memory and out of one reply.
 | Tasks, leases, queue accounting, pools | Postgres | [[004-durable-tasks]], [[006-fairness-and-priority]], [[007-model-capacity]] |
 | Source snapshot | object store | `sources/<owner key>/<sha256>`, the owner key a hash of the owner ([[014-sources-and-retention]]) |
 | Working copy after conversion | object store | `parses/<parse>/work/source.<ext>` |
-| Page image | object store | `parses/<parse>/pages/<n>.png`, raw image bytes |
-| Page result | object store | `parses/<parse>/pages/<n>.json` |
-| Document index | object store | `parses/<parse>/document.json`: page list, spans, outline, usage, without blocks |
-| Field | object store | `parses/<parse>/fields/<name>.json` |
+| Page image | object store | `parses/<parse>/pages/<n>.<token>.png`, raw image bytes |
+| Page result | object store | `parses/<parse>/pages/<n>.<token>.json` |
+| Document index | object store | `parses/<parse>/document.<token>.json`: page list with each page's key, spans, outline, usage, without blocks |
+| Field | object store | `parses/<parse>/fields/<name>.<token>.json` |
 
 Renderings and chunks are not stored. They are views of the page
 results, made when a caller reads them with the options that caller
@@ -200,10 +248,50 @@ read by page, and a row per block would put the largest table in the
 system behind every claim query for no read it serves. The API
 resolves a block ref by reading its page object ([[003-api]]).
 
-Every key is deterministic from the parse id and the page number, so a
-task that runs twice writes the same key with the same meaning
-([[004-durable-tasks]]). An image is stored as image bytes, never as
-base64 inside JSON.
+A key carries the lease token of the task that wrote it
+([[004-durable-tasks]]). A model's replies to the same page are not
+equivalent, so two workers that ran one task after a crash must not
+write one key: each writes its own, the task's settle records the key
+of the one that was accepted, and a stale worker's late write lands on
+a key nothing points at. A page is found through its task row while the
+parse runs, and through the document index, which lists the winning key
+of every page, after ([[005-parse-graph]]). The first draft made every
+key deterministic from the parse and the page number and called a
+second write equivalent; it is not. An image is stored as image bytes,
+never as base64 inside JSON.
+
+### Reuse is by page
+
+A page's result is kept, per owner, under a key that names what was
+read: the digest of the file's bytes, the page's number, the language
+hints, and the name and version of every reader that may come to read
+the page ([[008-readers]]). A later parse of the same owner that would
+do the same read takes the result and calls no model. The page it gets
+says `reused`.
+
+- Only a page that was read whole is kept. A failed page, a skipped
+  page and a truncated page are read again.
+- A reader that describes itself with no version makes no promise
+  about its results, and its pages are never reused.
+- A parse is always a new one, with its own id, labels and origin.
+  There is no reuse of a whole parse and no fingerprint of a parse's
+  options. The first draft returned an earlier parse in place of a new
+  one, which dropped the new submit's labels and origin, answered a
+  submit that tolerated no failed page with a parse that had some, and
+  could not reuse three pages of a ten-page selection. The page is the
+  unit of work, so it is the unit of reuse.
+
+### Open
+
+A block's `ref` is `<page>.<order>`, and a page that is read again is
+renumbered. Reading one page, or one region of it, again with a
+stronger reader would therefore break every citation into that page.
+Two changes would allow it: a revision on the page, or block ids that
+do not follow reading order; and provenance on the block, the reader
+and model that produced it and a confidence when an engine gives one,
+so a caller can tell a block that was read again from one that was not.
+Neither is designed. They are the owner's decision, and they decide
+whether a page or a region can be read twice within one parse.
 
 ## Not in this spec
 
@@ -221,13 +309,16 @@ Built:
 - `internal/id`: prefixed ULIDs that keep their order within one
   millisecond.
 - `internal/store`: a memory store for files, parses, pages, page
-  images and document indexes. It holds everything in the process and
-  nothing survives a restart.
+  images, document indexes, and the page results kept for reuse. It
+  holds everything in the process and nothing survives a restart.
+- Reuse by page, in the in-process runner over the memory store.
 
 Remaining:
 
-- The Postgres tables and the object store layout of the table above.
+- The Postgres tables and the object store layout of the table above,
+  with keys that carry a lease token.
 - A cell's `box`: no adapter sets one yet.
+- What is under Open.
 
 ## Acceptance criteria
 
@@ -235,6 +326,10 @@ Remaining:
 |---|---|
 | The `document` package round-trips every object through JSON without loss, and rejects a box outside `[0,1]`, an inverted box, an unknown kind, and a duplicate ref | unit tests over golden files |
 | A block ref resolves to the same block before and after assembly, and after a retry that did not re-read its page | an end-to-end test |
+| A figure's description is never in its `text`, in a chunk, or in the input of an extraction | unit tests of normalization and of the views |
+| A table's `html` holds no element or attribute beyond a table's own, whatever markup the reader returned | a unit test with hostile markup |
+| A second parse of the same bytes by the same owner and readers has its own id and labels, calls no model for pages the first read whole, and reads again the pages that failed | a runner test counting reader calls |
+| A parse that was canceled or ran out of time lists every selected page, each `succeeded`, `failed` or `skipped` | a runner test |
 | A page from a PDF, an image and a spreadsheet all satisfy one schema; only `box` and `source` differ | a schema test over fixtures of each |
 | No object written to Postgres exceeds 64 KiB, and no page image is ever written to Postgres | a store test that parses the largest fixture and inspects row sizes |
-| Writing a page result twice yields one object with the second content | a store conformance test run against the memory and the S3 implementations |
+| Two workers that wrote one page leave two objects, and the page a caller reads is the one whose settle was accepted | a store conformance test run against the memory and the S3 implementations |
