@@ -248,7 +248,12 @@ follow.
 - **Arrival is fast.** A group with new work is at the clock, which no
   waiting group is below, so its task is among the next to be served.
   With page-sized tasks that is at most the length of one page call
-  per group tied with it.
+  per group tied with it. The clock is the start of the last dispatch,
+  so an arrival is served once before the groups that were waiting,
+  and once more where it then ties with them and its id sorts first.
+  That is the bound of the queue itself, 2 tasks ahead of its share
+  at most, and it is the same after an hour of absence as after a
+  second.
 
 ### Inside a project
 
@@ -341,6 +346,20 @@ Built:
   and the correction at the settle, and admission at submit under the
   group's row lock.
 
+- The dispatch simulation, in the tests of `internal/store/postgres`:
+  one worker that takes one task at a time through the real
+  `lectio_exchange` over a real queue, on the clock the case passes.
+  The loop runs in the database, a few hundred steps per statement.
+
+Proven: every row of the table below that names the dispatch
+simulation, a store test or a concurrency test over Postgres, the 5
+rows about projects among them. The store and concurrency tests run on
+a direct connection, in the query mode that prepares nothing, and
+through PgBouncer in transaction mode; the simulation runs on a direct
+connection. Not proven: the recount of `queued` and `running` after a
+soak run with kills, which waits for the soak of [[004-durable-tasks]];
+every test of the store ends with that recount over its own rows.
+
 Remaining: `GET /queue` and `progress.waiting`. `internal/run`, the
 in-process runner, still stands in for this spec in a development
 server: every parse's pages wait in one queue ordered by
@@ -361,7 +380,7 @@ its group's empty project.
 | Criterion | Proven by |
 |---|---|
 | Three groups with weights 1, 2 and 4, all backlogged: after 700 dispatches each has been served within one task of 100, 200 and 400 units | the dispatch simulation |
-| A group that joins after three others were served 10,000 pages is served at most one task before another group is served, and over the next 3,000 dispatches four equal groups receive 750 each within one task | the dispatch simulation |
+| A group that joins after three others were served 10,000 pages is served at most one task before another group is served, is at no point more than 2 tasks ahead of its share when its id wins every tie, and over the next 3,000 dispatches four equal groups receive 750 each within one task | the dispatch simulation |
 | Batch work that arrives after 100,000 interactive-only dispatches receives at most one dispatch in a row, and then between 19% and 21% of dispatches; with no interactive work, batch receives all | the dispatch simulation |
 | A group whose reader was paused while two others were served 10,000 pages receives its weight's share from the first dispatch after the pause and no more | the dispatch simulation with a stub pool |
 | A group that queues 10,000 `prepare` tasks, or 10,000 extractions, receives its weight's share of dispatches and changes no other group's share | the dispatch simulation, run with and without the group |
@@ -373,7 +392,7 @@ its group's empty project.
 | One group with projects weighted 1, 2 and 4, all backlogged: after 700 dispatches of the group each project has been served within one task of 100, 200 and 400 units | the dispatch simulation |
 | Two groups of equal weight, all backlogged, one of them with three projects: each group receives half of the dispatches within one task, and the count is the same when that group's work is queued in one project | the dispatch simulation, run both ways |
 | A project with nothing to run: its group's dispatches go to the group's other projects in the ratio of their weights, and no other group's dispatch count changes | the dispatch simulation, run with and without the project's work |
-| A project that joins after its group's other projects were served 10,000 pages is served at most one task before another project of the group is served, and receives its weight's share of the group's dispatches from then on | the dispatch simulation |
+| A project that joins after its group's other projects were served 10,000 pages is served at most one task before another project of the group is served, is at no point more than 2 tasks ahead of its share when its id wins every tie, and receives its weight's share of the group's dispatches from then on | the dispatch simulation |
 | A project raising its weight from 1 to 1000, raising its priorities, or queuing 100,000 tasks changes no other group's dispatch count | the dispatch simulation, run with and without the change |
 | `queued` and `running`, of every group and every project, equal a recount from `tasks` after a soak run with kills | a consistency check in the soak test of [[004-durable-tasks]] |
 | 50 concurrent submits of one group at `max_queued` minus 10 admit exactly 10 | a concurrency test over Postgres |

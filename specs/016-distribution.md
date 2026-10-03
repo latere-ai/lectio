@@ -248,8 +248,10 @@ Remaining:
   PgBouncer in transaction mode per test binary and run every store
   case 3 ways: on a direct connection, in the query mode that prepares
   and describes nothing, and through the pooler. They skip where no
-  container runtime answers. There is no memory twin of the task store
-  for a conformance suite to hold to the same cases, and no soak. The live tier is one test, `make live`,
+  container runtime answers. The dispatch simulation is among them: it
+  drives the exchange function one task at a time with a virtual
+  clock. There is no memory twin of the task store for a conformance
+  suite to hold to the same cases, and no soak. The live tier is one test, `make live`,
   which reads a real file with a configured reader and is run by hand.
 - `LECTIO_DEV` holds page images in memory and has no local directory
   for objects.

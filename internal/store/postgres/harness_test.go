@@ -371,3 +371,21 @@ func (h *harness) reading(w *worker, sub postgres.Submission, n int) {
 	}
 	w.settle(prepared(c, n))
 }
+
+// readingAll queues several parses of n pages each and runs their prepares
+// together, so their page tasks wait in the queue whatever their priorities.
+// Like reading, it is called while nothing else can be claimed.
+func (h *harness) readingAll(w *worker, n int, subs ...postgres.Submission) {
+	h.t.Helper()
+	for _, sub := range subs {
+		h.submit(sub)
+	}
+	var settles []tasks.Settle
+	for _, c := range w.claim(len(subs), len(subs)) {
+		if c.Kind != tasks.Prepare {
+			h.t.Fatalf("claimed %s/%s where only prepare tasks were queued", c.Parse, c.Task)
+		}
+		settles = append(settles, prepared(c, n))
+	}
+	w.settle(settles...)
+}
