@@ -235,10 +235,19 @@ flowchart LR
   specialized engine behind the layout adapter and a general vision
   model behind the chat adapter ([[008-readers]]).
 
-Remaining: both roles as separate processes, Postgres, the object
-store, the issuer, the authorizer and the key source, and with them
-invariants 1 to 3, 7 and 9, and the fair queue behind invariant 4.
-Each is the subject of the spec linked above.
+Built beside it and opened by no command yet: the task store over
+Postgres, `internal/store/postgres`, with the exchange as one function
+in the database ([[004-durable-tasks]]). At the store, invariants 3, 4,
+5 and 6 hold and are proven by its tests: a stale worker settles
+nothing, the tenant is chosen before the task, a task with no room is
+not claimed and writes nothing, and a cancel refuses every later
+settle.
+
+Remaining: both roles as separate processes over that store, the
+object store, the issuer, the authorizer and the key source, and with
+them invariants 1, 2, 7 and 9 and the part of invariant 3 that covers
+object keys. A development server keeps the in-process runner. Each is
+the subject of the spec linked above.
 
 ## Not in this spec
 

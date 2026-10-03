@@ -6,6 +6,16 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: the durable task store over Postgres, as a package
+  (`internal/store/postgres`) the server does not open yet. A parse and
+  its tasks are rows; a worker reaches the database through one
+  statement that renews its lease, settles, and claims the next tasks
+  in the fair order of tenants, projects and classes, only where a
+  reader has room. `lectiod` still runs with `LECTIO_DEV=true` alone.
+- Added: `LECTIO_DATABASE_POOL_URL`, the endpoint the store's pool
+  opens, for an installation with a transaction-mode pooler in front of
+  its database. Without it the pool opens `LECTIO_DATABASE_URL`, which
+  migrations always use.
 - Added: the repository scaffold. The object model (`document`); the
   interfaces a page-reading model and a field-extracting model sit behind
   (`reader`), with adapters for an OpenAI-compatible chat endpoint, for a

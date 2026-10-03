@@ -68,14 +68,18 @@ The numbers are identifiers, not the order of work. The order is:
 2. **One page, durably** (002, 004, 005, 008 with the stub reader, 014
    uploads): a parse of an image file survives a killed worker. Built:
    the object model, the steps of a parse, the readers and uploads,
-   with a parse of an image file running end to end in one process.
-   Not built: anything durable.
+   with a parse of an image file running end to end in one process;
+   and the task store over Postgres, with the exchange a worker makes
+   as one function in the database. Not built: the worker process and
+   the object store, so nothing a server runs is durable yet.
 3. **The contract** (003, 012): the API over that, with identity and
    the owner policy. Built: the contract and every route of it that is
    not marked planned, with a static token and owner scoping. Not
    built: the verifier and the authorizer.
 4. **Many tenants** (006, 007, 013): fairness, pools, limits, meters,
-   proven by the simulation and the soak. Not built.
+   proven by the simulation and the soak. Built, in the task store:
+   the fair queue and the pools, proven at the store by the dispatch
+   simulation. Not built: limits, meters and the soak.
 5. **Real documents** (009, 010): intake, rendering, assembly. Built:
    detection, unwrapping, counting and selection, native text, Markdown
    and CSV, image rendering, and assembly with its views. Not built:
