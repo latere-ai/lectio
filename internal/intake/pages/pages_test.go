@@ -469,7 +469,7 @@ func TestCountPDFIsNotQuadraticInUnclosedStreams(t *testing.T) {
 
 	// The bound is on how the work grows, not on a clock: a file four
 	// times as long takes about four times as long when each byte is
-	// looked at once, and sixteen times when every header's search runs
+	// looked at once, and 16 times when every header's search runs
 	// to the end of the file. No machine's speed moves that ratio.
 	small, large := count(unclosed(512<<10)), count(unclosed(2<<20))
 	if large > 9*small {
