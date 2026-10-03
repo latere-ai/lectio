@@ -45,3 +45,15 @@ refused before it is pushed.
   from its cells and never passed through from a model; a page is
   skipped as blank only when every pixel is one color. `SECURITY.md`
   lists each control with its test and what is not promised.
+- Added: `GET /parses/{parse}/blocks/{ref}/image`, a block as it looks
+  on its page: the page image cut to the block's box.
+- Added: `POST` and `GET /parses/{parse}/figures`. A request against a
+  parse that has ended has each figure cut from its page and described
+  by a model: the block gains `description`, `figure.type`, and the
+  words printed in the figure. No page is read again, and a figure
+  described once is not described twice.
+- Added: the Policy document takes `describe.chain`, naming the Reader
+  documents that describe figures. A `chat` reader can; a `layout`
+  reader cannot.
+- Added: `make live` with `LECTIO_LIVE_DESCRIBE=1` also describes the
+  figures of the file it parses.

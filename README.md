@@ -53,6 +53,10 @@ curl -s -H "$auth" "$api/parses/prs_.../document?format=markdown"
 curl -s -H "$auth" "$api/parses/prs_.../pages/1"
 curl -s -H "$auth" "$api/parses/prs_.../blocks/1.2"
 curl -s -H "$auth" "$api/parses/prs_.../chunks?by=section"
+
+# A figure as an image of its own, and what the figures show.
+curl -s -H "$auth" "$api/parses/prs_.../blocks/4.1/image" -o figure.png
+curl -s -H "$auth" -H 'Prefer: wait=30' -X POST "$api/parses/prs_.../figures"
 ```
 
 A page is readable as soon as it was read, while the rest of the parse
@@ -60,6 +64,10 @@ is still running. How a result looks is chosen when it is read, so
 another format or another chunk size never runs the parse again. The
 contract is [`api/openapi.yaml`](api/openapi.yaml), and the server
 serves it at `/v1/openapi.yaml`.
+
+A reader that finds a figure says where it is. Describing figures is a
+second request against the same parse: each figure is cut from its page
+and described alone, and no page is read again.
 
 To read pages with a model, declare a reader and point `LECTIO_CONFIG`
 at the file. Any endpoint that speaks the OpenAI chat completions API
