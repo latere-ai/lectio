@@ -45,7 +45,7 @@ it is a design.
 | [003](003-api.md) | API: files, parses, pages, blocks, fields, events, and the errors a caller branches on | large | drafted | 001, 002 |
 | [004](004-durable-tasks.md) | Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps | xlarge | drafted | 001, 002 |
 | [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails | large | drafted | 002, 004 |
-| [006](006-fairness-and-priority.md) | Fairness and priority: groups, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | drafted | 004, 005 |
+| [006](006-fairness-and-priority.md) | Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | drafted | 004, 005 |
 | [007](007-model-capacity.md) | Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback | large | drafted | 004, 006 |
 | [008](008-readers.md) | Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy | large | drafted | 002, 005, 007 |
 | [009](009-intake.md) | Intake: detect the type, unwrap, convert, extract natively, count and render pages | large | drafted | 002, 005 |

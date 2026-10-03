@@ -1,5 +1,5 @@
 ---
-title: "Fairness and priority: groups, weights, the interactive and batch classes, and the order tasks are dispatched in"
+title: "Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in"
 status: drafted
 track: core
 depends_on:
@@ -18,12 +18,14 @@ author: changkun
 
 Workers and model capacity are shared. This spec decides whose task
 runs next. Tenants are served in proportion to a weight, measured in
-units of work over time. Work is in one of two classes, and interactive
+units of work over time. A tenant's share is divided among its projects
+by weights of their own. Work is in one of two classes, and interactive
 work goes ahead of batch work without ever starving it. Inside one
-tenant's own queue, the tenant's priorities and the order of its parses
-decide. The decision is made in two steps, tenant first and task
-second, so that nothing a tenant queues can move it ahead of another
-tenant.
+project's queue, the caller's priorities and the order of its parses
+decide. The decision is made in steps, tenant first, then project, then
+task, so that nothing a tenant queues can move it ahead of another
+tenant, and nothing a project queues can move it ahead of another
+project.
 
 ## Current state
 
@@ -73,6 +75,7 @@ CREATE TABLE groups (
 CREATE TABLE group_service (
   group_id text NOT NULL, class smallint NOT NULL,
   vtime    numeric NOT NULL DEFAULT 0,       -- virtual time: units charged / weight
+  clock    numeric NOT NULL DEFAULT 0,       -- virtual time inside the group: the start of its last dispatch
   queued   integer NOT NULL DEFAULT 0,       -- queued tasks, maintained in the transaction of each transition
   running  integer NOT NULL DEFAULT 0,       -- leased tasks
   PRIMARY KEY (group_id, class)
@@ -93,6 +96,58 @@ A group's settings are refreshed from the allow on each submit, so a
 change made by the authorizer takes effect with the tenant's next
 parse and needs no call into Lectio.
 
+### Project
+
+A project is a division of a group: a body of work a tenant keeps apart
+from its other work, such as one product, one team or one pipeline.
+Every parse belongs to one project of its group. The project id and its
+weight arrive in the same limits as the group's. An allow that names no
+project puts the parse in the group's empty project, so a group that
+never names one has a single project and is dispatched exactly as if
+this level did not exist.
+
+```sql
+CREATE TABLE projects (
+  group_id   text NOT NULL, project_id text NOT NULL,   -- '' is the group's own project
+  weight     integer NOT NULL DEFAULT 1,                -- share of the group's service, 1..1000
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (group_id, project_id)
+);
+CREATE TABLE project_service (
+  group_id text NOT NULL, project_id text NOT NULL, class smallint NOT NULL,
+  vtime    numeric NOT NULL DEFAULT 0,       -- virtual time: units charged / weight
+  queued   integer NOT NULL DEFAULT 0,       -- queued tasks
+  running  integer NOT NULL DEFAULT 0,       -- leased tasks
+  PRIMARY KEY (group_id, project_id, class)
+);
+```
+
+A project's weight divides its group's share and nothing else. Whatever
+weights a group's projects carry, and however much any of them queues,
+the units the group is served against other groups are the same. That
+is what makes it safe for an operator to hand these numbers to a
+tenant's own administrators and keep the group's weight to itself.
+Lectio receives both from the authorizer and does not know who chose
+either.
+
+Projects are a level of the dispatch and not more groups. An authorizer
+could name one group per body of work instead, and two things would go
+wrong. A body of work with nothing to run would hand its share to every
+tenant in proportion, and not to the other work of its own tenant, so a
+tenant would lose service by organizing its work. And the ceilings,
+which are the tenant's, would become ceilings per body of work.
+
+What stays the group's: `max_running`, `max_queued` and `max_priority`,
+the pages per day and the submits per minute of
+[[013-limits-and-usage]], and the key a page is read with and its
+rate-limit pause ([[007-model-capacity]]). A project divides service.
+It has no ceiling of its own.
+
+A project's weight is refreshed as a group's is, by the next submit
+into that project. A change therefore reaches work that is already
+queued only when a submit carries it: a project that queued a backlog
+and submits nothing more keeps the weight it had.
+
 ### The unit
 
 Every task that is dispatched is charged. A task's charge is the
@@ -111,7 +166,8 @@ call it made, and never less than 1, which is the worker slot it held.
 A page that escalated to a second reader is corrected to both readers'
 costs, an extraction to the calls it made, and a page that turned out
 blank under a reader of `cost` 5 to 1. The correction is `vtime +=
-(used - charged) / weight`, on the group and on its class. The floor of
+(used - charged) / weight`, on the project, on its group and on its
+class, each by its own weight. The floor of
 1 is what keeps the correction from undoing the rule above: a group
 whose pages are all blank, corrected to nothing, would be chosen every
 time.
@@ -124,9 +180,9 @@ For each free slot, in the claim step of the exchange
 1. **Eligible.** A task can be chosen when it is `queued`, its
    `available_at` has passed, its group's `running` is below
    `max_running`, and for a task that calls a model, a reader it may
-   use has room ([[007-model-capacity]]). A group or a class is
-   eligible when it holds such a task. What is not eligible is not
-   looked at again in this step and is charged nothing.
+   use has room ([[007-model-capacity]]). A project, a group or a
+   class is eligible when it holds such a task. What is not eligible is
+   not looked at again in this step and is charged nothing.
 2. **Class.** Among eligible classes, take the one with the smaller
    `max(vtime, dispatch.clock)`, interactive first on a tie. The
    weights are `LECTIO_CLASS_WEIGHTS`, default `interactive=4,batch=1`:
@@ -135,51 +191,65 @@ For each free slot, in the claim step of the exchange
    of them.
 3. **Group.** Among eligible groups of that class, take the one with
    the smallest `max(vtime, class.clock)`, ties broken by group id.
-4. **Task.** That group's first eligible task in the class, `ORDER BY
+4. **Project.** Among that group's eligible projects in the class, take
+   the one with the smallest `max(vtime, group.clock)`, ties broken by
+   project id.
+5. **Task.** That project's first eligible task in the class, `ORDER BY
    priority DESC, seq, created_at`.
-5. **Charge.** With `start = max(group.vtime, class.clock)`: set
-   `class.clock = start` and `group.vtime = start + cost /
-   group.weight`. The same one level up: with `start = max(class.vtime,
-   dispatch.clock)`, set `dispatch.clock = start` and `class.vtime =
-   start + cost / class.weight`.
+6. **Charge.** The same rule at each level, from the inside out. With
+   `start = max(project.vtime, group.clock)`: set `group.clock = start`
+   and `project.vtime = start + cost / project.weight`. With `start =
+   max(group.vtime, class.clock)`: set `class.clock = start` and
+   `group.vtime = start + cost / group.weight`. With `start =
+   max(class.vtime, dispatch.clock)`: set `dispatch.clock = start` and
+   `class.vtime = start + cost / class.weight`.
 
 This is start-time fair queuing. The clock is what the first draft
 lacked: it is the virtual time of the work being started, it only
-moves forward, and a group or a class whose own virtual time fell
-behind it, because it had nothing to run or nothing that could run,
-starts at the clock and not at its old value. Three properties follow.
+moves forward, and a project, a group or a class whose own virtual time
+fell behind it, because it had nothing to run or nothing that could
+run, starts at the clock and not at its old value. Four properties
+follow.
 
 - **Share follows weight.** Over any interval in which two groups both
   have eligible work, the units each is served are in the ratio of
-  their weights, within one task.
+  their weights, within one task. The same holds between two projects
+  of one group, of the units that group is served.
+- **A project's share stays in its group.** A project with nothing to
+  run is not eligible, and its group's units go to the group's other
+  projects. What other groups are served does not change: a group is
+  chosen before any of its projects is looked at, and it is charged
+  what the task costs, by its own weight, whichever project the task
+  came from.
 - **Absence is not banked.** A group that returns after an hour of
   nothing, or whose reader was paused for an hour, starts at the clock.
   It gets its share from now on and no burst for the past. The same
   holds for a class: batch work that arrives after a day of
   interactive-only service starts at the clock and takes one unit in
-  five, not the next twenty thousand.
+  five, not the next twenty thousand. And for a project, which starts
+  at its group's clock.
 - **Arrival is fast.** A group with new work is at the clock, which no
   waiting group is below, so its task is among the next to be served.
   With page-sized tasks that is at most the length of one page call
   per group tied with it.
 
-### Inside a group
+### Inside a project
 
 `priority` is the caller's, from `-max_priority` to `max_priority`,
-default 0. It orders the group's own tasks only.
+default 0. It orders the project's own tasks only.
 
 `seq` is a task's position within its parse ([[005-parse-graph]]).
 Ordering by `seq` before `created_at` serves the first page of every
-parse of the group, then the second of each, and so on: parses of one
-tenant advance together, a short one finishes early, and a long one
-cannot hold the tenant's own queue. A tenant that wants strict
+parse of the project, then the second of each, and so on: parses of one
+project advance together, a short one finishes early, and a long one
+cannot hold the project's own queue. A caller that wants strict
 first-in-first-out for its parses sets priorities.
 
 `prepare`, `assemble` and extraction tasks are ordered ahead of page
 tasks of the same priority by a `seq` below 0, so a parse whose pages
-are done is not kept waiting behind its own tenant's backlog to be
+are done is not kept waiting behind its own project's backlog to be
 assembled. They are charged like any other task; the order inside a
-group moves no group ahead of another.
+project moves no project and no group ahead of another.
 
 ### Admission at submit
 
@@ -188,6 +258,8 @@ group already holds `max_queued` non-terminal parses. The submit locks
 the group's row (`SELECT ... FROM groups WHERE group_id = $1 FOR
 UPDATE`), counts, and inserts, in one transaction, so two submits of
 one group are serialized and cannot both pass at one below the limit.
+The same transaction writes the project's row: it creates it on the
+project's first submit and refreshes its weight on every later one.
 A count inside the insert statement does not do this: each statement
 counts from its own snapshot. Page and spend budgets are
 [[013-limits-and-usage]].
@@ -213,26 +285,32 @@ page-sized steps or is preempted between its calls is open
 
 ### What is deliberately absent
 
-Weights that change by time of day, envelopes within which a tenant
-adjusts its own weight, and weights calibrated from past demand. Each
-is a layer over one integer. The integer comes from the authorizer,
-and the operator's authorizer is the place to compute it from whatever
-it likes. A unit that follows the tokens a call used: the unit is a
-call weighed by its reader, which is known when the task is chosen.
+Weights that change by time of day and weights calibrated from past
+demand. Each is a layer over one integer. The integer comes from the
+authorizer, and the operator's authorizer is the place to compute it
+from whatever it likes. A tenant setting its own weight against other
+tenants: a tenant divides its share among its projects and has no hand
+in the size of the share. Levels below a project, and ceilings per
+project: a project divides service, and the ceilings are the group's. A
+unit that follows the tokens a call used: the unit is a call weighed by
+its reader, which is known when the task is chosen.
 
 ### Visibility
 
 `GET /queue` returns, per group the caller may see: weight, queued
 and running tasks per class, queued parses, and the share of service it
-received in the last interval. A parse's `progress.waiting` is computed
-when it is read: `turn` when the parse has queued tasks that could run
-and none leased, `capacity` when its queued tasks have no reader with
-room. Nothing is written while a task waits.
+received in the last interval, and the same for each project of the
+group. Like a group, a project is never a metric label: their number is
+unbounded ([[015-observability]]). A parse's `progress.waiting` is
+computed when it is read: `turn` when the parse has queued tasks that
+could run and none leased, `capacity` when its queued tasks have no
+reader with room. Nothing is written while a task waits.
 
 ## Not in this spec
 
 How a reader's room is counted ([[007-model-capacity]]); the dispatch
-decision only asks whether there is any. Budgets
+decision only asks whether there is any. Budgets, and usage read by
+project: the meters are kept by group and by owner
 ([[013-limits-and-usage]]).
 
 ## Implementation status
@@ -241,14 +319,17 @@ Nothing of this spec is built. `internal/run`, the in-process runner,
 stands in for it: every parse's pages wait in one queue ordered by
 class, then priority, then position in their parse, then age, so
 interactive work goes first and two parses of the same standing
-advance together. It knows no group and no weight: nothing is fair
-between tenants, batch work can wait without bound behind interactive
-work, and no submit is refused for a full queue.
+advance together. It knows no group, no project and no weight: nothing
+is fair between tenants or between the projects of one, batch work can
+wait without bound behind interactive work, and no submit is refused
+for a full queue.
 
 ## Acceptance criteria
 
 The dispatch decision is a function of the rows it reads. The
-simulation below drives it with a virtual clock over the real store.
+simulation below drives it with a virtual clock over the real store. A
+criterion that names no project runs with none named: every parse is in
+its group's empty project.
 
 | Criterion | Proven by |
 |---|---|
@@ -262,5 +343,10 @@ simulation below drives it with a virtual clock over the real store.
 | A group whose 3,000 pages are all blank receives its weight's share of dispatches against a group whose pages are read, and no more | the dispatch simulation |
 | A group at `max_running` is skipped and others proceed; it resumes when a task of its settles | a store test |
 | 16 workers claiming concurrently from 100 groups: no task is claimed twice, and the served ratio stays within 5% of the weights | a concurrency test over Postgres |
-| `queued` and `running` equal a recount from `tasks` after a soak run with kills | a consistency check in the soak test of [[004-durable-tasks]] |
+| One group with projects weighted 1, 2 and 4, all backlogged: after 700 dispatches of the group each project has been served within one task of 100, 200 and 400 units | the dispatch simulation |
+| Two groups of equal weight, all backlogged, one of them with three projects: each group receives half of the dispatches within one task, and the count is the same when that group's work is queued in one project | the dispatch simulation, run both ways |
+| A project with nothing to run: its group's dispatches go to the group's other projects in the ratio of their weights, and no other group's dispatch count changes | the dispatch simulation, run with and without the project's work |
+| A project that joins after its group's other projects were served 10,000 pages is served at most one task before another project of the group is served, and receives its weight's share of the group's dispatches from then on | the dispatch simulation |
+| A project raising its weight from 1 to 1000, raising its priorities, or queuing 100,000 tasks changes no other group's dispatch count | the dispatch simulation, run with and without the change |
+| `queued` and `running`, of every group and every project, equal a recount from `tasks` after a soak run with kills | a consistency check in the soak test of [[004-durable-tasks]] |
 | 50 concurrent submits of one group at `max_queued` minus 10 admit exactly 10 | a concurrency test over Postgres |
