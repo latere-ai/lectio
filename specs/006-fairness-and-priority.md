@@ -74,8 +74,8 @@ CREATE TABLE groups (
 );
 CREATE TABLE group_service (
   group_id text NOT NULL, class smallint NOT NULL,
-  vtime    numeric NOT NULL DEFAULT 0,       -- virtual time: units charged / weight
-  clock    numeric NOT NULL DEFAULT 0,       -- virtual time inside the group: the start of its last dispatch
+  vtime    bigint  NOT NULL DEFAULT 0,       -- virtual time, in millionths: units charged / weight
+  clock    bigint  NOT NULL DEFAULT 0,       -- virtual time inside the group: the start of its last dispatch
   queued   integer NOT NULL DEFAULT 0,       -- queued tasks, maintained in the transaction of each transition
   running  integer NOT NULL DEFAULT 0,       -- leased tasks
   PRIMARY KEY (group_id, class)
@@ -83,14 +83,22 @@ CREATE TABLE group_service (
 CREATE TABLE class_service (
   class  smallint PRIMARY KEY,
   weight integer NOT NULL,
-  vtime  numeric NOT NULL DEFAULT 0,         -- virtual time of the class: units charged / weight
-  clock  numeric NOT NULL DEFAULT 0          -- virtual time inside the class: the start of its last dispatch
+  vtime  bigint  NOT NULL DEFAULT 0,         -- virtual time of the class, in millionths
+  clock  bigint  NOT NULL DEFAULT 0          -- virtual time inside the class: the start of its last dispatch
 );
 CREATE TABLE dispatch (
   one   boolean PRIMARY KEY DEFAULT true CHECK (one),
-  clock numeric NOT NULL DEFAULT 0           -- virtual time across the classes
+  clock bigint NOT NULL DEFAULT 0            -- virtual time across the classes
 );
 ```
+
+Virtual time is an integer: a count of millionths of a unit. A charge
+is `cost * 1000000 / weight` in integer division, and a correction
+`(used - charged) * 1000000 / weight`. An integer is exact and the same
+in every implementation, so the same claims give the same order on
+every server, and a dispatch decision can be replayed and compared
+digit for digit, which a decimal type with its own rounding rules does
+not promise.
 
 A group's settings are refreshed from the allow on each submit, so a
 change made by the authorizer takes effect with the tenant's next
@@ -115,7 +123,7 @@ CREATE TABLE projects (
 );
 CREATE TABLE project_service (
   group_id text NOT NULL, project_id text NOT NULL, class smallint NOT NULL,
-  vtime    numeric NOT NULL DEFAULT 0,       -- virtual time: units charged / weight
+  vtime    bigint  NOT NULL DEFAULT 0,       -- virtual time, in millionths: units charged / weight
   queued   integer NOT NULL DEFAULT 0,       -- queued tasks
   running  integer NOT NULL DEFAULT 0,       -- leased tasks
   PRIMARY KEY (group_id, project_id, class)
@@ -172,6 +180,13 @@ class, each by its own weight. The floor of
 whose pages are all blank, corrected to nothing, would be chosen every
 time.
 
+Only a settle corrects a charge. A task that leaves its worker with no
+settle, because the worker died, shut down without naming it, or the
+parse was canceled, keeps the charge of its claim: the call it was
+claimed for may have been made, and no one is left to say what it used.
+A worker that gives a task back unstarted says so with a settle, and is
+corrected to the floor.
+
 ### The dispatch decision
 
 For each free slot, in the claim step of the exchange
@@ -195,7 +210,9 @@ For each free slot, in the claim step of the exchange
    the one with the smallest `max(vtime, group.clock)`, ties broken by
    project id.
 5. **Task.** That project's first eligible task in the class, `ORDER BY
-   priority DESC, seq, created_at`.
+   priority DESC, seq, created_at`, then by parse and task id, so the
+   order is total and two servers given the same rows choose the same
+   task.
 6. **Charge.** The same rule at each level, from the inside out. With
    `start = max(project.vtime, group.clock)`: set `group.clock = start`
    and `project.vtime = start + cost / project.weight`. With `start =
@@ -315,8 +332,18 @@ project: the meters are kept by group and by owner
 
 ## Implementation status
 
-Nothing of this spec is built. `internal/run`, the in-process runner,
-stands in for it: every parse's pages wait in one queue ordered by
+Built:
+
+- `internal/store/postgres/migrations`: the tables above, and the
+  dispatch decision as the claim step of `lectio_exchange`: the class,
+  the group, the project and the task, each by start-time fair queuing
+  with a clock of its own, the charge at the claim on all three levels
+  and the correction at the settle, and admission at submit under the
+  group's row lock.
+
+Remaining: `GET /queue` and `progress.waiting`. `internal/run`, the
+in-process runner, still stands in for this spec in a development
+server: every parse's pages wait in one queue ordered by
 class, then priority, then position in their parse, then age, so
 interactive work goes first and two parses of the same standing
 advance together. It knows no group, no project and no weight: nothing

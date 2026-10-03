@@ -59,6 +59,7 @@ reader is called with has a scope inside it.
 CREATE TABLE pools (
   reader        text PRIMARY KEY,
   max_in_flight integer NOT NULL,        -- from configuration; across every scope
+  cost          integer NOT NULL DEFAULT 1,  -- the fairness charge of one call, from configuration
   failures      integer NOT NULL DEFAULT 0,
   opened_at     timestamptz,             -- breaker open since
   trial_at      timestamptz,             -- when the one trial call was admitted
@@ -70,7 +71,7 @@ CREATE TABLE pool_scopes (
   ceiling      integer NOT NULL,         -- allowed in flight for this scope, 1..max_in_flight
   paused_until timestamptz,              -- set by a rate-limit reply made with this scope's key
   halved_at    timestamptz,              -- when the ceiling was last halved
-  raised_at    timestamptz,              -- when the ceiling was last raised
+  raised_at    timestamptz,              -- the instant the ceiling was current: recovery is counted from it
   PRIMARY KEY (reader, scope)
 );
 ```
@@ -84,6 +85,13 @@ the table grows with tenants that hit limits and not with tenants.
 
 The endpoint's health is the reader's and not a key's: the breaker and
 `max_in_flight` are on the pool.
+
+A store writes one `pools` row per configured reader when it opens,
+with the reader's `max_in_flight` and `cost`, keeps the breaker state
+of a pool that was there, and removes the pool of a reader that left
+the configuration. The policy's chains, and whether keys are per
+tenant, are in the settings row it writes with them
+([[004-durable-tasks]]).
 
 ### A slot is a lease
 
@@ -152,6 +160,10 @@ Each interval of `LECTIO_POOL_RECOVERY` (default 30s) without a
 rate-limit reply raises the ceiling by a tenth of `max_in_flight`, at
 least one, up to `max_in_flight`: a halved pool is whole again in two
 and a half minutes of quiet, and a pool driven to one slot in five.
+The raise is read from the clock in the claim, from the stored ceiling
+and the instant it was stored, and is written only with a claim in the
+scope or with its next rate-limit reply, so a scope that recovers while
+nothing is claimed writes nothing.
 
 When a pause ends, the scope does not admit its whole ceiling at once.
 For `LECTIO_POOL_RESUME` (default 10s) after `paused_until`, it admits
@@ -183,11 +195,23 @@ of the content) do not count; they say nothing about the reader's
 health. The state is in the row, so one replica's observation protects
 all of them.
 
+A trial that ends without counting, because its call was canceled, was
+told to wait, failed for the page's own reason, or its worker died,
+would leave the breaker open with its one trial spent. The trial is
+therefore outstanding only while it is in flight: a leased task that is
+calling the reader and was claimed after `opened_at`. When there is
+none, the next claim is the trial.
+
 ### Fallback
 
-When the first candidate has no room because it is paused or open, the
-next reader in the policy's chain is tried in the same claim. Two rules
-bound this:
+When the first candidate has no room, the next reader in the policy's
+chain is tried in the same claim: the slot goes to the first candidate
+with room, as Admission says. The first candidate has no room when its
+scope is paused, its breaker is open, or its pool or scope is full, so
+a page also goes to the next reader when the first is only busy. An
+operator who wants a second reader used for failures and never for
+load gives the first a `max_in_flight` the fleet does not reach. Two
+rules bound this:
 
 - A parse that named its reader has a chain of one. It waits for that
   reader. A caller who pinned a model for a reason, the place its data
@@ -226,7 +250,20 @@ tokens and not by requests. Spacing calls to a rate in configuration.
 
 ## Implementation status
 
-Nothing of this spec is built. The in-process runner bounds the pages
+Built:
+
+- `internal/store/postgres/migrations`: the pools and their scopes,
+  admission in the claim step of `lectio_exchange` with the slot as the
+  leased row itself, the pause and the ceiling of a scope from a
+  rate-limit reply, recovery and the resume ramp read from the clock,
+  the breaker with its one trial, and fallback to the next reader of
+  the chain.
+
+Remaining: a slot taken and given back per call, for an extraction and
+for a page that moves to the next reader after a reply
+([[004-durable-tasks]], step 5 of the exchange): a task holds the slot
+of its claim until it settles. In a development server nothing of this
+spec applies. The in-process runner bounds the pages
 read at once by a fixed number of workers for all readers together,
 and a rate-limited page waits by itself for the delay the endpoint
 gave: there is no pool, no shared pause, no ceiling that adapts and no

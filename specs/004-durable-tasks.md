@@ -76,6 +76,10 @@ CREATE TABLE tasks (
   priority      integer  NOT NULL DEFAULT 0,
   seq           integer  NOT NULL,             -- position within the parse; orders a project's queue
   pin           text,                          -- the reader the parse named, when it named one
+  lane          text     NOT NULL GENERATED ALWAYS AS (
+                  CASE WHEN kind IN ('prepare', 'assemble') THEN ''
+                       WHEN pin IS NULL THEN kind
+                       ELSE kind || ':' || pin END) STORED, -- whose room the task waits for
   state         text     NOT NULL,             -- queued | leased | succeeded | failed | canceled
   attempt       integer  NOT NULL DEFAULT 0,
   expiries      integer  NOT NULL DEFAULT 0,
@@ -96,7 +100,7 @@ CREATE TABLE tasks (
   settled_at    timestamptz,
   PRIMARY KEY (parse_id, task_id)
 );
-CREATE INDEX tasks_runnable ON tasks (group_id, project_id, class, priority DESC, seq, created_at)
+CREATE INDEX tasks_runnable ON tasks (group_id, project_id, class, lane, priority DESC, seq, created_at, parse_id, task_id)
   WHERE state = 'queued';
 CREATE INDEX tasks_leased ON tasks (lease_owner) WHERE state = 'leased';
 CREATE INDEX tasks_slots  ON tasks (reader, scope) WHERE state = 'leased' AND calling;
@@ -104,6 +108,20 @@ CREATE INDEX tasks_slots  ON tasks (reader, scope) WHERE state = 'leased' AND ca
 
 Task ids are deterministic from the parse, so writing a parse's tasks
 twice is `ON CONFLICT DO NOTHING` and writes nothing the second time.
+
+`lane` names whose room a task waits for: nothing for a task that calls
+no model, the kind for a task that follows the routing policy's chain,
+and the kind with the reader for a task pinned to one. Room belongs to
+a reader and a key ([[007-model-capacity]]), so the queued tasks of one
+lane in one group have room together or have none. The claim decides
+per lane and reads the first task of each lane that has room, one probe
+of `tasks_runnable` each, so a task that cannot run is never read. An
+index without the column orders a project's tasks with no regard to
+room: a project whose first 100,000 tasks wait for a paused reader
+would be read row by row, on every claim, to find the one `assemble`
+behind them, and a tenant in that state is the one the fair queue looks
+at first. The parse and the task end the index key so that tasks equal
+in priority, `seq` and age are taken in one fixed order.
 
 There is no table of edges and no `blocked` state. The graph of a
 parse is fixed ([[005-parse-graph]]), so the parse row counts its
@@ -131,10 +149,12 @@ stateDiagram-v2
 
 A worker process registers a row in `workers` when it starts and holds
 one lease for everything it runs. A task is leased while three things
-hold: its `state` is `leased`, its `lease_owner` is a worker whose
-`expires_at` is in the future, and the token the worker was given
-equals `lease_token`. There is no expiry on the task row and no
-heartbeat per task.
+hold: its `state` is `leased`, its `lease_owner` is a worker whose row
+is still there, and the token the worker was given equals
+`lease_token`. A worker's row is removed by another worker's sweep once
+its `expires_at` has passed (Sweeps, below) and by its own shutdown, so
+a lease ends when the fleet acts on its expiry and not at the instant
+itself. There is no expiry on the task row and no heartbeat per task.
 
 | Setting | Default |
 |---|---|
@@ -144,7 +164,16 @@ heartbeat per task.
 | `LECTIO_SWEEP_INTERVAL` | 30s |
 
 Every timestamp in this spec is the database's `now()`; a worker's
-clock is never compared with a stored time.
+clock is never compared with a stored time. Each function the store
+calls takes an optional last argument that stands in for `now()`. Tests
+pass it, to move leases, backoff, pauses and deadlines with a virtual
+clock and no sleep; the server never does.
+
+The values in the table, and the bounds, weights and reader chains of
+this spec and the two that build on it, reach the database as one row,
+`settings`, which a store writes when it opens. Every function reads
+them there, so no statement carries configuration and the replicas of
+one deployment apply the same values. The last store to open decides.
 
 ### The exchange
 
@@ -155,10 +184,16 @@ task finished or a slot is free, at most once per `LECTIO_WORKER_FLUSH`
 and at least once per third of the lease. In order, the exchange:
 
 1. **Renews** the worker: `UPDATE workers SET seen_at = now(),
-   expires_at = now() + lease WHERE worker_id = $1 AND expires_at >
-   now()`. Zero rows means the fleet has given this process up. It
+   expires_at = now() + lease WHERE worker_id = $1`. Zero rows means
+   the fleet has given this process up: another worker found its lease
+   expired, returned its tasks to the queue and removed its row. It
    abandons every task it runs, writes nothing further for them, and
-   registers under a new id.
+   registers under a new id. The renewal does not test `expires_at`. A
+   row that is past its expiry and still there was reaped by no one, so
+   every task it holds is still its own. Refusing it would give up
+   every worker at its first exchange after a stall of the database,
+   with all the work in flight, which is what the reap rule under
+   Sweeps exists to prevent.
 2. **Settles** the tasks that finished since the last exchange, each
    under the fence below: the outcome, the output key, the usage of the
    attempt, the fairness correction ([[006-fairness-and-priority]]),
@@ -183,6 +218,17 @@ included, with no further lock, and it bounds the fleet to what one
 lock passes: an exchange of a few milliseconds allows a few hundred per
 second. That is the ceiling of this design, stated on purpose. Past it
 the lock is split by class or by group, which changes no row.
+
+The statement is `SELECT lectio_exchange($1, $2)`: the worker's id and
+the request as one JSON document bound as text, answered by one JSON
+document. The request names the settles, the tasks the worker still
+holds, how many it can take, whether it runs nothing at all, and
+whether this is its last exchange. The reply names the settles that
+were refused, the held tasks that are no longer the worker's, the
+claims, when the earliest pause ends among the scopes that had no room,
+and whether the fleet gave the worker up. The function, and the
+functions for register, submit and cancel beside it, are carried by a
+migration.
 
 ### The statement budget
 
@@ -260,18 +306,28 @@ until it settles. A task whose worker dies while running it alone is
 the cause, and at `LECTIO_TASK_EXPIRIES` (default 3) it is failed with
 `page_unreadable`. An input that kills the process every time it is
 touched stops after three workers, and the pages that shared a worker
-with it lose one lease period and nothing else.
+with it lose one lease period and nothing else. The code is the task's
+own: a `prepare` that ends its workers fails with `document_corrupt`,
+since the file is what intake could not open, and an `assemble` or an
+extraction with `internal`.
+
+The worker says in each exchange whether it runs nothing at all, a task
+it was told it lost included. A task with `expiries > 0` is claimed
+only when it says so and the store holds no task leased to it, and it
+is then the only claim of that exchange.
 
 ### Sweeps
 
 Any worker runs the sweeps, inside its own exchange when one is due;
-each is a single statement that is safe to run concurrently.
+each is a single statement that is safe to run concurrently. A row per
+sweep in `sweeps` holds when it last ran.
 
 - **Dead workers**: tasks leased to a worker whose `expires_at` has
   passed go back to `queued` with `expiries + 1` and their slot
   cleared, with the `failed` branch for rows at the bound, and the
   worker's row is deleted. A worker reaps others only when its own
-  previous exchange succeeded within the last third of a lease. After
+  previous exchange, or its registration, was within the last third of
+  a lease. After
   the database itself was unreachable for longer than a lease, every
   worker's first exchange renews its own row and reaps no one, so a
   stall of the database expires nothing.
@@ -300,8 +356,9 @@ one per page ([[013-limits-and-usage]]).
 ### Cancel
 
 `POST /parses/{parse}/cancel` is one transaction: the parse becomes
-`canceled`, and its `queued` and `leased` tasks become `canceled`. The
-fence does the rest. A page that finishes after the cancel settles
+`canceled`, and its `queued` and `leased` tasks become `canceled`. It
+takes the lock the exchange takes, so a settle is wholly before a
+cancel or wholly after it. The fence does the rest. A page that finishes after the cancel settles
 against a row that is no longer `leased` and writes nothing, so nothing
 is recorded after a cancel, and `assemble` is never inserted. The dead
 worker sweep and the claim both read only `leased` and `queued` rows,
@@ -357,6 +414,17 @@ Built:
   the reader's health, and the request and reply of the exchange; and
   the settings a store runs with, each default the one this spec, or
   [[006-fairness-and-priority]] or [[007-model-capacity]], gives.
+
+- `internal/store/postgres/migrations`: the tables above, and the
+  functions that are their only writers: `lectio_register`,
+  `lectio_submit`, `lectio_cancel` and `lectio_exchange`, which renews,
+  settles under the fence, reports, claims and runs the sweeps for dead
+  workers and for deadlines, in that order, under one
+  `pg_advisory_xact_lock`. Step 5 of the exchange, a slot taken and
+  given back per call of a task that makes several, is not built: a
+  task holds the slot of its claim until it settles. The sweeps for
+  settled tasks past their retention and for orphaned outputs are not
+  built.
 
 Remaining: everything that runs. `internal/run`, the in-process runner,
 still stands in for this spec in a development server: it holds the
