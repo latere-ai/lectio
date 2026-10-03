@@ -396,7 +396,8 @@ func hex4(s string) bool {
 		return false
 	}
 	for _, c := range []byte(s[:4]) {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+		digit := c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+		if !digit {
 			return false
 		}
 	}
