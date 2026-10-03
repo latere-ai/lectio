@@ -139,3 +139,54 @@ func (Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (reader.
 	out.Data = encoded
 	return out, nil
 }
+
+// Describer returns a description that is a function of the figure it is
+// given: its size, a digest of its bytes, and its caption when it has one.
+// It says nothing true about what the figure shows.
+type Describer struct {
+	// Fail, when set, is called before each call; a non-nil error is
+	// returned as the call's error.
+	Fail func(req reader.FigureRequest) error
+
+	mu    sync.Mutex
+	calls int
+}
+
+// Describe says the stub takes images.
+func (d *Describer) Describe() reader.DescriberDescription {
+	return reader.DescriberDescription{Name: Name, Accepts: []string{"image/png", "image/jpeg"}, Version: Name}
+}
+
+// DescribeFigure returns the stub's description of the figure.
+func (d *Describer) DescribeFigure(ctx context.Context, req reader.FigureRequest) (reader.FigureResult, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return reader.FigureResult{}, reader.FromTransport(err)
+	}
+	if d.Fail != nil {
+		if err := d.Fail(req); err != nil {
+			return reader.FigureResult{}, err
+		}
+	}
+	description := fmt.Sprintf("A figure of %d by %d pixels, sha256 %s.", req.Width, req.Height, Digest(req.Data))
+	if req.Caption != "" {
+		description += " Its caption reads: " + req.Caption
+	}
+	return reader.FigureResult{
+		Type:        reader.FigureOther,
+		Description: description,
+		Labels:      []string{fmt.Sprintf("%d bytes", len(req.Data))},
+		Model:       Name,
+		Usage:       document.Usage{InputTokens: int64(len(req.Data)), OutputTokens: 1},
+	}, nil
+}
+
+// Calls reports how many figures the stub was asked to describe.
+func (d *Describer) Calls() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}

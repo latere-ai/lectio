@@ -142,6 +142,8 @@ type Block struct {
 	// own prose, never transcription, so it is kept apart from Text: it is
 	// not what the document says and is never cited as such.
 	Description string `json:"description,omitempty"`
+	// Figure is what a describer found a block of KindFigure to be.
+	Figure *Figure `json:"figure,omitempty"`
 	// Level is the heading depth, 1 to 6, on a title or a heading.
 	Level int `json:"level,omitempty"`
 	// Table is the structure of a block of KindTable.
@@ -149,6 +151,16 @@ type Block struct {
 	// Repeated marks a running header or footer after its first occurrence.
 	Repeated bool   `json:"repeated,omitempty"`
 	Flags    []Flag `json:"flags,omitempty"`
+}
+
+// Figure is what a describer said of a figure, beside the block's
+// Description: the kind of figure it is, and which model said so. It is
+// set only once a figure was described.
+type Figure struct {
+	// Type is "diagram", "chart", "photo", "table", or "other".
+	Type string `json:"type"`
+	// Model is the model that described the figure.
+	Model string `json:"model,omitempty"`
 }
 
 // Table is the structure of a table block. HTML is the markup the reader or
@@ -316,6 +328,8 @@ func (b Block) validate(page, order int) error {
 		return fmt.Errorf("block %s has level %d", b.Ref, b.Level)
 	case b.Table != nil && b.Kind != KindTable:
 		return fmt.Errorf("block %s is %s and holds a table", b.Ref, b.Kind)
+	case b.Figure != nil && b.Kind != KindFigure:
+		return fmt.Errorf("block %s is %s and holds a figure", b.Ref, b.Kind)
 	}
 	return nil
 }

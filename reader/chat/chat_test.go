@@ -644,3 +644,126 @@ var (
 	_ reader.Reader    = (*Reader)(nil)
 	_ reader.Extractor = (*Extractor)(nil)
 )
+
+func (e *endpoint) describer(t *testing.T, mutate ...func(*Config)) *Describer {
+	t.Helper()
+	cfg := Config{Name: "vision", Endpoint: e.URL + "/v1", Model: "some-vision-model"}
+	for _, m := range mutate {
+		m(&cfg)
+	}
+	d, err := NewDescriber(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func figure() reader.FigureRequest {
+	return reader.FigureRequest{
+		Data: []byte("\x89PNG-crop"), MediaType: "image/png", Width: 720, Height: 380,
+		Caption: "Figure 2: Revenue by quarter.", Languages: []string{"en"}, Credential: reader.NewCredential(key),
+	}
+}
+
+func TestDescribeFigure(t *testing.T) {
+	e := serve(t)
+	e.content = `{"type":" Chart ","description":" A bar chart of revenue by quarter. Revenue rises from Q1 to Q4. ","text":["Revenue", "  ", " Q1 ","Q2"]}`
+	d := e.describer(t)
+	got, err := d.DescribeFigure(context.Background(), figure())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != reader.FigureChart || got.Description != "A bar chart of revenue by quarter. Revenue rises from Q1 to Q4." || strings.Join(got.Labels, "|") != "Revenue|Q1|Q2" {
+		t.Fatalf("result = %+v", got)
+	}
+	if got.Model != "model-that-answered" || got.Usage.InputTokens != 1200 || got.Usage.OutputTokens != 300 {
+		t.Fatalf("result = %+v", got)
+	}
+
+	// What went out: the figure prompt with the caption fenced, the crop as
+	// a data URL, the key as a bearer, and no parameter nobody configured.
+	parts := e.got.Messages[0].Content
+	if len(parts) != 2 || !strings.Contains(parts[0].Text, "<caption>\nFigure 2: Revenue by quarter.\n</caption>") || !strings.HasSuffix(parts[0].Text, "written in: en.") {
+		t.Fatalf("instruction = %q", parts[0].Text)
+	}
+	if want := "data:image/png;base64,iVBORy1jcm9w"; parts[1].ImageURL.URL != want {
+		t.Fatalf("image = %q, want %q", parts[1].ImageURL.URL, want)
+	}
+	if e.auth != "Bearer "+key || e.got.Temperature != nil || e.got.ResponseFormat != nil || e.got.Model != "some-vision-model" {
+		t.Fatalf("request = %+v, auth %q", e.got, e.auth)
+	}
+
+	desc := d.Describe()
+	if desc.Name != "vision" || len(desc.Accepts) != 2 || desc.Version == "" {
+		t.Fatalf("Describe() = %+v", desc)
+	}
+	// The version follows what changes a description, and nothing else.
+	other := e.describer(t, func(c *Config) { c.Model = "another" }).Describe().Version
+	zero := 0.0
+	cold := e.describer(t, func(c *Config) { c.Temperature = &zero }).Describe().Version
+	same := e.describer(t, func(c *Config) { c.Name = "renamed"; c.Timeout = time.Hour }).Describe().Version
+	if other == desc.Version || cold == desc.Version || same != desc.Version {
+		t.Fatalf("versions: %q, another model %q, a temperature %q, renamed %q", desc.Version, other, cold, same)
+	}
+}
+
+func TestDescribeFigureConstrainedAndWithWhatModelsReturn(t *testing.T) {
+	e := serve(t)
+	e.content = "```json\n{\"type\":\"flowchart\",\"description\":\"Boxes joined by arrows.\",\"text\":[]}\n```"
+	got, err := e.describer(t, func(c *Config) { c.Constrain = true }).DescribeFigure(context.Background(), figure())
+	// A fenced reply is read, and a type outside the set is "other".
+	if err != nil || got.Type != reader.FigureOther || got.Description != "Boxes joined by arrows." || got.Labels != nil {
+		t.Fatalf("result = %+v, %v", got, err)
+	}
+	f := e.got.ResponseFormat
+	if f == nil || f.Type != "json_schema" || !f.JSONSchema.Strict || f.JSONSchema.Name != "figure" || !strings.Contains(string(f.JSONSchema.Schema), `"enum":["diagram","chart","photo","table","other"]`) {
+		t.Fatalf("response format = %+v", f)
+	}
+
+	// A formula in a description written with single backslashes is read.
+	e.content = `{"type":"diagram","description":"Shows \frac{a}{b} and \alpha.","text":["\beta"]}`
+	got, err = e.describer(t).DescribeFigure(context.Background(), figure())
+	if err != nil || got.Description != `Shows \frac{a}{b} and \alpha.` || got.Labels[0] != `\beta` {
+		t.Fatalf("escapes: %+v, %v", got, err)
+	}
+}
+
+func TestDescribeFigureFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		set   func(*endpoint)
+		req   func(*reader.FigureRequest)
+		class reader.Class
+	}{
+		{name: "not an image", req: func(r *reader.FigureRequest) { r.MediaType = "image/tiff" }, class: reader.Permanent},
+		{name: "prose instead of JSON", set: func(e *endpoint) { e.content = "It is a chart." }, class: reader.Invalid},
+		{name: "no description", set: func(e *endpoint) { e.content = `{"type":"chart","description":"  ","text":[]}` }, class: reader.Invalid},
+		{name: "cut at the output limit", set: func(e *endpoint) { e.finish = "length" }, class: reader.Invalid},
+		{name: "declined", set: func(e *endpoint) {
+			e.body = `{"choices":[{"finish_reason":"content_filter","message":{"content":""}}]}`
+		}, class: reader.Refused},
+		{name: "rate limited", set: func(e *endpoint) { e.status = 429 }, class: reader.RateLimited},
+		{name: "a request the endpoint rejects", set: func(e *endpoint) { e.status = 400 }, class: reader.Misconfigured},
+		{name: "server error", set: func(e *endpoint) { e.status = 502 }, class: reader.Retryable},
+	} {
+		e := serve(t)
+		e.content = `{"type":"chart","description":"A chart.","text":[]}`
+		if tc.set != nil {
+			tc.set(e)
+		}
+		req := figure()
+		if tc.req != nil {
+			tc.req(&req)
+		}
+		_, err := e.describer(t).DescribeFigure(context.Background(), req)
+		if err == nil || reader.ClassOf(err) != tc.class {
+			t.Errorf("%s: err = %v, want class %v", tc.name, err, tc.class)
+		}
+		if err != nil && strings.Contains(err.Error(), key) {
+			t.Errorf("%s: the key is in the error: %v", tc.name, err)
+		}
+	}
+	if _, err := NewDescriber(Config{Name: "d", Endpoint: "not a url", Model: "m"}); err == nil {
+		t.Error("a describer with no usable endpoint is refused")
+	}
+}

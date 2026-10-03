@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"latere.ai/x/lectio/document"
@@ -110,3 +111,36 @@ var (
 	_ reader.Reader    = (*Reader)(nil)
 	_ reader.Extractor = Extractor{}
 )
+
+func TestDescriberIsAFunctionOfTheFigure(t *testing.T) {
+	d := &Describer{}
+	req := reader.FigureRequest{Data: []byte("crop"), MediaType: "image/png", Width: 40, Height: 20}
+	got, err := d.DescribeFigure(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "A figure of 40 by 20 pixels, sha256 " + Digest([]byte("crop")) + "."; got.Description != want || got.Type != reader.FigureOther || got.Labels[0] != "4 bytes" || got.Model != Name {
+		t.Fatalf("result = %+v", got)
+	}
+	again, _ := d.DescribeFigure(context.Background(), req)
+	if again.Description != got.Description || d.Calls() != 2 {
+		t.Fatalf("the same figure is described the same way: %+v, %d calls", again, d.Calls())
+	}
+	req.Caption = "Figure 1: a bridge."
+	if captioned, _ := d.DescribeFigure(context.Background(), req); !strings.HasSuffix(captioned.Description, "Its caption reads: Figure 1: a bridge.") {
+		t.Fatalf("the caption reaches the describer: %+v", captioned)
+	}
+	if desc := d.Describe(); desc.Name != Name || desc.Version != Name || len(desc.Accepts) != 2 {
+		t.Fatalf("Describe() = %+v", desc)
+	}
+
+	failing := &Describer{Fail: func(reader.FigureRequest) error { return reader.Errorf(reader.Refused, "no") }}
+	if _, err := failing.DescribeFigure(context.Background(), req); reader.ClassOf(err) != reader.Refused {
+		t.Fatalf("a describer told to fail: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := d.DescribeFigure(ctx, req); reader.ClassOf(err) != reader.Retryable {
+		t.Fatalf("a canceled call: %v", err)
+	}
+}

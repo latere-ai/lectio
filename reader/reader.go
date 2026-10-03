@@ -5,14 +5,14 @@
 // fills a schema: a vision-language model, an OCR engine, a text model.
 // Nothing else in the module knows that a model exists.
 //
-// There are two interfaces, one per kind of outbound call. A Reader turns
-// one page into blocks. An Extractor turns a document's text into an object
-// in the shape of a schema. Both are stateless: one call in, one result out,
-// with no memory of the document and no knowledge of queues, tenants, or
-// storage. That is what makes a model a line of configuration and a page
-// the unit of work.
+// There are three interfaces, one per kind of outbound call. A Reader
+// turns one page into blocks. An Extractor turns a document's text into an
+// object in the shape of a schema. A Describer says what one figure shows.
+// All are stateless: one call in, one result out, with no memory of the
+// document and no knowledge of queues, tenants, or storage. That is what
+// makes a model a line of configuration and a page the unit of work.
 //
-// An adapter is an implementation of one or both interfaces over one wire
+// An adapter is an implementation of one or more interfaces over one wire
 // format. The module ships three: chat, for any endpoint that speaks
 // OpenAI-compatible chat completions with image input; layout, for an OCR
 // engine behind a small HTTP contract of its own; and stub, which is

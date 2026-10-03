@@ -170,6 +170,7 @@ func TestPageValidate(t *testing.T) {
 		{"box", func(p *Page) { p.Blocks[0].Box = &bad }, "box outside the page"},
 		{"level", func(p *Page) { p.Blocks[0].Level = 7 }, "has level 7"},
 		{"table on text", func(p *Page) { p.Blocks[0].Table = &Table{} }, "holds a table"},
+		{"figure on text", func(p *Page) { p.Blocks[0].Figure = &Figure{Type: "chart"} }, "holds a figure"},
 	} {
 		p := page(Block{Kind: KindTitle, Box: &box, Text: "Report", Level: 1}, Block{Kind: KindTable, Table: &Table{Rows: 1, Cols: 1}})
 		tc.mutate(&p)

@@ -35,6 +35,7 @@ import (
 const (
 	PageName    = "page"
 	ExtractName = "extract"
+	FigureName  = "figure"
 )
 
 //go:embed *.tmpl
@@ -85,6 +86,19 @@ type ExtractData struct {
 	Problems []string
 }
 
+// FigureData is what the figure prompt is rendered with.
+type FigureData struct {
+	// Types is the closed set of figure types, by name.
+	Types []string
+
+	// Caption is the caption the figure has on its page. Surrounding space
+	// is dropped. May be empty.
+	Caption string
+
+	// Languages are the languages the figure is most likely written in.
+	Languages []string
+}
+
 // Page renders the instruction for reading one page.
 func Page(d PageData) (string, error) { return render(PageName, d) }
 
@@ -92,6 +106,12 @@ func Page(d PageData) (string, error) { return render(PageName, d) }
 func Extract(d ExtractData) (string, error) {
 	d.Instructions = strings.TrimSpace(d.Instructions)
 	return render(ExtractName, d)
+}
+
+// Figure renders the instruction for describing one figure.
+func Figure(d FigureData) (string, error) {
+	d.Caption = strings.TrimSpace(d.Caption)
+	return render(FigureName, d)
 }
 
 func render(name string, data any) (string, error) {
@@ -103,7 +123,7 @@ func render(name string, data any) (string, error) {
 }
 
 // Names lists the prompts.
-func Names() []string { return []string{PageName, ExtractName} }
+func Names() []string { return []string{PageName, ExtractName, FigureName} }
 
 // Source returns a prompt's template as it is written, comments included.
 func Source(name string) (string, error) {
@@ -128,6 +148,12 @@ func PageVersion(d PageData) string {
 // ExtractVersion names the extraction prompt as it is asked. Everything
 // else that goes into it comes with the request.
 func ExtractVersion() string { return version(ExtractName) }
+
+// FigureVersion names the figure prompt as it is asked: the template and
+// the set of types. The caption and the languages come with the figure.
+func FigureVersion(types []string) string {
+	return version(FigureName, strings.Join(types, ","))
+}
 
 // version is a short digest of a template's source and its fixed inputs.
 func version(name string, fixed ...string) string {

@@ -385,3 +385,14 @@ func TestATableCellKeepsWhatIsRaisedOrLowered(t *testing.T) {
 		t.Fatalf("a mark outside a cell: %+v", table)
 	}
 }
+
+func TestAFiguresTypeIsOneOfASet(t *testing.T) {
+	for word, want := range map[string]string{
+		"diagram": FigureDiagram, "chart": FigureChart, "photo": FigurePhoto, "table": FigureTable, "other": FigureOther,
+		"infographic": FigureOther, "": FigureOther, "Chart": FigureOther,
+	} {
+		if got := FigureType(word); got != want {
+			t.Errorf("FigureType(%q) = %q, want %q", word, got, want)
+		}
+	}
+}
