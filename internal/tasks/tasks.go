@@ -348,6 +348,12 @@ func (r Request) Validate() error {
 			return fmt.Errorf("tasks: settle %d of %s/%s reports a use below zero", i, s.Parse, s.Task)
 		case s.RetryAfter < 0:
 			return fmt.Errorf("tasks: settle %d of %s/%s waits a time below zero", i, s.Parse, s.Task)
+		case s.Outcome == Done && s.Task == PrepareID && s.Prepare == nil:
+			// The store would read a prepare that says nothing as a
+			// selection of no page, and end the parse with none read.
+			return fmt.Errorf("tasks: settle %d of %s/%s succeeded and does not say what it prepared", i, s.Parse, s.Task)
+		case s.Outcome == Done && s.Task == AssembleID && (s.Assemble == nil || s.Assemble.Index == ""):
+			return fmt.Errorf("tasks: settle %d of %s/%s succeeded and names no document index", i, s.Parse, s.Task)
 		}
 	}
 	for i, h := range r.Held {

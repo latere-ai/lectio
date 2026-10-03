@@ -108,21 +108,30 @@ func TestASettleTravelsWithItsWaitInMilliseconds(t *testing.T) {
 
 func TestARequestIsCheckedBeforeItIsSent(t *testing.T) {
 	ok := Request{
-		Free:    2,
-		Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Done}},
-		Held:    []Held{{Parse: "prs_a", Task: "page-2", Token: 1}},
+		Free: 2,
+		Settles: []Settle{
+			{Parse: "prs_a", Task: "page-1", Outcome: Done},
+			{Parse: "prs_b", Task: PrepareID, Outcome: Done, Prepare: &Prepared{}},
+			{Parse: "prs_c", Task: AssembleID, Outcome: Done, Assemble: &Assembled{Index: "parses/prs_c/index.3.json"}},
+			// A prepare that failed has prepared nothing to say.
+			{Parse: "prs_d", Task: PrepareID, Outcome: Permanent, Error: &Error{Code: "document_corrupt"}},
+		},
+		Held: []Held{{Parse: "prs_a", Task: "page-2", Token: 1}},
 	}
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("a well-formed request is refused: %v", err)
 	}
 	for name, bad := range map[string]Request{
-		"free below zero":     {Free: -1},
-		"a settle of no task": {Settles: []Settle{{Parse: "prs_a", Outcome: Done}}},
-		"an unknown outcome":  {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: "finished"}}},
-		"a use below zero":    {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Done, Units: -1}}},
-		"tokens below zero":   {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Done, Usage: Usage{InputTokens: -1}}}},
-		"a wait below zero":   {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Wait, RetryAfter: -time.Second}}},
-		"a held of no task":   {Held: []Held{{Task: "page-1"}}},
+		"free below zero":               {Free: -1},
+		"a settle of no task":           {Settles: []Settle{{Parse: "prs_a", Outcome: Done}}},
+		"an unknown outcome":            {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: "finished"}}},
+		"a use below zero":              {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Done, Units: -1}}},
+		"tokens below zero":             {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Done, Usage: Usage{InputTokens: -1}}}},
+		"a wait below zero":             {Settles: []Settle{{Parse: "prs_a", Task: "page-1", Outcome: Wait, RetryAfter: -time.Second}}},
+		"a held of no task":             {Held: []Held{{Task: "page-1"}}},
+		"a prepare that says nothing":   {Settles: []Settle{{Parse: "prs_a", Task: PrepareID, Outcome: Done}}},
+		"an assemble with no index":     {Settles: []Settle{{Parse: "prs_a", Task: AssembleID, Outcome: Done, Assemble: &Assembled{}}}},
+		"an assemble that says nothing": {Settles: []Settle{{Parse: "prs_a", Task: AssembleID, Outcome: Done}}},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%s was accepted", name)
