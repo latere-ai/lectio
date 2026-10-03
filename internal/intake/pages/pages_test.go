@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -449,25 +450,37 @@ func TestCheckAgreesWithSelectOnWhatIsMalformed(t *testing.T) {
 // size: 12 seconds at 2 MiB, three minutes at 8.
 func TestCountPDFIsNotQuadraticInUnclosedStreams(t *testing.T) {
 	unit := []byte("<</Type/ObjStm/Filter/FlateDecode>>stream\n")
-	file := append([]byte("%PDF-1.5\n"), bytes.Repeat(unit, (2<<20)/len(unit))...)
-	began := time.Now()
-	_, err := CountPDF(file)
-	if took := time.Since(began); took > time.Second {
-		t.Fatalf("counting a 2 MiB file of unclosed streams took %s", took)
+	unclosed := func(size int) []byte {
+		return append([]byte("%PDF-1.5\n"), bytes.Repeat(unit, size/len(unit))...)
 	}
-	if fault.CodeOf(err) != fault.DocumentCorrupt {
-		t.Fatalf("a file that names no page: %v", err)
+	// How long a count takes, as the better of two: the shorter run is
+	// the one a busy machine disturbed least.
+	count := func(file []byte) time.Duration {
+		best := time.Duration(math.MaxInt64)
+		for range 2 {
+			began := time.Now()
+			if _, err := CountPDF(file); fault.CodeOf(err) != fault.DocumentCorrupt {
+				t.Fatalf("a file that names no page: %v", err)
+			}
+			best = min(best, time.Since(began))
+		}
+		return best
+	}
+
+	// The bound is on how the work grows, not on a clock: a file four
+	// times as long takes about four times as long when each byte is
+	// looked at once, and sixteen times when every header's search runs
+	// to the end of the file. No machine's speed moves that ratio.
+	small, large := count(unclosed(512<<10)), count(unclosed(2<<20))
+	if large > 9*small {
+		t.Fatalf("a file four times as long took %s against %s: the work is not linear", large, small)
 	}
 
 	// The same headers with one end far away: every header's search would
-	// run to it. The work is bounded and the file refused.
-	closed := append(slices.Clone(file), []byte("endstream\n")...)
-	began = time.Now()
-	_, err = CountPDF(closed)
-	if took := time.Since(began); took > time.Second {
-		t.Fatalf("counting a 2 MiB file of streams that share one end took %s", took)
-	}
-	if fault.CodeOf(err) != fault.DocumentCorrupt {
-		t.Fatalf("a file whose streams cannot be told apart: %v", err)
+	// run to it. The work is bounded all the same, and the file refused.
+	closed := func(size int) []byte { return append(unclosed(size), []byte("endstream\n")...) }
+	small, large = count(closed(512<<10)), count(closed(2<<20))
+	if large > 9*small {
+		t.Fatalf("with one end far away, a file four times as long took %s against %s", large, small)
 	}
 }
