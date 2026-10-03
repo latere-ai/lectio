@@ -90,6 +90,9 @@ type Fetcher struct {
 
 	// Allow lists hosts, as written in a URL, that are fetched whatever
 	// they resolve to: an operator's own object store on a private network.
+	// An entry is a host name, or a host and a port. It covers that host
+	// and no other, so a redirect from an allowed host to another address
+	// is checked like any connection.
 	Allow []string
 
 	// Permit decides whether a connection to an address may be opened. Nil
@@ -102,8 +105,6 @@ type Fetcher struct {
 
 // errRefused marks a connection the guard did not open.
 var errRefused = errors.New("the address is not publicly routable")
-
-type allowedKey struct{}
 
 func (f *Fetcher) init() {
 	f.once.Do(func() {
@@ -133,8 +134,11 @@ func (f *Fetcher) init() {
 			// No proxy: behind one, the socket's address would be the
 			// proxy's and the check would pass for any destination.
 			Proxy: nil,
+			// addr is the host and port of the URL being requested, before
+			// its name is resolved, so the allow list is applied to each
+			// connection by the name it was asked for.
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				if allowed, _ := ctx.Value(allowedKey{}).(bool); allowed {
+				if f.allows(addr) {
 					return open.DialContext(ctx, network, addr)
 				}
 				return dialer.DialContext(ctx, network, addr)
@@ -151,30 +155,39 @@ func (f *Fetcher) init() {
 				if len(via) > maxRedirects {
 					return errors.New("too many redirects")
 				}
-				_, err := f.check(req.URL)
-				return err
+				return f.check(req.URL)
 			},
 		}
 	})
 }
 
-// check validates a URL before a request is made to it, and reports
-// whether its host is one the operator allowed.
-func (f *Fetcher) check(u *url.URL) (allowed bool, err error) {
+// allows reports whether the operator allowed the host of a connection.
+// addr is a host and a port.
+func (f *Fetcher) allows(addr string) bool {
+	addr = strings.ToLower(addr)
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	return slices.Contains(f.Allow, addr) || slices.Contains(f.Allow, host)
+}
+
+// check validates a URL before a request is made to it.
+func (f *Fetcher) check(u *url.URL) error {
 	switch {
 	case u.Scheme == "https", u.Scheme == "http" && f.AllowHTTP:
 	case u.Scheme == "http":
-		return false, fault.New(fault.SourceUnreachable, "only https addresses are fetched")
+		return fault.New(fault.SourceUnreachable, "only https addresses are fetched")
 	default:
-		return false, fault.New(fault.InvalidRequest, "a source url is an https address")
+		return fault.New(fault.InvalidRequest, "a source url is an https address")
 	}
 	if u.Hostname() == "" {
-		return false, fault.New(fault.InvalidRequest, "the source url names no host")
+		return fault.New(fault.InvalidRequest, "the source url names no host")
 	}
 	if u.User != nil {
-		return false, fault.New(fault.InvalidRequest, "a source url carries no user or password")
+		return fault.New(fault.InvalidRequest, "a source url carries no user or password")
 	}
-	return slices.Contains(f.Allow, strings.ToLower(u.Hostname())), nil
+	return nil
 }
 
 // Fetch gets the file at rawURL. A URL that is not one to fetch is
@@ -187,8 +200,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (File, error) {
 	if err != nil {
 		return File{}, fault.New(fault.InvalidRequest, "the source url does not parse")
 	}
-	allowed, err := f.check(u)
-	if err != nil {
+	if err := f.check(u); err != nil {
 		return File{}, err
 	}
 
@@ -198,10 +210,6 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (File, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if allowed {
-		// An allowed host is trusted with its redirects too.
-		ctx = context.WithValue(ctx, allowedKey{}, true)
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return File{}, fault.New(fault.InvalidRequest, "the source url does not parse")

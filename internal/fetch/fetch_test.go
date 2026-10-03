@@ -126,11 +126,29 @@ func TestFetchRefusesNonPublicAddresses(t *testing.T) {
 		t.Fatalf("the refused server was reached %d times", hits.Load())
 	}
 
-	// A host the operator allowed is fetched wherever it resolves.
+	// A host the operator allowed is fetched wherever it resolves, named
+	// alone or with its port.
 	host, _ := url.Parse(private.URL)
-	allowed := &Fetcher{AllowHTTP: true, Allow: []string{host.Hostname()}}
-	if got, err := allowed.Fetch(context.Background(), private.URL); err != nil || string(got.Data) != "secret" {
-		t.Fatalf("an allowed host: %q, %v", got.Data, err)
+	for _, entry := range []string{host.Hostname(), host.Host} {
+		allowed := &Fetcher{AllowHTTP: true, Allow: []string{entry}}
+		if got, err := allowed.Fetch(context.Background(), private.URL); err != nil || string(got.Data) != "secret" {
+			t.Fatalf("allowing %s: %q, %v", entry, got.Data, err)
+		}
+	}
+
+	// The allowance is the host's own: its redirect to another address is
+	// checked like any connection.
+	other, otherHits := server(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("other secret")) })
+	redirecting, _ := server(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL, http.StatusFound)
+	})
+	hop, _ := url.Parse(redirecting.URL)
+	narrow := &Fetcher{AllowHTTP: true, Allow: []string{hop.Host}}
+	if _, err := narrow.Fetch(context.Background(), redirecting.URL); fault.CodeOf(err) != fault.SourceUnreachable || otherHits.Load() != 0 {
+		t.Fatalf("an allowed host that redirects elsewhere: %v, %d hits", err, otherHits.Load())
+	}
+	if (&Fetcher{}).allows("no-port") || !(&Fetcher{Allow: []string{"store.internal"}}).allows("Store.Internal:9000") {
+		t.Fatal("an entry with no port covers every port of its host, and nothing else")
 	}
 }
 
