@@ -163,6 +163,16 @@ Whether the model has room for the claimed page ([[007-model-capacity]]);
 that is checked after the task is chosen and can send the worker to the
 next candidate. Budgets ([[013-limits-and-usage]]).
 
+## Implementation status
+
+Nothing of this spec is built. `internal/run`, the in-process runner,
+stands in for it: every parse's pages wait in one queue ordered by
+class, then priority, then position in their parse, then age, so
+interactive work goes first and two parses of the same standing
+advance together. It knows no group and no weight: nothing is fair
+between tenants, batch work can wait without bound behind interactive
+work, and no submit is refused for a full queue.
+
 ## Acceptance criteria
 
 The dispatch decision is a pure function of the rows it reads. The

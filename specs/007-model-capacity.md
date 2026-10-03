@@ -150,6 +150,15 @@ be kept consistent with the first for no added guarantee. Token-rate
 budgets per pool are deferred until an endpoint is found that limits by
 tokens and not by requests.
 
+## Implementation status
+
+Nothing of this spec is built. The in-process runner bounds the pages
+read at once by a fixed number of workers for all readers together,
+and a rate-limited page waits by itself for the delay the endpoint
+gave: there is no pool, no shared pause, no ceiling that adapts and no
+breaker. `maxInFlight` and `requestsPerMinute` are read from a Reader
+document and not applied ([[008-readers]]).
+
 ## Acceptance criteria
 
 | Criterion | Proven by |

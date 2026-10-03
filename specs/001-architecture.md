@@ -29,8 +29,11 @@ invariants every other spec assumes.
 
 ## Current state
 
-Nothing is built in this repository. An earlier service of the same
-name parsed documents for one deployment: it detected file types,
+A scaffold is built in this repository: the object model, the reader
+interfaces and their adapters, the steps of a parse, the API, and a
+development server that runs them in one process and keeps nothing.
+The durable control plane this spec describes is not. An earlier
+service of the same name parsed documents for one deployment: it detected file types,
 converted office formats, extracted text natively where the format
 carried it, called a self-run OCR model per page, and scheduled parses
 between tenants. Its queue lived in process memory, a parse was one
@@ -109,10 +112,14 @@ flowchart TB
    ([[007-model-capacity]]). The worker renders the page, calls a
    reader, validates the reply, and writes the page result.
 4. When every page task is settled, `assemble` builds the document
-   ([[010-assembly]]), `extract` tasks fill the requested schemas
-   ([[011-structured-extraction]]), and `finalize` records usage and
-   the terminal state.
-5. The caller reads state, pages as they land, and the document.
+   ([[010-assembly]]) and `finalize` records usage and the terminal
+   state.
+5. The caller reads state, pages as they land, and the document, in
+   the view it chooses when it reads.
+6. A caller that wants an object in the shape of a schema asks for a
+   field of the parse, then or later; an `extract` task fills it from
+   the document and reads no page
+   ([[011-structured-extraction]]).
 
 ### Invariants
 
@@ -165,6 +172,41 @@ health probes. Postgres 16 or later. Any S3-compatible object store.
 A memory store and a local-directory object store exist for tests and
 for a one-process development run; neither is durable and `lectiod`
 says so at start.
+
+## Implementation status
+
+Built: the path of one parse, in one process and in memory.
+
+```mermaid
+flowchart LR
+  subgraph lectiod["lectiod with LECTIO_DEV=true"]
+    api["internal/httpapi: the contract's routes"]
+    run["internal/run: in-process runner"]
+    steps["internal/parse: Prepare, ReadPage"]
+    asm["internal/assemble: passes and views"]
+    mem[("internal/store: memory")]
+  end
+  rd["reader: chat, layout or stub"]
+  api --> mem
+  api --> run
+  run --> steps --> rd
+  run --> asm
+  run --> mem
+  api --> asm
+```
+
+- A submit stores a parse and hands it to the runner. The runner
+  prepares the file once, reads it page by page with a shared set of
+  workers, assembles, and sets the terminal state.
+- Invariants 5 and 8 hold: a rate limit spends no attempt, and a
+  member the contract does not name is refused. Invariant 6 holds in
+  part: a cancel stops a parse between pages and ends the call in
+  flight. Invariant 10 holds.
+
+Remaining: both roles as separate processes, Postgres, the object
+store, the issuer, the authorizer and the key source, and with them
+invariants 1 to 4, 7 and 9. Each is the subject of the spec linked
+above.
 
 ## Not in this spec
 

@@ -121,6 +121,14 @@ meter; one that passes model cost through reads the gateway's.
 Plans, prices, invoices, wallets and entitlements. Budget alerts. A
 per-tenant report in a user interface.
 
+## Implementation status
+
+Nothing of this spec is built. The server's own limits on a file's
+size and page count and on a deadline are enforced ([[009-intake]],
+[[003-api]]), one key from `LECTIO_MODEL_KEY` is passed to every
+reader call, and a parse sums its pages' usage. There is no limit per
+group, no key source, no meter, and the `usage` route answers `501`.
+
 ## Acceptance criteria
 
 | Criterion | Proven by |

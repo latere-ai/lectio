@@ -5,7 +5,7 @@ track: core
 depends_on:
   - specs/002-object-model.md
   - specs/005-parse-graph.md
-affects: [internal/intake/, internal/render/]
+affects: [internal/intake/, internal/native/, internal/render/]
 effort: large
 created: 2026-10-03
 updated: 2026-10-03
@@ -47,12 +47,25 @@ replaces with rendering inside the worker.
 | unwrap | open a signed `.p7m` container to the document inside, up to three levels; the signature is not verified |
 | convert | legacy word-processing files to the current format; presentations and rich text to PDF |
 | extract natively | for formats that carry their structure, produce the pages' blocks now |
-| count and select | count pages, apply the `pages` selection, enforce the limits |
+| count and select | count pages, enforce the limits, apply the `pages` selection |
 | write | the working copy, the manifest, the native page results, the tasks |
 
 Limits, each overridable downward by the allow
 ([[013-limits-and-usage]]): `LECTIO_MAX_FILE_BYTES` 256 MiB,
-`LECTIO_MAX_PAGES` 3,000.
+`LECTIO_MAX_PAGES` 3,000. The page limit is on the document, counted
+before the selection, so selecting three pages of a document over the
+limit is still refused with `too_many_pages`.
+
+### Selecting pages
+
+A selection is ranges and numbers separated by commas, counted from 1,
+such as `1-3,7`. An open range such as `5-` runs to the last page. A
+range needs its start, so `-3` is malformed. The selection is clamped
+to the document: a page past the end is dropped, and a range that runs
+past the end stops at the last page. Its syntax can be checked with no
+document, which is what a submit does ([[003-api]]); whether it names
+any page of the document is known once the pages are counted, and a
+selection that names none is `invalid_pages` on the parse.
 
 ### What reads each format
 
@@ -107,26 +120,43 @@ Each page task renders the one page it was given.
 - TIFF and other images: decoded and re-encoded in process.
 
 ```go
+package render
+
 type Renderer interface {
-    Open(path string) (Doc, error)      // the local working copy
+    // Render returns page n, counted from 1, of a file of the given media
+    // type, prepared the way the reader's description asks.
+    Render(ctx context.Context, data []byte, mediaType string, n int, want reader.Description) (Image, error)
 }
-type Doc interface {
-    Pages() int
-    Size(page int) (width, height float64, rotation int)
-    Render(page int, dpi int, longEdge int) (image.Image, error)
-    Close() error
+
+type Image struct {
+    Data          []byte
+    MediaType     string
+    Width, Height int  // pixels
+    Blank         bool // every sampled pixel has the same color
 }
 ```
 
-The working copy is fetched once per worker into a cache directory
+One call renders one page, at the reader's resolution, within its long
+edge, in a format it accepts ([[008-readers]]), so a caller never
+holds more than one page image for the work it is doing. The image the
+caller stores is the image the reader saw. An image that already fits
+what the reader asks is passed through byte for byte; one that does
+not is scaled down or re-encoded.
+
+The interface takes the file's bytes because the first implementation
+reads images, which are small. The PDF renderer opens the working copy
+from disk: the copy is fetched once per worker into a cache directory
 bounded by `LECTIO_CACHE_BYTES` (default 2 GiB, least recently used
-out first) and opened from disk, so a page task's memory is one page
-image regardless of the document's size.
+out first), so a page task's memory is one page image regardless of
+the document's size, and the interface changes to take the local path
+when that renderer lands.
 
 ### Blank pages
 
 A rendered page whose pixels are uniform within a tolerance is written
-as a succeeded page with no blocks and no model call.
+as a succeeded page with no blocks and no model call. The check
+samples a grid of points across the image and does not read every
+pixel.
 
 ## Not in this spec
 
@@ -134,6 +164,52 @@ Reading a PDF's text layer to verify or replace a transcription;
 legacy spreadsheets (`.xls`); audio and video; archives; e-mail
 messages with attachments; recovering a damaged PDF. Optical cleanup
 of scans. Each is a later spec.
+
+## Implementation status
+
+Built:
+
+- `internal/intake/detect`: type detection by content, package
+  structure and container signature, then file name, then declared
+  type, and the route each type takes.
+- `internal/intake/unwrap`: a DER-encoded signed container opened to
+  the document inside, up to three levels, the signature not verified.
+- `internal/intake/pages`: page counting for PDF and TIFF, the limits,
+  the selection with open ranges and clamping, and the syntax check a
+  submit uses.
+- `internal/intake/tiffx`: the frames of a TIFF, counted and decoded
+  one at a time.
+- `internal/native`: plain text and Markdown as one page of blocks,
+  and CSV as one page holding one table.
+- `internal/render`: the interface above and a renderer for PNG, JPEG
+  and each frame of a TIFF, with scaling, re-encoding and the blank
+  check.
+
+Remaining:
+
+- PDF rendering. A PDF is detected, counted and selected, and then
+  every page fails with `unsupported_media_type`, because no renderer
+  for it is built. The PDFium plan above stands and is the first thing
+  to build.
+- Native reading of `.docx`, `.xlsx`, `.xlsm`, HTML and XML. They are
+  detected and accepted as uploads, and a parse of one fails with
+  `unsupported_media_type`.
+- Conversion. The step takes a converter and none is built, so the
+  formats that need one are refused.
+- The working copy on disk and its cache. The steps hold the file in
+  memory.
+
+Known issues in the code that was carried over, each to be fixed with
+a test:
+
+- A PDF's page count is read from its `/Count` and trusted. A file
+  that lies about it is not caught until a page fails to render.
+- A signed container in BER encoding fails to open. Only DER is read.
+- A signed container in PEM form is detected as text.
+- `.xls` is routed as a native spreadsheet, though it is not in this
+  spec. WebP, `.odt` and `.odp` are in the format table and are not
+  detected.
+- The walk over a TIFF's directories has no cap on their number.
 
 ## Acceptance criteria
 

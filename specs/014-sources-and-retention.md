@@ -6,7 +6,7 @@ depends_on:
   - specs/002-object-model.md
   - specs/003-api.md
   - specs/004-durable-tasks.md
-affects: [internal/sources/, internal/objects/, internal/store/]
+affects: [internal/fetch/, internal/httpapi/, internal/store/, internal/objects/]
 effort: medium
 created: 2026-10-03
 updated: 2026-10-03
@@ -39,8 +39,9 @@ is dropped, and deletion becomes real.
 ### Two sources
 
 - **`{"file": "fil_..."}`**: bytes uploaded with `POST /files`
-  ([[003-api]]). An upload whose SHA-256 matches a file the same owner
-  already has returns that File.
+  ([[003-api]]), as the body itself or as the part named `file` of a
+  multipart form. An upload whose SHA-256 matches a file the same owner
+  already has returns that File with `200`.
 - **`{"url": "https://..."}`**: fetched by `prepare`. `https` only by
   default; redirects followed up to five; the size limit enforced while
   streaming; the connection refused, at dial time and after every
@@ -48,6 +49,39 @@ is dropped, and deletion becomes real.
   otherwise not publicly routable, unless the host is in
   `LECTIO_FETCH_ALLOW`. A fetch that fails is `source_unreachable` on
   the parse.
+
+### The address check
+
+The caller chooses the URL, so without a check the server would
+connect wherever it is told: to its own loopback, to a metadata
+endpoint, to a host on its private network. The check is at the
+socket. Every connection a fetch opens, the first and the one after
+each redirect, is checked against the address it is about to connect
+to, after the name was resolved. A name that resolves to a private
+address and a redirect to one are therefore both refused, and resolving
+twice cannot get an address past the check.
+
+- Refused: loopback, private, link-local, multicast and unspecified
+  addresses, the shared address space of carrier NAT, the ranges set
+  aside for documentation, benchmarking and protocol assignments, and
+  the IPv6 forms that carry an IPv4 address inside them (IPv4-mapped,
+  NAT64, 6to4), each judged as the IPv4 address it is.
+- No proxy is used: behind one, the socket's address would be the
+  proxy's and the check would pass for any destination.
+- One connection per fetch: a kept connection would carry the next
+  request with no check of its own.
+- A URL with a user or a password, or with a scheme other than `https`,
+  is refused before any connection.
+- A host in `LECTIO_FETCH_ALLOW` is fetched whatever it resolves to,
+  redirects included. That is how an operator's own object store on a
+  private network is reached.
+- What the caller is told names no address. The transport's error may
+  hold the address or a token in the URL's query, so it is kept out of
+  the answer.
+
+The response's file name, from the URL's path or `Content-Disposition`,
+and its `Content-Type` are hints for telling the file's type, as a
+caller's own would be ([[009-intake]]).
 
 A URL is how Lectio reads from a storage service without knowing one.
 The caller asks its storage for a short-lived download link to the
@@ -115,6 +149,35 @@ Reading directly from a named storage service with a delegated
 credential. Watching a store and parsing new files as they arrive.
 Writing results back into a caller's storage. Each can be built on
 this spec from outside Lectio, with a link in and the API out.
+
+## Implementation status
+
+Built:
+
+- Uploads, in `internal/httpapi`: a raw body or a multipart form, the
+  size limit, type detection, and the same bytes being one File per
+  owner.
+- `internal/fetch`: the fetcher with the address check above, the
+  redirect bound, the size limit while streaming, and the allowed
+  hosts.
+- `origin` stored, returned and filterable, and `DELETE` of a file and
+  of a parse, with a file that a parse which has not ended reads being
+  refused.
+
+Remaining:
+
+- A URL is fetched inside the submit request, and a fetch that fails
+  is `422 source_unreachable` on the submit. Fetching in `prepare`,
+  where it fails the parse, comes with the durable tasks
+  ([[004-durable-tasks]]).
+- The snapshot in an object store. Files are held in memory, keyed by
+  owner and content hash.
+- Retention: `expires_at`, `?retain=`, every row of the retention
+  table, and the sweep. Nothing expires; a restart deletes everything.
+- `output.images` and `LECTIO_KEEP_PAGE_IMAGES`: every page image is
+  kept. Whether a submit option to drop page images still belongs in
+  the contract, now that a submit carries no output options
+  ([[003-api]]), is open.
 
 ## Acceptance criteria
 

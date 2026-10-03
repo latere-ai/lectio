@@ -205,6 +205,15 @@ slots, rate limits and the breaker ([[007-model-capacity]]); the tasks
 of a parse and their edges ([[005-parse-graph]]). A general workflow
 engine: tasks here have one shape and one owner.
 
+## Implementation status
+
+Nothing of this spec is built. `internal/run`, the in-process runner,
+stands in for it: it holds the page-level shape of the work, ordering
+by class and priority, retry by the reader's error class, a rate limit
+that spends no attempt, cancel and deadline, and it keeps its queue in
+memory, so nothing is durable, no task is a row, and a restart loses
+every parse that had not ended.
+
 ## Acceptance criteria
 
 | Criterion | Proven by |

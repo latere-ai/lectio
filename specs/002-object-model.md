@@ -56,14 +56,17 @@ flowchart LR
 | Page | one page, sheet, slide or image frame, in source order | its number, from 1 |
 | Block | one region of a page with one kind | `ref`: `<page>.<order>` |
 | Table | the structure of a block of kind `table` | the block's `ref` |
-| Cell | one cell of a table | `<page>.<order>.<row>.<col>` |
+| Cell | one cell of a table | its `row` and `col` within the table, from 0 |
 | Span | a table that continues across pages, as a join of blocks | `s<n>` |
 | Field | one extraction result for one named schema | the schema's name |
 | Chunk | a run of blocks rendered as text, for retrieval | `c<n>` |
 
-Identifiers with a prefix are ULIDs, so they sort by creation time. A
-`ref` is stable for the life of the parse: a retry that re-reads a page
-replaces that page's blocks and their refs together.
+Identifiers with a prefix are ULIDs, so they sort by creation time, and
+two made in the same millisecond still sort in the order they were
+made. A list ordered by id is therefore ordered by time, which is what
+a list cursor relies on ([[003-api]]). A `ref` is stable for the life
+of the parse: a retry that re-reads a page replaces that page's blocks
+and their refs together.
 
 ### Page
 
@@ -73,9 +76,10 @@ replaces that page's blocks and their refs together.
   "width": 595.0, "height": 842.0, "rotation": 0,
   "state": "succeeded",
   "source": "reader",
-  "reader": "default", "model": "gemini-3-flash",
+  "reader": "default", "model": "some-model",
   "attempts": 1,
-  "blocks": [ ... ]
+  "blocks": [ ... ],
+  "usage": { "pages": 1, "input_tokens": 11000, "output_tokens": 2600 }
 }
 ```
 
@@ -83,7 +87,10 @@ replaces that page's blocks and their refs together.
 pixels for images. `source` is `reader` when a model read the page and
 `native` when the format carried its own structure ([[009-intake]]).
 `state` is `pending`, `succeeded` or `failed`; a failed page has an
-`error` and no blocks.
+`error`, as `{"code", "detail"}`, and no blocks. `reader` and `model`
+are absent on a native page. `usage` is what reading the page consumed:
+`pages`, `input_tokens`, `output_tokens`, and `cost` with `currency`
+only when the model endpoint reported a cost.
 
 ### Block
 
@@ -94,9 +101,7 @@ pixels for images. `source` is `reader` when a model read the page and
   "order": 4,
   "box": [0.08, 0.31, 0.92, 0.58],
   "text": "Quarter | Revenue ...",
-  "level": null,
-  "table": { "rows": 6, "cols": 3, "cells": [ ... ], "html": "<table>...</table>" },
-  "repeated": false
+  "table": { "rows": 6, "cols": 3, "cells": [ ... ], "html": "<table>...</table>" }
 }
 ```
 
@@ -114,30 +119,61 @@ pixels for images. `source` is `reader` when a model read the page and
   client draw an overlay without knowing how the page was rendered.
 - `text` is the block's content as plain text. For a table it is the
   cells joined row by row; for a figure it is the reader's description.
-- `level` is the heading depth, 1 to 6, on `title` and `heading`.
-- `repeated` marks a running header or footer found by
-  [[010-assembly]]. It is rendered once.
+- `level` is the heading depth, 1 to 6, on `title` and `heading`, and
+  absent on every other kind.
+- `table` is present on a block of kind `table` and on no other.
+- `repeated` marks a running header or footer after its first
+  occurrence, found by [[010-assembly]]. It is absent when false. A
+  rendering prints such a block once unless the reader of the result
+  asks otherwise ([[003-api]]).
 - There is no confidence value. A reader does not return one that can
   be compared across models, and a field that is always absent or
   always wrong is worse than none. What a block does carry is `flags`,
   set by validation ([[008-readers]]): `box_clamped`, `kind_coerced`,
   `truncated`.
+- `ref`, `kind`, `order`, `box` and `text` are always present. The
+  other members are present only when they say something.
 
 ### Table
 
-`cells` is a list of `{row, col, row_span, col_span, text, box}`. `html`
-is the reader's or the native extractor's table markup, kept verbatim
-because it is the one form that carries merged cells without loss.
-Markdown is rendered from the cells on request, never stored.
+`cells` is a list of `{row, col, row_span, col_span, text, box}`, with
+`row` and `col` counted from 0 and the spans present only on a cell
+that spans. `html` is the reader's or the native extractor's table
+markup, kept verbatim because it is the one form that carries merged
+cells without loss. Markdown is rendered from the cells on request,
+never stored.
 
 ### Span, Field, Chunk
 
 - A Span is `{"id": "s1", "parts": ["3.4", "4.1"], "rows": 41, "cols": 3}`.
   The per-page tables stay as they are; a span adds the join.
-- A Field is `{"name", "data", "citations", "model", "attempts"}`, where
+- A Field is `{"name", "state", "data", "citations", "model",
+  "constrained", "attempts", "windows", "usage", "error"}`, where
   `citations` maps a JSON pointer into `data` to a list of block refs
   ([[011-structured-extraction]]).
-- A Chunk is `{"id", "text", "pages", "blocks"}`.
+- A Chunk is `{"id", "text", "pages", "blocks"}`. Chunks are computed
+  when they are read and are not stored ([[010-assembly]]).
+
+### Document
+
+The document of a parse is an index, not a copy of its pages:
+
+```json
+{
+  "parse": "prs_01J...",
+  "pages": [ { "number": 1, "state": "succeeded", "source": "reader", "blocks": 14 } ],
+  "spans": [ ... ],
+  "outline": [ { "ref": "1.1", "level": 1, "text": "Annual report", "page": 1 } ],
+  "usage": { "pages": 120, "input_tokens": 1310000, "output_tokens": 302000 },
+  "renderings": ["markdown", "text"],
+  "fields": ["invoice"]
+}
+```
+
+Each entry of `pages` is a page without its blocks: its number, state
+and source, how many blocks it holds, and its error when it failed.
+A page's blocks are read by page, which is what keeps a long document
+out of memory and out of one reply.
 
 ### Where each is stored
 
@@ -150,9 +186,12 @@ Markdown is rendered from the cells on request, never stored.
 | Page image | object store | `parses/<parse>/pages/<n>.png`, raw image bytes |
 | Page result | object store | `parses/<parse>/pages/<n>.json` |
 | Document index | object store | `parses/<parse>/document.json`: page list, spans, outline, usage, without blocks |
-| Renderings | object store | `parses/<parse>/document.md`, `document.txt` |
 | Field | object store | `parses/<parse>/fields/<name>.json` |
-| Chunks | object store | `parses/<parse>/chunks.jsonl` |
+
+Renderings and chunks are not stored. They are views of the page
+results, made when a caller reads them with the options that caller
+chose ([[003-api]], [[010-assembly]]), so no stored copy can be the
+wrong view.
 
 The page is the unit of storage and the block is the unit of
 addressing. A block is not a database row: a 3,000-page document has
@@ -171,6 +210,24 @@ base64 inside JSON.
 How blocks are produced ([[008-readers]], [[009-intake]]), how spans and
 `repeated` are computed ([[010-assembly]]), the HTTP shapes that return
 these objects ([[003-api]]), and retention ([[014-sources-and-retention]]).
+
+## Implementation status
+
+Built:
+
+- The `document` package: every object above as a Go type with its
+  JSON form, the closed set of kinds, box repair and validation, block
+  numbering and refs, and page validation.
+- `internal/id`: prefixed ULIDs that keep their order within one
+  millisecond.
+- `internal/store`: a memory store for files, parses, pages, page
+  images and document indexes. It holds everything in the process and
+  nothing survives a restart.
+
+Remaining:
+
+- The Postgres tables and the object store layout of the table above.
+- A cell's `box`: no adapter sets one yet.
 
 ## Acceptance criteria
 

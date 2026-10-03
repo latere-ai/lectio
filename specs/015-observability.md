@@ -6,7 +6,7 @@ depends_on:
   - specs/004-durable-tasks.md
   - specs/006-fairness-and-priority.md
   - specs/007-model-capacity.md
-affects: [internal/telemetry/, internal/worker/, internal/api/]
+affects: [internal/telemetry/, internal/worker/, internal/httpapi/]
 effort: medium
 created: 2026-10-03
 updated: 2026-10-03
@@ -120,6 +120,15 @@ restart.
 Dashboards and alert rules, which belong to whoever operates a
 deployment. An audit log of who read which parse: reads are authorized
 by the operator's authorizer, which is where such a log is kept.
+
+## Implementation status
+
+Nothing of this spec is built. The server logs structured lines at
+start and stop and for an error nobody classified, outbound calls to
+a model endpoint and to a source URL go through the shared tracing
+transport with no tracer set up to record them, and the one probe is
+`GET /healthz`. There is no trace per parse, no
+processing record and no metric.
 
 ## Acceptance criteria
 

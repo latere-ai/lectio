@@ -5,7 +5,7 @@ track: core
 depends_on:
   - specs/001-architecture.md
   - specs/003-api.md
-affects: [authorizer/, internal/auth/, internal/api/]
+affects: [authorizer/, internal/auth/, internal/httpapi/]
 effort: medium
 created: 2026-10-03
 updated: 2026-10-03
@@ -133,6 +133,28 @@ the caller's authority.
 Browser sessions and cookies; Lectio has no user interface. An
 administrative API for groups and pools. Per-block or per-page access
 control: access is to a parse.
+
+## Implementation status
+
+Built: a stand-in, and none of the design above.
+
+- `httpapi.Tokens`, a fixed table from bearer token to owner. The
+  development server holds one entry, the token in `LECTIO_DEV_TOKEN`
+  (default `dev`) for the owner `dev`. A request with no bearer is
+  `401 missing_token`, and one with a token the table lacks is `401
+  invalid_token`.
+- Owner scoping in the store. Every read and write of a file or a
+  parse names the owner, and another owner's object is not found, so a
+  caller reads, lists, cancels and deletes its own and no one else's.
+  That is the owner policy's rule for one subject, without admin
+  subjects.
+
+Remaining: the verifier, the `authorizer` package with its vocabulary
+and limits, the authorizer client, the action asked by each route, the
+admin subjects, and service callers naming an owner. The action a
+field request asks ([[011-structured-extraction]]) is not in the
+vocabulary yet, since that route did not exist when the table above
+was written.
 
 ## Acceptance criteria
 

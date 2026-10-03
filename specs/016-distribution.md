@@ -4,7 +4,7 @@ status: drafted
 track: core
 depends_on:
   - specs/001-architecture.md
-affects: [cmd/, deploy/, test/, tools/, Makefile, Dockerfile, .github/]
+affects: [cmd/, internal/config/, deploy/, test/, tools/, Makefile, Dockerfile, .github/, .githooks/]
 effort: large
 created: 2026-10-03
 updated: 2026-10-03
@@ -36,21 +36,41 @@ repository ships a server anyone runs, and no interface.
 ### Layout
 
 ```
-cmd/lectiod/          the server: roles api and worker
-cmd/lectio-stubs/     the stub model endpoint, authorizer and key endpoint
-api/openapi.yaml      the contract, generated routes checked against it
-authorizer/           public: the action vocabulary and limits
-document/             public: the object model
-reader/               public: the reader interface
-internal/             everything else, one package per spec's `affects`
-deploy/base/          manifests for a cluster, with no host or account in them
-deploy/examples/      a compose file: Postgres, an object store, lectiod, the stubs
-docs/                 running it, the configuration reference, the API guide
-test/                 conformance, end-to-end, soak, fixtures
-tools/                generators and checks
+cmd/lectiod/              the server: roles api and worker
+cmd/lectio-stubs/         the stub model endpoint, authorizer and key endpoint (not built)
+api/                      public: openapi.yaml, the contract, embedded for the server to serve
+authorizer/               public: the action vocabulary and limits (not built)
+document/                 public: the object model
+reader/                   public: the reader and extractor interfaces
+reader/chat/              the adapter for OpenAI-compatible chat completions
+reader/layout/            the adapter for a layout engine behind its own HTTP contract
+reader/stub/              a deterministic reader and extractor that make no call
+internal/assemble/        the document-wide passes and the views
+internal/config/          settings from the environment; Reader and Policy documents
+internal/fault/           the error codes
+internal/fetch/           a source URL fetched with the address check
+internal/httpapi/         the routes, held to the contract by its tests
+internal/id/              prefixed, time-ordered identifiers
+internal/intake/          detect, unwrap, pages, tiffx
+internal/native/          formats read with no model
+internal/parse/           the steps of a parse: Prepare and ReadPage
+internal/render/          the page renderer
+internal/run/             the in-process runner
+internal/store/           the memory store
+internal/testfixtures/    files the tests read
+internal/version/         the build's version, stamped by the linker
+deploy/base/              manifests for a cluster, with no host or account in them (not built)
+deploy/examples/          a compose file: Postgres, an object store, lectiod, the stubs (not built)
+docs/                     running it, the configuration reference, the API guide (not built)
+test/                     conformance, end-to-end, soak, fixtures (not built)
+tools/                    generators and checks (not built)
 ```
 
-Public packages are the three a consumer or an authorizer imports.
+Public packages are the four a consumer, an adapter or an authorizer
+imports: `api`, `document`, `reader` with its adapters, and
+`authorizer`. A package joins `internal/` with the spec that designs
+it: the task store, the dispatcher, the pools, the verifier, the
+object store and telemetry each arrive that way.
 Module path `latere.ai/x/lectio`. Go, current release, no cgo.
 Community files: `LICENSE` (Apache-2.0), `SECURITY.md`,
 `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
@@ -61,10 +81,18 @@ Community files: `LICENSE` (Apache-2.0), `SECURITY.md`,
 every hook runs: formatting, no cgo, license notices, the spec tree,
 dependency admission, sentence registers, the identity and Postgres
 declarations, lint, vulnerability check, and the suite under the race
-detector with a coverage floor of 90%. The identity block declares
-`role: core`, `audience: lectio`, `config_prefix: LECTIO`. The Postgres
-block declares `role: pooled` with `LECTIO_DATABASE_URL` for migrations
-and `LECTIO_DATABASE_POOL_URL` for serving.
+detector with a coverage floor of 90% per package. The identity block
+declares `role: core`, `audience: lectio`, `config_prefix: LECTIO`. The
+Postgres block declares `role: pooled` with `LECTIO_DATABASE_URL` for
+migrations and `LECTIO_DATABASE_POOL_URL` for serving. Until the
+verifier and the database client exist, both blocks declare `role:
+none`, since there is nothing yet for them to describe.
+
+`make build` builds `out/lectiod` with the version, the commit and the
+date stamped in. `make run` builds and starts the development server.
+`make openapi` runs the tests that hold the router to the contract.
+`make hooks` points git at `.githooks`, whose two hooks call the same
+gate.
 
 ### Images
 
@@ -83,36 +111,55 @@ beside its plain ones.
 
 Every variable is `LECTIO_*` and is listed once, here, with its owner.
 The table is generated into `docs/configuration.md` and a test fails
-when the binary reads a variable the table lacks.
+when the binary reads a variable the table lacks. The last column says
+whether the binary reads the variable today.
 
-| Variable | Default | Owner |
-|---|---|---|
-| `LECTIO_ROLE` | `all` | [[001-architecture]] |
-| `LECTIO_ADDR` | `:8080` | [[003-api]] |
-| `LECTIO_BASE_PATH` | `/v1` | [[003-api]] |
-| `LECTIO_DATABASE_URL`, `LECTIO_DATABASE_POOL_URL` | none | [[004-durable-tasks]] |
-| `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] |
-| `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE` | none | [[012-identity-and-authorization]] |
-| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] |
-| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] |
-| `LECTIO_CONFIG` | none | [[008-readers]] |
-| `LECTIO_KEYS`, `LECTIO_KEYS_URL`, `LECTIO_MODEL_KEY` | `static` | [[013-limits-and-usage]] |
-| `LECTIO_WORKERS` | 8 task slots per process | [[004-durable-tasks]] |
-| `LECTIO_TASK_LEASE`, `LECTIO_TASK_ATTEMPTS`, `LECTIO_TASK_EXPIRIES`, `LECTIO_WORKER_POLL`, `LECTIO_SWEEP_INTERVAL`, `LECTIO_SHUTDOWN_GRACE`, `LECTIO_TASK_RETENTION` | see spec | [[004-durable-tasks]] |
-| `LECTIO_CLASS_WEIGHTS`, `LECTIO_GROUP_DEFAULTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] |
-| `LECTIO_POOL_RECOVERY` | 30s | [[007-model-capacity]] |
-| `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES`, `LECTIO_CACHE_BYTES` | 256 MiB, 3000, 2 GiB | [[009-intake]] |
-| `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] |
-| `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_DEADLINE`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, 1h, off | [[013-limits-and-usage]] |
-| `LECTIO_FETCH_ALLOW`, `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION`, `LECTIO_KEEP_PAGE_IMAGES` | none, 24h, 30 days, true | [[014-sources-and-retention]] |
-| `LECTIO_USAGE_DETAIL` | 35 days | [[013-limits-and-usage]] |
-| `LECTIO_DEV` | false | this spec |
+| Variable | Default | Owner | Read today |
+|---|---|---|---|
+| `LECTIO_ROLE` | `all` | [[001-architecture]] | no |
+| `LECTIO_ADDR` | `:8080` | [[003-api]] | yes |
+| `LECTIO_BASE_PATH` | `/v1` | [[003-api]] | yes |
+| `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes, only to say what is missing |
+| `LECTIO_DATABASE_POOL_URL` | none | [[004-durable-tasks]] | no |
+| `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] | no |
+| `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE` | none | [[012-identity-and-authorization]] | no |
+| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | no |
+| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | no |
+| `LECTIO_CONFIG` | none: the stub reader | [[008-readers]] | yes |
+| `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes |
+| `LECTIO_KEYS`, `LECTIO_KEYS_URL` | `static` | [[013-limits-and-usage]] | no |
+| `LECTIO_WORKERS` | 8 task slots per process | [[004-durable-tasks]] | yes: pages read at once |
+| `LECTIO_TASK_ATTEMPTS` | 5 | [[004-durable-tasks]] | yes: attempts per page |
+| `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: how long open requests get to finish |
+| `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_WORKER_POLL`, `LECTIO_SWEEP_INTERVAL`, `LECTIO_TASK_RETENTION` | see spec | [[004-durable-tasks]] | no |
+| `LECTIO_CLASS_WEIGHTS`, `LECTIO_GROUP_DEFAULTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
+| `LECTIO_POOL_RECOVERY` | 30s | [[007-model-capacity]] | no |
+| `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
+| `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | no |
+| `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] | no |
+| `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
+| `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
+| `LECTIO_FETCH_ALLOW` | none | [[014-sources-and-retention]] | yes |
+| `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION`, `LECTIO_KEEP_PAGE_IMAGES` | 24h, 30 days, true | [[014-sources-and-retention]] | no |
+| `LECTIO_USAGE_DETAIL` | 35 days | [[013-limits-and-usage]] | no |
+| `LECTIO_DEV` | false | this spec | yes |
+| `LECTIO_DEV_TOKEN` | `dev` | this spec | yes |
 
-`LECTIO_DEV=true` runs one process with the memory store, a local
-directory for objects, the owner policy, a static token and the stub
-reader, and prints at start that nothing is durable. Without it,
-`lectiod` refuses to start when a required setting is missing and
-names it.
+A value that does not parse is an error that names its variable and
+never its value: a variable may hold a secret by mistake.
+`LECTIO_FETCH_ALLOW` is a comma-separated list of hosts.
+
+`LECTIO_DEV=true` runs one process with the memory store, the owner
+scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
+stub reader unless `LECTIO_CONFIG` names real ones, and logs at start
+that nothing is durable. Without it, `lectiod` refuses to start when a
+required setting is missing and names it. `lectiod version` prints the
+build's version. The command takes no other argument: it is configured
+by its environment.
+
+On `SIGINT` or `SIGTERM` the server stops accepting connections, gives
+open requests `LECTIO_SHUTDOWN_GRACE` to finish, and then stops the
+runner.
 
 ### The stubs
 
@@ -122,7 +169,10 @@ can be told, per request header or by configuration, to delay, fail,
 rate-limit, return an invalid reply, or kill its caller; an authorizer
 that allows by a small rule file and returns limits; and a key
 endpoint. It records every request it served, which is what the
-criteria elsewhere mean by "the stub's own count".
+criteria elsewhere mean by "the stub's own count". Until it is built,
+`reader/stub` stands in for the model endpoint inside the test's own
+process, which is enough for everything but a test that kills the
+server.
 
 ### Test tiers
 
@@ -162,6 +212,35 @@ server.
 
 A command line client and client libraries. A Helm chart. Manifests
 for any particular deployment, which live with that deployment.
+
+## Implementation status
+
+Built:
+
+- The module, the gate and its configuration, both hooks, the verify
+  workflow, the community files, and the layout above except the
+  entries marked not built.
+- `cmd/lectiod`: the development server. `LECTIO_DEV=true` is the only
+  mode that starts. Without it the command names
+  `LECTIO_DATABASE_URL` when that is missing, says the durable server
+  is not built when it is set, and exits non-zero either way.
+- `internal/config`: the settings marked as read in the table, and the
+  Reader and Policy documents ([[008-readers]]).
+- A graceful stop: an upload that is still sending its body when the
+  signal arrives is answered.
+
+Remaining:
+
+- `lectio-stubs`, the images, `deploy/`, `docs/`, the generated
+  configuration reference and its test, and the release workflow.
+- Every test tier but the first. The suite today is unit tests and
+  end-to-end tests of the API and the development server in one
+  process; there is no store conformance suite, no dispatch
+  simulation, no soak and no live tier.
+- `LECTIO_DEV` holds page images in memory and has no local directory
+  for objects.
+- The health probe is `GET /healthz`. Readiness and version probes
+  come with the durable server ([[015-observability]]).
 
 ## Acceptance criteria
 
