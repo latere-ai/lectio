@@ -426,3 +426,19 @@ func TestCountPDFIgnoresUndecodableStreams(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckAgreesWithSelectOnWhatIsMalformed(t *testing.T) {
+	for _, expr := range []string{"", " ", "1", "1-3,7", "5-", " 2 - 4 , 9", "40", "3-3"} {
+		if err := Check(expr); err != nil {
+			t.Errorf("Check(%q) = %v", expr, err)
+		}
+	}
+	for _, expr := range []string{"0", "-3", "a", "1,,2", "3-1", "1-x", "1.5", ",", "1-2-3", "0-4"} {
+		if err := Check(expr); fault.CodeOf(err) != fault.InvalidPages {
+			t.Errorf("Check(%q) = %v", expr, err)
+		}
+		if _, err := Select(expr, 100); fault.CodeOf(err) != fault.InvalidPages {
+			t.Errorf("Select(%q) = %v", expr, err)
+		}
+	}
+}

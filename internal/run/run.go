@@ -208,7 +208,7 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 		r.finish(ctx, p.ID, err)
 		return
 	}
-	prepared, err := r.Pipeline.Prepare(ctx, file.Data, detect.DeclaredType{FileName: file.Name}, p.Pages)
+	prepared, err := r.Pipeline.Prepare(ctx, file.Data, detect.DeclaredType{MIME: file.MediaType, FileName: file.Name}, p.Pages)
 	if err != nil {
 		r.finish(ctx, p.ID, err)
 		return

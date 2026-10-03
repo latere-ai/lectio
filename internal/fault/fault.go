@@ -42,6 +42,9 @@ const (
 	RateLimited          Code = "rate_limited"
 	QueueFull            Code = "queue_full"
 	NotImplemented       Code = "not_implemented"
+	ReaderNotPermitted   Code = "reader_not_permitted"
+	NotFound             Code = "not_found"
+	MethodNotAllowed     Code = "method_not_allowed"
 )
 
 // The reasons work that was accepted fails. These land on the parse or on a

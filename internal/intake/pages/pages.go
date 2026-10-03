@@ -103,6 +103,29 @@ func Select(expr string, total int) ([]int, error) {
 	return slices.Sorted(maps.Keys(set)), nil
 }
 
+// Check reports whether a selection is well formed, with no document to
+// apply it to: what a submit can know before the file was counted. A
+// selection that passes may still name no page of the document, which
+// Select reports.
+func Check(expr string) error {
+	if strings.TrimSpace(expr) == "" {
+		return nil
+	}
+	for part := range strings.SplitSeq(expr, ",") {
+		lo, hi, ranged := strings.Cut(strings.TrimSpace(part), "-")
+		a, err := strconv.Atoi(strings.TrimSpace(lo))
+		if err != nil || a < 1 {
+			return malformed(expr)
+		}
+		if hi = strings.TrimSpace(hi); ranged && hi != "" {
+			if b, err := strconv.Atoi(hi); err != nil || b < a {
+				return malformed(expr)
+			}
+		}
+	}
+	return nil
+}
+
 func malformed(expr string) error {
 	return fault.New(fault.InvalidPages, "pages %q is malformed", expr)
 }
