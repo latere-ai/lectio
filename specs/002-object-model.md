@@ -145,7 +145,7 @@ Markdown is rendered from the cells on request, never stored.
 |---|---|---|
 | File metadata, parse state, progress, usage | Postgres | `files`, `parses` |
 | Tasks, leases, queue accounting, pools | Postgres | [[004-durable-tasks]], [[006-fairness-and-priority]], [[007-model-capacity]] |
-| Source snapshot | object store | `sources/<sha256[0:2]>/<sha256>` per owner prefix |
+| Source snapshot | object store | `sources/<owner key>/<sha256>`, the owner key a hash of the owner ([[014-sources-and-retention]]) |
 | Working copy after conversion | object store | `parses/<parse>/work/source.<ext>` |
 | Page image | object store | `parses/<parse>/pages/<n>.png`, raw image bytes |
 | Page result | object store | `parses/<parse>/pages/<n>.json` |
