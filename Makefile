@@ -37,8 +37,8 @@ build:
 	@echo "built $(OUT_DIR)/$(SERVICE)"
 
 # run starts the development server: one process, nothing durable, the
-# stub reader unless LECTIO_CONFIG names a real one. It prints the address
-# and the token to call it with.
+# stub reader unless LECTIO_CONFIG names a real one. It logs the address it
+# listens on; the token is `dev` unless LECTIO_DEV_TOKEN sets another.
 run: build
 	LECTIO_DEV=true $(OUT_DIR)/$(SERVICE)
 
@@ -48,7 +48,7 @@ specs:
 
 # openapi checks that api/openapi.yaml and the router agree.
 openapi:
-	@$(GO) test ./internal/api -run '^TestContract'
+	@$(GO) test ./internal/httpapi -run '^TestTheServer'
 
 fmt:
 	@gofmt -w .
