@@ -81,17 +81,19 @@ it is told and stores no plan.
 package authorizer
 
 type Limits struct {
-    Group        string        // the fairness group the parse joins; empty is the owner
-    Weight       int           // the group's share, 1..1000; 0 keeps the default
-    MaxRunning   int           // leased tasks at once for the group
-    MaxQueued    int           // non-terminal parses for the group
-    MaxPriority  int           // bound on |priority|
-    Classes      []string      // classes the caller may use; empty is both
-    Readers      []string      // readers the caller may pin; empty is all
-    MaxFileBytes int64         // lower than the server's, never higher
-    MaxPages     int           // per parse
-    PagesPerDay  int           // for the group, rolling 24 hours
-    Retention    time.Duration // how long results are kept; lower than the server's
+    Group         string        // the fairness group the parse joins; empty is the owner
+    Weight        int           // the group's share, 1..1000; 0 keeps the default
+    Project       string        // the project of the group the parse joins; empty is the group's own
+    ProjectWeight int           // the project's share of its group, 1..1000; 0 keeps the default
+    MaxRunning    int           // leased tasks at once for the group
+    MaxQueued     int           // non-terminal parses for the group
+    MaxPriority   int           // bound on |priority|
+    Classes       []string      // classes the caller may use; empty is both
+    Readers       []string      // readers the caller may pin; empty is all
+    MaxFileBytes  int64         // lower than the server's, never higher
+    MaxPages      int           // per parse
+    PagesPerDay   int           // for the group, rolling 24 hours
+    Retention     time.Duration // how long results are kept; lower than the server's
 }
 ```
 
@@ -105,6 +107,14 @@ is a refusal with `capability_unsupported`, never a silent pass.
 organization share one queue and one budget, and how a person's own
 work is kept apart from their organization's. Lectio does not derive
 it from a claim.
+
+`Project` divides a group's own work, and `ProjectWeight` is that
+project's share of what the group is served
+([[006-fairness-and-priority]]). Lectio does not know who chose
+`Weight` or `ProjectWeight`. What it guarantees is that
+`ProjectWeight` moves service between the projects of one group and
+never between groups, so an operator's plane can hand that number to a
+tenant's own administrators and keep `Weight` to itself.
 
 ### The owner policy
 
@@ -165,5 +175,6 @@ was written.
 | The authorizer client passes the contract's conformance suite: cache, retry, fail closed | `authz/conformance` |
 | Each member of `Limits` has a test in which an allow carrying it changes the outcome, and the absent member leaves the default | a table test |
 | Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | a dispatch test |
+| Two subjects whose allows name one `Group` and two `Project`s share `MaxQueued`, are served in the ratio of their `ProjectWeight`s within the group, and change no other group's dispatch count | a dispatch test |
 | Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | API tests |
 | A probe id is denied for every subject and action by the stub authorizer and by the owner policy | the vocabulary's `Probe()` test |
