@@ -20,10 +20,10 @@ way past another.
 > [`specs/`](specs/README.md) are the design, and none is final. What
 > runs today is the whole parsing path and the whole HTTP contract in
 > one process with nothing durable: the object model, the interface a
-> model sits behind with its first adapters, intake, assembly, and a
-> development server. The durable tasks, the fair queue, and PDF
-> rendering are designed and not built. Each spec says what of it
-> exists.
+> model sits behind with its first adapters, intake, PDF rendering,
+> assembly, and a development server. It has read real PDFs end to end
+> with models running locally. The durable tasks and the fair queue are
+> designed and not built. Each spec says what of it exists.
 
 ## Run it
 
@@ -81,8 +81,20 @@ spec:
 LECTIO_DEV=true LECTIO_CONFIG=reader.yaml LECTIO_MODEL_KEY=... out/lectiod
 ```
 
-This build reads images (PNG, JPEG, TIFF) through a reader, and text,
-Markdown and CSV from the file itself.
+This build reads PDFs and images (PNG, JPEG, TIFF) through a reader,
+and text, Markdown and CSV from the file itself. Every PDF page is
+rendered and sent to the reader; reading the text a PDF already carries
+is designed and not built.
+
+To check a reader against a real file, end to end:
+
+```sh
+LECTIO_LIVE_CONFIG=reader.yaml LECTIO_LIVE_FILE=paper.pdf make live
+```
+
+It parses the file with that reader and writes the Markdown, each
+page's blocks and each page's image to `LECTIO_LIVE_OUT` when it is
+set. It calls a model, so it is never part of `make check`.
 
 ## What it is for
 
