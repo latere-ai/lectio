@@ -33,17 +33,42 @@ func TestSettingsHaveDefaults(t *testing.T) {
 func TestSettingsAreReadFromTheEnvironment(t *testing.T) {
 	s, err := FromEnv(env(
 		"LECTIO_ADDR", "127.0.0.1:9000", "LECTIO_BASE_PATH", "/api/parsing", "LECTIO_DEV", "true", "LECTIO_DEV_TOKEN", "t0",
-		"LECTIO_DATABASE_URL", "postgres://db/lectio", "LECTIO_CONFIG", "/etc/lectio", "LECTIO_MODEL_KEY", " sk-live ",
+		"LECTIO_DATABASE_URL", " postgres://db.example/lectio ", "LECTIO_DATABASE_POOL_URL", "postgres://pooler.example/lectio",
+		"LECTIO_CONFIG", "/etc/lectio", "LECTIO_MODEL_KEY", " sk-live ",
 		"LECTIO_MAX_FILE_BYTES", "1024", "LECTIO_MAX_PAGES", "10", "LECTIO_WORKERS", "2", "LECTIO_TASK_ATTEMPTS", "4",
 		"LECTIO_MAX_DEADLINE", "10m", "LECTIO_SHUTDOWN_GRACE", "5s", "LECTIO_FETCH_ALLOW", " Store.Internal , ,minio:9000",
 	))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Addr != "127.0.0.1:9000" || s.BasePath != "/api/parsing" || !s.Dev || s.DevToken != "t0" || s.DatabaseURL == "" || s.ConfigPath != "/etc/lectio" ||
+	if s.Addr != "127.0.0.1:9000" || s.BasePath != "/api/parsing" || !s.Dev || s.DevToken != "t0" ||
+		s.DatabaseURL != "postgres://db.example/lectio" || s.DatabasePoolURL != "postgres://pooler.example/lectio" || s.ConfigPath != "/etc/lectio" ||
 		s.ModelKey.Reveal() != "sk-live" || s.MaxFileBytes != 1024 || s.MaxPages != 10 || s.Workers != 2 || s.Attempts != 4 ||
 		s.MaxDeadline != 10*time.Minute || s.Grace != 5*time.Second || strings.Join(s.FetchAllow, "|") != "store.internal|minio:9000" {
 		t.Fatalf("settings: %+v", s)
+	}
+}
+
+// TestTheServingPathOpensThePooledURL: the store's pool opens the pooled
+// endpoint where one is named and the direct one otherwise, and migrations
+// keep the direct one either way.
+func TestTheServingPathOpensThePooledURL(t *testing.T) {
+	direct, err := FromEnv(env("LECTIO_DATABASE_URL", "postgres://db.example/lectio"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if direct.ServingURL() != "postgres://db.example/lectio" || direct.DatabasePoolURL != "" {
+		t.Fatalf("with no pooled URL the serving path opens %q", direct.ServingURL())
+	}
+	pooled, err := FromEnv(env("LECTIO_DATABASE_URL", "postgres://db.example/lectio", "LECTIO_DATABASE_POOL_URL", "postgres://pooler.example/lectio"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pooled.ServingURL() != "postgres://pooler.example/lectio" || pooled.DatabaseURL != "postgres://db.example/lectio" {
+		t.Fatalf("with a pooled URL the serving path opens %q and migrations %q", pooled.ServingURL(), pooled.DatabaseURL)
+	}
+	if none, _ := FromEnv(env()); none.ServingURL() != "" {
+		t.Fatalf("with no database the serving path opens %q", none.ServingURL())
 	}
 }
 

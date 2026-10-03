@@ -58,6 +58,8 @@ internal/prompts/         every instruction sent to a model, as template files
 internal/render/          the page renderer
 internal/run/             the in-process runner
 internal/store/           the memory store
+internal/store/postgres/  the durable task store, and its migrations
+internal/tasks/           the protocol a worker and a task store share
 internal/testfixtures/    files the tests read
 internal/version/         the build's version, stamped by the linker
 deploy/base/              manifests for a cluster, with no host or account in them (not built)
@@ -86,8 +88,8 @@ detector with a coverage floor of 90% per package. The identity block
 declares `role: core`, `audience: lectio`, `config_prefix: LECTIO`. The
 Postgres block declares `role: pooled` with `LECTIO_DATABASE_URL` for
 migrations and `LECTIO_DATABASE_POOL_URL` for serving. Until the
-verifier and the database client exist, both blocks declare `role:
-none`, since there is nothing yet for them to describe.
+verifier exists, the identity block declares `role: none`, since there
+is nothing yet for it to describe.
 
 `make build` builds `out/lectiod` with the version, the commit and the
 date stamped in. `make run` builds and starts the development server.
@@ -124,7 +126,7 @@ whether the binary reads the variable today.
 | `LECTIO_ADDR` | `:8080` | [[003-api]] | yes |
 | `LECTIO_BASE_PATH` | `/v1` | [[003-api]] | yes |
 | `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes, only to say what is missing |
-| `LECTIO_DATABASE_POOL_URL` | none | [[004-durable-tasks]] | no |
+| `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes: read, and opened by no command yet |
 | `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] | no |
 | `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE` | none | [[012-identity-and-authorization]] | no |
 | `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | no |
@@ -137,7 +139,7 @@ whether the binary reads the variable today.
 | `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: how long open requests get to finish |
 | `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_WORKER_POLL`, `LECTIO_SWEEP_INTERVAL`, `LECTIO_TASK_RETENTION` | see spec | [[004-durable-tasks]] | no |
 | `LECTIO_CLASS_WEIGHTS`, `LECTIO_GROUP_DEFAULTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
-| `LECTIO_POOL_RECOVERY` | 30s | [[007-model-capacity]] | no |
+| `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | no |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
 | `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | no |
 | `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] | no |
@@ -230,6 +232,9 @@ Built:
   is not built when it is set, and exits non-zero either way.
 - `internal/config`: the settings marked as read in the table, and the
   Reader and Policy documents ([[008-readers]]).
+- The Postgres declaration of the gate: `role: pooled`, since
+  `internal/store/postgres` is a client and `internal/config` reads
+  both URLs.
 - A graceful stop: an upload that is still sending its body when the
   signal arrives is answered.
 
@@ -237,10 +242,14 @@ Remaining:
 
 - `lectio-stubs`, the images, `deploy/`, `docs/`, the generated
   configuration reference and its test, and the release workflow.
-- Every test tier but the first. The suite today is unit tests and
-  end-to-end tests of the API and the development server in one
-  process; there is no store conformance suite, no dispatch
-  simulation and no soak. The live tier is one test, `make live`,
+- Most of the test tiers. The suite today is unit tests, end-to-end
+  tests of the API and the development server in one process, and the
+  tests of `internal/store/postgres`, which start one Postgres and one
+  PgBouncer in transaction mode per test binary and run every store
+  case 3 ways: on a direct connection, in the query mode that prepares
+  and describes nothing, and through the pooler. They skip where no
+  container runtime answers. There is no memory twin of the task store
+  for a conformance suite to hold to the same cases, and no soak. The live tier is one test, `make live`,
   which reads a real file with a configured reader and is run by hand.
 - `LECTIO_DEV` holds page images in memory and has no local directory
   for objects.

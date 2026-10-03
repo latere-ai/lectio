@@ -42,8 +42,10 @@ spec:
 identity:
   role: none
 
-# No Postgres client exists yet. The store of spec 004 declares the pooled
-# role, with LECTIO_DATABASE_URL for migrations and LECTIO_DATABASE_POOL_URL
-# for serving.
+# The store of spec 004 serves through LECTIO_DATABASE_POOL_URL where an
+# installation names a pooled endpoint and falls back to LECTIO_DATABASE_URL.
+# Migrations always take the direct one: the migrator holds a session lock
+# across its statements, which a transaction-mode pooler loses between two.
 postgres:
-  role: none
+  role: pooled
+  prefix: LECTIO

@@ -23,6 +23,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/reader"
 	"latere.ai/x/lectio/reader/chat"
 	"latere.ai/x/lectio/reader/layout"
@@ -42,8 +43,13 @@ type Settings struct {
 	Dev      bool   // LECTIO_DEV
 	DevToken string // LECTIO_DEV_TOKEN
 
-	DatabaseURL string // LECTIO_DATABASE_URL
-	ConfigPath  string // LECTIO_CONFIG
+	// DatabaseURL is the direct endpoint of the database: migrations run
+	// over it, because the migrator holds a session lock across its
+	// statements. DatabasePoolURL is the endpoint the serving path opens, a
+	// transaction-mode pooler's where an installation has one.
+	DatabaseURL     string // LECTIO_DATABASE_URL
+	DatabasePoolURL string // LECTIO_DATABASE_POOL_URL
+	ConfigPath      string // LECTIO_CONFIG
 
 	// ModelKey is the key every reader is called with.
 	ModelKey reader.Credential // LECTIO_MODEL_KEY
@@ -66,7 +72,7 @@ type Settings struct {
 func FromEnv(getenv func(string) string) (Settings, error) {
 	s := Settings{
 		Addr: ":8080", BasePath: "/v1", DevToken: "dev",
-		MaxFileBytes: 256 << 20, MaxPages: 3000, Workers: 8, Attempts: 5,
+		MaxFileBytes: 256 << 20, MaxPages: 3000, Workers: 8, Attempts: tasks.DefaultAttempts,
 		MaxDeadline: time.Hour, Grace: 25 * time.Second,
 	}
 	var errs []error
@@ -99,7 +105,8 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	text("LECTIO_ADDR", &s.Addr)
 	text("LECTIO_BASE_PATH", &s.BasePath)
 	text("LECTIO_DEV_TOKEN", &s.DevToken)
-	text("LECTIO_DATABASE_URL", &s.DatabaseURL)
+	s.DatabaseURL = strings.TrimSpace(getenv("LECTIO_DATABASE_URL"))
+	s.DatabasePoolURL = strings.TrimSpace(getenv("LECTIO_DATABASE_POOL_URL"))
 	text("LECTIO_CONFIG", &s.ConfigPath)
 	if v := strings.TrimSpace(getenv("LECTIO_DEV")); v != "" {
 		dev, err := strconv.ParseBool(v)
@@ -128,6 +135,15 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 		}
 	}
 	return s, errors.Join(errs...)
+}
+
+// ServingURL is the URL the store's pool opens: the pooled endpoint where
+// one is named, and the direct one otherwise.
+func (s Settings) ServingURL() string {
+	if s.DatabasePoolURL != "" {
+		return s.DatabasePoolURL
+	}
+	return s.DatabaseURL
 }
 
 // document is one declared object.

@@ -378,6 +378,17 @@ ends with the transaction. Migrations, which carry the exchange
 function, run on a separate direct connection. JSON parameters are
 bound as text.
 
+The serving pool is opened from `LECTIO_DATABASE_POOL_URL`, and from
+`LECTIO_DATABASE_URL` when no pooled endpoint is named; migrations
+always take `LECTIO_DATABASE_URL`, because the migrator holds a session
+lock across its statements. The driver's default would prepare a named
+statement per query and keep it on the connection, so the store
+describes the unnamed statement and caches the description in the
+client instead. A URL that names another query mode keeps it. Every
+write is a single call of one function, so no transaction is opened by
+the client and no statement depends on the one before it reaching the
+same connection.
+
 ### Shutdown
 
 On a termination signal a worker stops claiming and lets running tasks
@@ -426,7 +437,34 @@ Built:
   settled tasks past their retention and for orphaned outputs are not
   built.
 
-Remaining: everything that runs. `internal/run`, the in-process runner,
+- `internal/store/postgres`: `Migrate` over the direct URL, refusing a
+  schema that is dirty or newer than the binary, and a store with
+  `Open` over the serving URL, `Register`, `Exchange`, `Submit`,
+  `Cancel`, and the reads `Parse`, `Tasks` and `Queue`. `internal/config`
+  reads both URLs. No command opens the store yet.
+
+Proven at the store, by the tests of `internal/store/postgres`, each
+on a direct connection, in the query mode that prepares nothing, and
+through PgBouncer in transaction mode, with the clock passed in: a
+stale token cannot settle; a worker past its lease that the fleet
+reaped cannot settle and is answered as given up; the sweep returns a
+dead worker's tasks with `expiries + 1` and `attempt` unchanged, and
+only a worker inside the reap rule runs it; a stall of the database
+longer than a lease expires nothing; a task that ends its workers runs
+alone and fails at the bound with `page_unreadable`, and the 7 that
+shared its first worker succeed with `expiries` 1; a retryable failure
+backs off and fails at the bound of attempts; a rate limit spends no
+attempt; a settle after a cancel is refused and records nothing; a
+parse whose pinned reader never admits a call fails with
+`deadline_exceeded`; a shutdown exchange returns tasks with no counter
+changed; and with a pool full for 10 minutes and 32 idle slots polling,
+no task row is written. The criteria that need a process to kill, an
+object store, or a fleet are not proven: the rows of the table below
+that name a process-level test, a soak or a throughput test.
+
+Remaining: everything that runs. There is no worker process and no
+object store, and the store has no twin in memory, so `internal/run`,
+the in-process runner,
 still stands in for this spec in a development server: it holds the
 page-level shape of the work, ordering by class and priority, retry by
 the reader's error class, a rate limit that spends no attempt, cancel

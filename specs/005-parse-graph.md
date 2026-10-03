@@ -276,11 +276,27 @@ Built:
   whole is kept under its read key and taken by a later parse of the
   same owner.
 
+- The graph as rows, in the functions of `internal/store/postgres`
+  ([[004-durable-tasks]]): a submit writes the parse and `prepare`; the
+  settle of `prepare` writes one page task per selected page and sets
+  `pages_open`, or for a native format counts the pages done and
+  writes `assemble`; the settle that takes `pages_open` to 0 writes
+  `assemble`; and the settle of `assemble` ends the parse by
+  `allow_failed_pages`, records the index's key, and deletes the rows
+  of the tasks that succeeded. A failed `prepare` or `assemble` fails
+  the parse. Store tests prove the first, second and ninth rows of the
+  table below. No worker runs these tasks yet, so a development server
+  still drives a parse through the runner.
+
 Remaining:
 
-- The tasks themselves. Nothing here is a row: the runner keeps its
-  queue in memory, so a restart loses every parse that had not ended
-  ([[004-durable-tasks]]).
+- A worker that runs the tasks. In a development server nothing is a
+  row: the runner keeps its queue in memory, so a restart loses every
+  parse that had not ended ([[004-durable-tasks]]).
+- At the end of a parse, rolling the tasks' usage into the meter and
+  giving back the pages that were reserved and not read
+  ([[013-limits-and-usage]]). The parse row carries the calls and
+  tokens of every settle.
 - Output keys that carry a token, and the document index listing them:
   the memory store keeps one result per page.
 - `retry`, and `extract-<name>` tasks.
