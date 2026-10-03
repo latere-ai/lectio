@@ -44,8 +44,7 @@ type Renderer interface {
 }
 
 // Images renders the formats that are images already: PNG, JPEG, and each
-// frame of a TIFF. It refuses a PDF: rendering one needs an engine this
-// package does not hold.
+// frame of a TIFF. It refuses a PDF, which PDF renders.
 type Images struct{}
 
 // Render returns the page as an image the reader accepts.
@@ -68,6 +67,17 @@ func (Images) Render(ctx context.Context, data []byte, mediaType string, n int, 
 		return Image{}, fault.New(fault.UnsupportedMediaType, "this build renders no page of %s", mediaType)
 	}
 
+	// An image states its size in its header, and decoding allocates for
+	// what it states: a few kilobytes can ask for gigabytes. The header is
+	// read first and a size past the bound is refused before any pixel is
+	// decoded.
+	stated, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return Image{}, fault.Wrap(fault.DocumentCorrupt, err, "the image could not be decoded")
+	}
+	if int64(stated.Width)*int64(stated.Height) > maxPixels {
+		return Image{}, fault.New(fault.FileTooLarge, "the image is %d by %d pixels, over the bound of %d pixels on one page", stated.Width, stated.Height, maxPixels)
+	}
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return Image{}, fault.Wrap(fault.DocumentCorrupt, err, "the image could not be decoded")

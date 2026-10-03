@@ -6,11 +6,15 @@ package render
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"runtime"
+	"strings"
 	"testing"
 
 	"latere.ai/x/lectio/internal/fault"
@@ -228,3 +232,44 @@ func TestWhatCannotBeRendered(t *testing.T) {
 }
 
 var _ Renderer = Images{}
+
+// An image file states its dimensions in its first bytes, and decoding
+// allocates for them. A file of a few dozen bytes that states a huge size
+// is refused from its header, before anything is allocated for it.
+func TestAnImageThatDeclaresAHugeSizeIsRefusedFromItsHeader(t *testing.T) {
+	// A PNG signature and a header chunk for 30000 by 30000 gray pixels,
+	// and nothing after it.
+	var huge bytes.Buffer
+	huge.WriteString("\x89PNG\r\n\x1a\n")
+	header := []byte{0, 0, 0x75, 0x30, 0, 0, 0x75, 0x30, 8, 0, 0, 0, 0}
+	_ = binary.Write(&huge, binary.BigEndian, uint32(len(header)))
+	chunk := append([]byte("IHDR"), header...)
+	huge.Write(chunk)
+	_ = binary.Write(&huge, binary.BigEndian, crc32.ChecksumIEEE(chunk))
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := Images{}.Render(context.Background(), huge.Bytes(), detect.MIMEPNG, 1, takesPNG)
+	runtime.ReadMemStats(&after)
+	if fault.CodeOf(err) != fault.FileTooLarge || !strings.Contains(fault.DetailOf(err), "30000 by 30000") {
+		t.Fatalf("a %d-byte file declaring 900 megapixels: %v", huge.Len(), err)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+		t.Fatalf("refusing it allocated %d bytes", grew)
+	}
+
+	// An image at the bound is still read.
+	if _, err := (Images{}).Render(context.Background(), picture(t, 400, 300, false), detect.MIMEPNG, 1, takesPNG); err != nil {
+		t.Fatal(err)
+	}
+	// A header that is whole in a file that is not: the size is within the
+	// bound and the pixels do not decode.
+	cut := picture(t, 400, 300, false)[:60]
+	if _, err := (Images{}).Render(context.Background(), cut, detect.MIMEPNG, 1, takesPNG); fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Fatalf("an image cut short after its header: %v", err)
+	}
+	// Bytes that are no image fail as before.
+	if _, err := (Images{}).Render(context.Background(), []byte("not an image"), detect.MIMEPNG, 1, takesPNG); fault.CodeOf(err) != fault.DocumentCorrupt {
+		t.Fatalf("bytes that are no image: %v", err)
+	}
+}
