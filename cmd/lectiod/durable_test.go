@@ -56,10 +56,16 @@ var provider = sync.OnceValue(func() *issuertest.Server {
 	return s
 })
 
-// tokenOf mints a token of the provider for a subject, good for longer
-// than any test runs.
+// issuerClaims are the claims of a token for a subject and an audience,
+// good for longer than any test runs.
+func issuerClaims(sub, audience string) issuertest.Claims {
+	return issuertest.Claims{Sub: sub, Aud: issuertest.StringList{audience}, Exp: time.Now().Add(12 * time.Hour).Unix()}
+}
+
+// tokenOf mints a token of the provider for a subject, addressed to this
+// server.
 func tokenOf(sub string) string {
-	return provider().Mint(issuertest.Claims{Sub: sub, Exp: time.Now().Add(12 * time.Hour).Unix()})
+	return provider().Mint(issuerClaims(sub, config.DefaultOIDCAudience))
 }
 
 // token is the bearer of the tests' one caller.
