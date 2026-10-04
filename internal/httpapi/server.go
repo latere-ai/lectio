@@ -22,7 +22,6 @@ import (
 	"latere.ai/x/lectio/internal/fetch"
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/intake/pages"
-	"latere.ai/x/lectio/internal/run"
 	"latere.ai/x/lectio/internal/store"
 	"latere.ai/x/lectio/reader"
 )
@@ -54,12 +53,18 @@ func (t Tokens) Authenticate(r *http.Request) (string, error) {
 
 // Server holds what the handlers depend on.
 type Server struct {
-	Store  *store.Memory
-	Runner *run.Runner
-	Auth   Authenticator
+	// Backend is where files, parses and results are kept and how a parse
+	// is run.
+	Backend Backend
+	Auth    Authenticator
+
+	// Admit says what a submit is admitted with: the group and the project
+	// its parse joins and the bounds it is held to. Nil admits every submit
+	// with the zero store.Admission, which is the owner policy's.
+	Admit func(r *http.Request, owner string, p store.Parse) (store.Admission, error)
 
 	// Readers and Chain are the configured readers and the order the
-	// routing policy tries them in, as the runner has them.
+	// routing policy tries them in, as whoever runs the pages has them.
 	Readers map[string]reader.Reader
 	Chain   []string
 

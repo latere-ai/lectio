@@ -108,7 +108,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 		Credential: func(string) reader.Credential { return s.ModelKey },
 	}
 	api := &httpapi.Server{
-		Store: st, Runner: runner, Auth: httpapi.Tokens{s.DevToken: "dev"},
+		Backend: &httpapi.Memory{Store: st, Runner: runner}, Auth: httpapi.Tokens{s.DevToken: "dev"},
 		Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
 		Fetcher:  &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
 		BasePath: s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,

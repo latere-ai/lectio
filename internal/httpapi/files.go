@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mime"
@@ -73,7 +74,7 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request, owner string
 	if err != nil {
 		return err
 	}
-	f, created, err := s.putFile(owner, name, declared, data)
+	f, created, err := s.putFile(r.Context(), owner, name, declared, data)
 	if err != nil {
 		return err
 	}
@@ -106,7 +107,7 @@ func (s *Server) readFile(w http.ResponseWriter, body io.Reader) ([]byte, error)
 // putFile tells what the bytes are and stores them as the owner's file.
 // The same bytes are one file per owner, so created is false for bytes the
 // owner already has.
-func (s *Server) putFile(owner, name, declared string, data []byte) (f store.File, created bool, err error) {
+func (s *Server) putFile(ctx context.Context, owner, name, declared string, data []byte) (f store.File, created bool, err error) {
 	if mediaType, _, err := mime.ParseMediaType(declared); err == nil {
 		declared = mediaType
 	}
@@ -114,15 +115,14 @@ func (s *Server) putFile(owner, name, declared string, data []byte) (f store.Fil
 	if err != nil {
 		return store.File{}, false, err
 	}
-	f, created = s.Store.PutFile(store.File{
+	return s.Backend.PutFile(ctx, store.File{
 		ID: s.IDs.New(id.File), Owner: owner, Name: name, MediaType: mediaType,
 		SHA256: store.Digest(data), Size: int64(len(data)), CreatedAt: s.now(), Data: data,
 	})
-	return f, created, nil
 }
 
 func (s *Server) getFile(w http.ResponseWriter, r *http.Request, owner string) error {
-	f, err := s.Store.File(owner, r.PathValue("file"))
+	f, err := s.Backend.File(r.Context(), owner, r.PathValue("file"))
 	if err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ func (s *Server) getFile(w http.ResponseWriter, r *http.Request, owner string) e
 }
 
 func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request, owner string) error {
-	if err := s.Store.DeleteFile(owner, r.PathValue("file")); err != nil {
+	if err := s.Backend.DeleteFile(r.Context(), owner, r.PathValue("file")); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ func (s *Server) getBlockImage(w http.ResponseWriter, r *http.Request, owner str
 	if err != nil {
 		return invalid("ref", "a block's ref is <page>.<order>")
 	}
-	page, err := s.page(owner, parseID, n)
+	p, page, err := s.page(r.Context(), owner, parseID, n)
 	if err != nil {
 		return err
 	}
@@ -39,8 +40,11 @@ func (s *Server) getBlockImage(w http.ResponseWriter, r *http.Request, owner str
 	if block.Box == nil {
 		return fault.New(fault.BlockNotFound, "block %s has no position on its page, so it has no image", ref)
 	}
-	img, ok := s.Store.Image(parseID, n)
-	if !ok || len(img.Data) == 0 {
+	img, ok, err := s.Backend.Image(r.Context(), p, n)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return fault.New(fault.BlockNotFound, "page %d was not read from an image, so its blocks have none", n)
 	}
 	cut, err := render.Crop(img, *block.Box)
@@ -92,16 +96,23 @@ type figuresView struct {
 
 // figures builds the listing of a parse's figures. A figure whose last
 // description failed says why.
-func (s *Server) figures(parseID string) figuresView {
+func (s *Server) figures(ctx context.Context, p store.Parse) (figuresView, error) {
 	out := figuresView{Figures: []figureView{}}
-	current, started := s.Store.FigureRun(parseID)
+	current, started, err := s.Backend.FigureRun(ctx, p.ID)
+	if err != nil {
+		return out, err
+	}
+	read, err := s.Backend.Pages(ctx, p)
+	if err != nil {
+		return out, err
+	}
 	if started {
 		out.Run = &runView{
 			State: current.State, Total: current.Total, Done: current.Done, Failed: current.Failed, Reused: current.Reused,
 			Usage: current.Usage, StartedAt: current.StartedAt, FinishedAt: current.FinishedAt,
 		}
 	}
-	for _, page := range s.Store.Pages(parseID) {
+	for _, page := range read {
 		for _, b := range page.Blocks {
 			if b.Kind != document.KindFigure {
 				continue
@@ -113,7 +124,7 @@ func (s *Server) figures(parseID string) figuresView {
 			out.Figures = append(out.Figures, f)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // createFigures starts describing the figures of a parse that has ended.
@@ -121,7 +132,7 @@ func (s *Server) figures(parseID string) figuresView {
 // described after the fact, for some pages, without a page being read
 // again.
 func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return err
 	}
@@ -142,22 +153,17 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, owner str
 		}
 	}
 
-	// A run outlives the request that started it, so it runs under the
-	// runner's context and not the request's.
-	if _, err := s.Runner.Figures(p, opt); err != nil { //nolint:contextcheck
+	if err := s.Backend.Figures(r.Context(), p, opt); err != nil {
 		return err
 	}
 	if d := wait(r); d > 0 {
 		w.Header().Set("Preference-Applied", "wait="+strconv.Itoa(int(d/time.Second)))
-		timer := time.NewTimer(d)
-		defer timer.Stop()
-		select {
-		case <-s.Runner.FiguresDone(p.ID):
-		case <-timer.C:
-		case <-r.Context().Done():
-		}
+		s.Backend.WaitFigures(r.Context(), p.ID, d)
 	}
-	out := s.figures(p.ID)
+	out, err := s.figures(r.Context(), p)
+	if err != nil {
+		return err
+	}
 	status := http.StatusAccepted
 	if out.Run != nil && out.Run.State != store.RunRunning {
 		status = http.StatusOK
@@ -169,10 +175,14 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, owner str
 // listFigures lists a parse's figures, described or not, and the run that
 // describes them when one was started.
 func (s *Server) listFigures(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return err
 	}
-	httpjson.Write(w, http.StatusOK, s.figures(p.ID))
+	out, err := s.figures(r.Context(), p)
+	if err != nil {
+		return err
+	}
+	httpjson.Write(w, http.StatusOK, out)
 	return nil
 }

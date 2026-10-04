@@ -66,7 +66,12 @@ func sheet(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// env is a server over a memory store and a running runner.
+// over is the durable backend the cases run over, when a case of
+// durable_test.go set one. Nil runs them over the memory store and the
+// in-process runner.
+var over *durableBench
+
+// env is a server over a backend that runs parses.
 type env struct {
 	t      *testing.T
 	server *Server
@@ -85,7 +90,7 @@ func serve(t *testing.T, change func(*Server, *run.Runner)) *env {
 		Backoff: func(int) time.Duration { return 0 },
 	}
 	s := &Server{
-		Store: st, Runner: runner, Auth: Tokens{"alice-token": "alice", "bob-token": "bob"},
+		Backend: &Memory{Store: st, Runner: runner}, Auth: Tokens{"alice-token": "alice", "bob-token": "bob"},
 		Readers: runner.Readers, Chain: runner.Chain, Limits: pages.DefaultLimits(),
 		Log: slog.New(slog.DiscardHandler),
 	}
@@ -94,6 +99,14 @@ func serve(t *testing.T, change func(*Server, *run.Runner)) *env {
 		s.Readers, s.Chain = runner.Readers, runner.Chain
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	if over != nil {
+		// The same server over the durable backend: what the case set on the
+		// runner is what the worker is run with.
+		stop := over.start(ctx, t, s, runner)
+		srv := httptest.NewServer(s.Handler())
+		t.Cleanup(func() { srv.Close(); cancel(); stop() })
+		return &env{t: t, server: s, url: srv.URL, token: "alice-token"}
+	}
 	runner.Start(ctx)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() { srv.Close(); cancel(); runner.Wait() })
@@ -193,12 +206,14 @@ func (e *env) parsed(file string, options string) map[string]any {
 // ended waits for a parse to end and returns it.
 func (e *env) ended(id string) map[string]any {
 	e.t.Helper()
-	select {
-	case <-e.server.Runner.Done(id):
-	case <-time.After(10 * time.Second):
-		e.t.Fatalf("parse %s did not end", id)
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		p := e.do("GET", "/parses/"+id, nil).json(e.t)
+		if state := p["state"]; state != "queued" && state != "running" {
+			return p
+		}
 	}
-	return e.do("GET", "/parses/"+id, nil).json(e.t)
+	e.t.Fatalf("parse %s did not end", id)
+	return nil
 }
 
 func TestAFileIsParsedAndRead(t *testing.T) {
@@ -912,7 +927,7 @@ func TestWhatIsNotRoutedAnswersInTheSameShape(t *testing.T) {
 	}
 
 	// Mounted elsewhere, the same routes are there and not under /v1.
-	s := &Server{Store: store.NewMemory(), Auth: Tokens{"t": "alice"}, BasePath: "/api/parsing/"}
+	s := &Server{Backend: &Memory{Store: store.NewMemory()}, Auth: Tokens{"t": "alice"}, BasePath: "/api/parsing/"}
 	h := s.Handler()
 	for path, want := range map[string]int{"/api/parsing/readers": http.StatusOK, "/v1/readers": http.StatusNotFound} {
 		rec := httptest.NewRecorder()

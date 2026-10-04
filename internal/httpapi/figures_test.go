@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/run"
@@ -196,7 +197,7 @@ func TestAFigureRunIsOneAtATimeAndSaysWhatItLost(t *testing.T) {
 		t.Fatalf("a second run while one is in flight: %d %s", got.status, got.body)
 	}
 	close(release)
-	<-e.server.Runner.FiguresDone(pid)
+	e.server.Backend.WaitFigures(context.Background(), pid, 10*time.Second)
 
 	// The run described nothing it set out to, so it failed, and the
 	// figure says why.

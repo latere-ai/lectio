@@ -5,6 +5,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -43,15 +44,19 @@ func oneOf(r *http.Request, name string, values ...string) (string, error) {
 // assembled returns a parse, its document, and its pages, once the parse
 // has assembled them.
 func (s *Server) assembled(r *http.Request, owner string) (store.Parse, document.Document, []document.Page, error) {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return p, document.Document{}, nil, err
 	}
-	doc, ok := s.Store.Document(p.ID)
+	doc, ok, err := s.Backend.Document(r.Context(), p)
+	if err != nil {
+		return p, doc, nil, err
+	}
 	if !ok {
 		return p, doc, nil, fault.New(fault.DocumentNotReady, "parse %s is %s and has not assembled its pages", p.ID, p.State)
 	}
-	return p, doc, s.Store.Pages(p.ID), nil
+	read, err := s.Backend.Pages(r.Context(), p)
+	return p, doc, read, err
 }
 
 // getDocument serves the document: its index as JSON, or its content as
@@ -110,13 +115,17 @@ func (s *Server) getDocument(w http.ResponseWriter, r *http.Request, owner strin
 // listPages lists the pages the parse reads, each with its state. A page
 // that was not read yet is pending.
 func (s *Server) listPages(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+	if err != nil {
+		return err
+	}
+	summaries, err := s.Backend.Summaries(r.Context(), p)
 	if err != nil {
 		return err
 	}
 	read := map[int]document.PageSummary{}
-	for _, page := range s.Store.Pages(p.ID) {
-		read[page.Number] = page.Summary()
+	for _, summary := range summaries {
+		read[summary.Number] = summary
 	}
 	out := struct {
 		Pages []document.PageSummary `json:"pages"`
@@ -134,25 +143,29 @@ func (s *Server) listPages(w http.ResponseWriter, r *http.Request, owner string)
 	return nil
 }
 
-// page returns one page of a parse the caller owns. A page the parse does
-// not read is not found; one it has not read yet is not ready.
-func (s *Server) page(owner, parseID string, n int) (document.Page, error) {
-	p, err := s.Store.Parse(owner, parseID)
+// page returns one page of a parse the caller owns, and the parse. A page
+// the parse does not read is not found; one it has not read yet is not
+// ready.
+func (s *Server) page(ctx context.Context, owner, parseID string, n int) (store.Parse, document.Page, error) {
+	p, err := s.Backend.Parse(ctx, owner, parseID)
 	if err != nil {
-		return document.Page{}, err
+		return p, document.Page{}, err
 	}
 	if p.Manifest != nil && !slices.Contains(p.Manifest.Selected, n) {
-		return document.Page{}, fault.New(fault.PageNotFound, "parse %s reads no page %d", p.ID, n)
+		return p, document.Page{}, fault.New(fault.PageNotFound, "parse %s reads no page %d", p.ID, n)
 	}
-	page, ok := s.Store.Page(p.ID, n)
+	page, ok, err := s.Backend.Page(ctx, p, n)
+	if err != nil {
+		return p, document.Page{}, err
+	}
 	if !ok {
 		if p.Terminal() {
 			// The parse ended before it knew its pages, so there is none.
-			return document.Page{}, fault.New(fault.PageNotFound, "parse %s ended with no page %d", p.ID, n)
+			return p, document.Page{}, fault.New(fault.PageNotFound, "parse %s ended with no page %d", p.ID, n)
 		}
-		return document.Page{}, fault.New(fault.PageNotReady, "page %d of parse %s has not been read yet", n, p.ID)
+		return p, document.Page{}, fault.New(fault.PageNotReady, "page %d of parse %s has not been read yet", n, p.ID)
 	}
-	return page, nil
+	return p, page, nil
 }
 
 func pageNumber(r *http.Request) (int, error) {
@@ -168,7 +181,7 @@ func (s *Server) getPage(w http.ResponseWriter, r *http.Request, owner string) e
 	if err != nil {
 		return err
 	}
-	page, err := s.page(owner, r.PathValue("parse"), n)
+	_, page, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
 	if err != nil {
 		return err
 	}
@@ -181,12 +194,15 @@ func (s *Server) getPageImage(w http.ResponseWriter, r *http.Request, owner stri
 	if err != nil {
 		return err
 	}
-	parseID := r.PathValue("parse")
-	if _, err := s.page(owner, parseID, n); err != nil {
+	p, _, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
+	if err != nil {
 		return err
 	}
-	img, ok := s.Store.Image(parseID, n)
-	if !ok || len(img.Data) == 0 {
+	img, ok, err := s.Backend.Image(r.Context(), p, n)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return fault.New(fault.PageNotFound, "page %d was not read from an image, so it has none", n)
 	}
 	w.Header().Set("Content-Type", img.MediaType)
@@ -200,7 +216,7 @@ func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, owner string) 
 	if err != nil {
 		return invalid("ref", "a block's ref is <page>.<order>")
 	}
-	page, err := s.page(owner, r.PathValue("parse"), n)
+	_, page, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
 	if err != nil {
 		return err
 	}
@@ -217,7 +233,7 @@ func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, owner string) 
 // wants all of a long document asks once and not once per page. It answers
 // while the parse runs, with what has been read.
 func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return err
 	}
@@ -231,9 +247,13 @@ func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, owner string
 		}
 	}
 
+	read, err := s.Backend.Pages(r.Context(), p)
+	if err != nil {
+		return err
+	}
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
-	for _, page := range s.Store.Pages(p.ID) {
+	for _, page := range read {
 		if only != nil && !slices.Contains(only, page.Number) {
 			continue
 		}

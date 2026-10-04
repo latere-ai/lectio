@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
@@ -150,4 +151,35 @@ func Failed(n, attempts int, code, detail string) document.Page {
 		Number: n, State: document.PageFailed, Source: document.SourceReader, Attempts: attempts,
 		Blocks: []document.Block{}, Error: &document.Error{Code: code, Detail: detail},
 	}
+}
+
+// reads is how many page results GetPages reads at once.
+const reads = 8
+
+// GetPages reads the page results under keys, several at once, and returns
+// them in the order of the keys. It fails with the first key that could not
+// be read.
+func GetPages(ctx context.Context, store blob.Store, keys []string) ([]Page, error) {
+	out := make([]Page, len(keys))
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		first error
+		limit = make(chan struct{}, reads)
+	)
+	for i, key := range keys {
+		wg.Go(func() {
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			page, err := GetPage(ctx, store, key)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && first == nil {
+				first = fmt.Errorf("%s: %w", key, err)
+			}
+			out[i] = page
+		})
+	}
+	wg.Wait()
+	return out, first
 }

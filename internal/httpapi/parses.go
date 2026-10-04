@@ -233,10 +233,10 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, owner strin
 		if err != nil {
 			return err
 		}
-		if file, _, err = s.putFile(owner, got.Name, got.MediaType, got.Data); err != nil {
+		if file, _, err = s.putFile(r.Context(), owner, got.Name, got.MediaType, got.Data); err != nil {
 			return err
 		}
-	} else if file, err = s.Store.File(owner, req.Source.File); err != nil {
+	} else if file, err = s.Backend.File(r.Context(), owner, req.Source.File); err != nil {
 		return err
 	}
 
@@ -244,29 +244,26 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, owner strin
 	p.State, p.Stage, p.CreatedAt = store.StateQueued, store.StageQueued, s.now()
 	p.ContentSHA, p.Reuse = file.SHA256, req.Reuse == nil || *req.Reuse
 
+	// What the parse is admitted with is the authorizer's to say; with none
+	// the owner policy applies.
+	var admission store.Admission
+	if s.Admit != nil {
+		if admission, err = s.Admit(r, owner, p); err != nil {
+			return err
+		}
+	}
 	body := sha256.Sum256(raw)
-	stored, created, err := s.Store.CreateParse(p, key, hex.EncodeToString(body[:]))
+	stored, _, err := s.Backend.Submit(r.Context(), p, admission, key, hex.EncodeToString(body[:]))
 	if err != nil {
 		return err
-	}
-	if created {
-		// A parse outlives the request that submitted it, so it runs under
-		// the runner's context and not the request's.
-		s.Runner.Submit(stored) //nolint:contextcheck
 	}
 
 	if d := wait(r); d > 0 {
 		w.Header().Set("Preference-Applied", "wait="+strconv.Itoa(int(d/time.Second)))
-		timer := time.NewTimer(d)
-		defer timer.Stop()
-		select {
-		case <-s.Runner.Done(stored.ID):
-		case <-timer.C:
-		case <-r.Context().Done():
-		}
+		s.Backend.Wait(r.Context(), owner, stored.ID, d)
 	}
 	// The parse may have moved, or ended, since it was stored.
-	if now, err := s.Store.Parse(owner, stored.ID); err == nil {
+	if now, err := s.Backend.Parse(r.Context(), owner, stored.ID); err == nil {
 		stored = now
 	}
 	status := http.StatusAccepted
@@ -303,7 +300,10 @@ func (s *Server) listParses(w http.ResponseWriter, r *http.Request, owner string
 		limit = n
 	}
 
-	found, more := s.Store.ListParses(owner, filter, q.Get("cursor"), limit)
+	found, more, err := s.Backend.Parses(r.Context(), owner, filter, q.Get("cursor"), limit)
+	if err != nil {
+		return err
+	}
 	out := struct {
 		Parses     []parseView `json:"parses"`
 		NextCursor string      `json:"next_cursor,omitempty"`
@@ -320,7 +320,7 @@ func (s *Server) listParses(w http.ResponseWriter, r *http.Request, owner string
 }
 
 func (s *Server) getParse(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return err
 	}
@@ -329,7 +329,7 @@ func (s *Server) getParse(w http.ResponseWriter, r *http.Request, owner string) 
 }
 
 func (s *Server) deleteParse(w http.ResponseWriter, r *http.Request, owner string) error {
-	if err := s.Store.DeleteParse(owner, r.PathValue("parse")); err != nil {
+	if err := s.Backend.DeleteParse(r.Context(), owner, r.PathValue("parse")); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -337,17 +337,10 @@ func (s *Server) deleteParse(w http.ResponseWriter, r *http.Request, owner strin
 }
 
 func (s *Server) cancelParse(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Store.Parse(owner, r.PathValue("parse"))
+	p, err := s.Backend.Cancel(r.Context(), owner, r.PathValue("parse"))
 	if err != nil {
 		return err
 	}
-	if p.Terminal() {
-		return fault.New(fault.AlreadyTerminal, "parse %s is %s", p.ID, p.State)
-	}
-	if p, err = s.Store.UpdateParse(p.ID, func(p *store.Parse) { p.CancelRequested = true }); err != nil {
-		return err
-	}
-	s.Runner.Cancel(p.ID)
 	httpjson.Write(w, http.StatusOK, viewParse(p))
 	return nil
 }

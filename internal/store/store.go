@@ -107,6 +107,29 @@ type Parse struct {
 
 	CancelRequested bool
 	Manifest        *parse.Manifest
+
+	// IndexKey and ManifestToken are a durable backend's own: the object
+	// key of the parse's document index once it has one, and the lease
+	// token of the prepare task that wrote the manifest. The memory store
+	// sets neither.
+	IndexKey      string
+	ManifestToken int64
+}
+
+// Admission is what a parse is admitted to the fair queue with: the group
+// and the project it joins, their weights, and the bounds the group is held
+// to (specs/006-fairness-and-priority.md). The zero value is the owner
+// policy's: the group is the owner, every weight is 1, and nothing is
+// bounded. An authorizer's allow supplies the rest
+// (specs/012-identity-and-authorization.md).
+type Admission struct {
+	Group         string
+	Project       string
+	Weight        int
+	ProjectWeight int
+	MaxRunning    int
+	MaxQueued     int
+	MaxPriority   int
 }
 
 // Terminal reports whether the parse has ended.
