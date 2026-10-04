@@ -132,7 +132,7 @@ A request about a stored object, a read or a change, answers a deny the
 way it answers a missing object, with the `404` of its kind, so an id
 cannot be probed for what somebody else owns. That holds for a subject
 that may read the object and may not change it: a route asks one
-question, and its deny does not say which of the two it was. A deny of a
+question, and its deny does not say which it was. A deny of a
 create, of a list, or of a read that is about no stored object is the
 `403`.
 

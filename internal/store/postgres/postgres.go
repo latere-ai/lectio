@@ -138,7 +138,7 @@ SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.parse_id DESC), '[]'::jsonb)::t
 	// retention of this upload from now: an upload of bytes the owner has
 	// is a use of the file. $8 is the retention in milliseconds, and 0
 	// keeps the file. $9 stands in for now() when a test set the clock.
-	// The row a conflict finds is locked and written, so two uploads of the
+	// The row a conflict finds is locked and written, so 2 uploads of the
 	// same bytes at one instant answer the same file.
 	fileInsertSQL = `
 WITH ins AS (

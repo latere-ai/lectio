@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- Back to a parse held to the fair queue's bounds alone: no ceiling of its
--- own on its pages, no pages of a day, and nothing that expires. The three
+-- own on its pages, no pages of a day, and nothing that expires. The 3
 -- functions that held them are the ones of 000001 and 000003 again.
 
 DROP FUNCTION IF EXISTS lectio_parse_expire(text, timestamptz);

@@ -44,7 +44,7 @@ INSERT INTO sweeps (name) VALUES ('retention');
 
 -- lectio_reserve promises p_pages of a group's day to a parse, unless the
 -- day would then hold more than p_limit. It is one statement: the row of
--- the day is written or locked by it, so of two reservations that would
+-- the day is written or locked by it, so of 2 reservations that would
 -- together pass the limit the second waits for the first and then sees its
 -- number. It reports whether the pages were reserved.
 CREATE FUNCTION lectio_reserve(p_group text, p_day date, p_pages integer, p_limit integer)
@@ -216,7 +216,7 @@ END $$;
 -- ends the parse. p_settle is the settle the worker sent, or NULL when the
 -- store failed the task itself.
 --
--- prepare is where the pages of a parse are counted, so it is where the two
+-- prepare is where the pages of a parse are counted, so it is where the 2
 -- limits on pages hold: a parse that selects more than its allow lets one
 -- parse select fails with too_many_pages, and one whose pages its group's
 -- day does not hold fails with budget_exhausted, before any page is read.

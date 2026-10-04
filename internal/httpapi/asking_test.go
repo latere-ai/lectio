@@ -293,6 +293,6 @@ func TestADenyAndAnOutageAnswerBeforeAnythingIsDone(t *testing.T) {
 	}
 	shape := func(r reply, id string) string { return strings.ReplaceAll(string(r.body), id, "ID") }
 	if shape(missing, "prs_00000000000000000000000000") != shape(refused, a.parse) {
-		t.Errorf("the two answers differ beyond the id: %s and %s", missing.body, refused.body)
+		t.Errorf("the 2 answers differ beyond the id: %s and %s", missing.body, refused.body)
 	}
 }

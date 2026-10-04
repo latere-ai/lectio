@@ -313,7 +313,7 @@ func TestParsesAreListedForTheirOwner(t *testing.T) {
 			owners []string
 			want   int
 		}{
-			"two owners":         {[]string{"alice", "bob"}, 4},
+			"2 owners":           {[]string{"alice", "bob"}, 4},
 			"every owner":        {nil, 4},
 			"one owner":          {[]string{"bob"}, 1},
 			"nobody":             {[]string{}, 0},

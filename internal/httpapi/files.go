@@ -141,7 +141,7 @@ func readFile(w http.ResponseWriter, body io.Reader, limit int64) ([]byte, error
 // fileRetention is how long a file that a submit fetched is kept: the
 // server's retention of a file, or the shorter one the submit's allow names
 // for what the parse writes. The allow of a submit says how long a parse is
-// kept, which is the longer of the server's two settings, so it shortens a
+// kept, which is the longer of the server's 2 settings, so it shortens a
 // file's time only when it is below it.
 func (s *Server) fileRetention(l authorizer.Limits) time.Duration {
 	if l.Retention > 0 && (s.FileRetention == 0 || l.Retention < s.FileRetention) {

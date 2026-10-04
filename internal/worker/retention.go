@@ -16,7 +16,7 @@ import (
 // per sweep interval however many workers ask.
 //
 // What has expired is removed objects first and rows second. A worker that
-// stops between the two leaves a row, which the next sweep lists again,
+// stops in between leaves a row, which the next sweep lists again,
 // and never an object that no row names.
 
 // Retainer is the part of the task store the retention sweep uses.

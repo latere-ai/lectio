@@ -166,7 +166,7 @@ func TestParses(t *testing.T) {
 		owners []string
 		want   string
 	}{
-		"two owners":  {[]string{"alice", "bob"}, "54321"},
+		"2 owners":    {[]string{"alice", "bob"}, "54321"},
 		"every owner": {nil, "54321"},
 		"one owner":   {[]string{"bob"}, "5"},
 		"nobody":      {[]string{}, ""},

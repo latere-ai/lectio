@@ -228,7 +228,7 @@ Remaining:
   that reads it and its column is not cleared, and settled task rows
   and usage detail have no sweep.
 - An upload writes its object before its row. A process that stops
-  between the two leaves an object no row names, which no sweep finds.
+  in between leaves an object no row names, which no sweep finds.
 - `output.images` and `LECTIO_KEEP_PAGE_IMAGES`: every page image is
   kept. Whether a submit option to drop page images still belongs in
   the contract, now that a submit carries no output options

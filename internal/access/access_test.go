@@ -374,7 +374,7 @@ func TestALimitTheServerDoesNotEnforceIsRefused(t *testing.T) {
 		{"a cap on the queue", authorizer.ActionParseCreate, `{"max_queued": 5}`, "max_queued"},
 		{"a budget of pages", authorizer.ActionParseCreate, `{"group": "acme", "pages_per_day": 500}`, "pages_per_day"},
 		{"a lower ceiling on pages", authorizer.ActionParseCreate, `{"max_pages": 10}`, "max_pages"},
-		{"two of them", authorizer.ActionParseCreate, `{"max_pages": 10, "max_queued": 1}`, "max_queued, max_pages"},
+		{"2 of them", authorizer.ActionParseCreate, `{"max_pages": 10, "max_queued": 1}`, "max_queued, max_pages"},
 		{"a cap of zero is no cap", authorizer.ActionParseCreate, `{"max_queued": 0, "pages_per_day": 0}`, ""},
 		{"a ceiling above the server's", authorizer.ActionParseCreate, `{"max_pages": 5000}`, ""},
 		{"members the server holds", authorizer.ActionParseCreate, `{"group": "acme", "weight": 4, "max_file_bytes": 1024}`, ""},

@@ -32,7 +32,7 @@ func (t tokens) Authenticate(r *http.Request) (access.Caller, error) {
 	return access.Caller{Subject: subject, Sub: subject, Claims: map[string]any{}}, nil
 }
 
-// callers are the callers of the cases: two subjects, and one the owner
+// callers are the callers of the cases: 2 subjects, and one the owner
 // policy of the cases lets read every owner's.
 var callers = tokens{"alice-token": "alice", "bob-token": "bob", "root-token": "root"}
 

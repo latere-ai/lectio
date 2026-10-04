@@ -179,7 +179,7 @@ func TestWhatEachServerHoldsARequestTo(t *testing.T) {
 		t.Errorf("a development server holds the request to %+v, %v", d.Limits, err)
 	}
 
-	// The two retentions, each lowered by the allow of its own action.
+	// The 2 retentions, each lowered by the allow of its own action.
 	s.SetRules()
 	a, err := access.New(settings(t, "LECTIO_OIDC_ISSUERS", iss.URL(), "LECTIO_FILE_RETENTION", "2h"))
 	if err != nil {

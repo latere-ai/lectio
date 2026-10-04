@@ -135,10 +135,10 @@ func (d *dispatching) served(n, pages int) (byOwner, byGroup, byProject map[stri
 // near reports whether got is within tolerance of want.
 func near(got, want, tolerance int) bool { return got >= want-tolerance && got <= want+tolerance }
 
-// TestSubjectsOfOneGroupAreServedAsOne: two subjects whose allows name one
+// TestSubjectsOfOneGroupAreServedAsOne: 2 subjects whose allows name one
 // group share its bound on queued parses and are served as one group
 // against another: together they receive what the other group receives
-// alone. Two subjects with groups of their own are served by weight.
+// alone. 2 subjects with groups of their own are served by weight.
 func TestSubjectsOfOneGroupAreServedAsOne(t *testing.T) {
 	d := dispatched(t, map[string]string{
 		"alice": `{"group": "acme", "max_queued": 2}`,
@@ -163,8 +163,8 @@ func TestSubjectsOfOneGroupAreServedAsOne(t *testing.T) {
 		}
 	}
 
-	// Every parse has 60 pages. Over 80 page dispatches the two groups are
-	// served alike, and the group of two is not served twice.
+	// Every parse has 60 pages. Over 80 page dispatches the 2 groups are
+	// served alike, and the group of 2 subjects is not served twice.
 	owners, groups, _ := d.served(80, 60)
 	if !near(groups["acme"], 40, 2) || !near(groups["solo"], 40, 2) {
 		t.Errorf("the groups were served %v, want 40 each", groups)
@@ -174,7 +174,7 @@ func TestSubjectsOfOneGroupAreServedAsOne(t *testing.T) {
 	}
 }
 
-// TestSubjectsOfDifferentGroupsAreServedByWeight: two subjects whose allows
+// TestSubjectsOfDifferentGroupsAreServedByWeight: 2 subjects whose allows
 // name different groups are served in the ratio of the groups' weights.
 func TestSubjectsOfDifferentGroupsAreServedByWeight(t *testing.T) {
 	d := dispatched(t, map[string]string{
@@ -195,8 +195,8 @@ func TestSubjectsOfDifferentGroupsAreServedByWeight(t *testing.T) {
 	}
 }
 
-// TestProjectsDivideTheirGroupAndNoOther: two subjects whose allows name
-// one group and two projects share the group's bound on queued parses and
+// TestProjectsDivideTheirGroupAndNoOther: 2 subjects whose allows name
+// one group and 2 projects share the group's bound on queued parses and
 // are served in the ratio of their project weights within the group. What
 // another group is served does not change with the projects' weights: the
 // same parses are dispatched again with the weights turned around, and the

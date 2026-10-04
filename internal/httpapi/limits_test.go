@@ -467,7 +467,7 @@ func TestAListIsNarrowedByItsAllowsFilter(t *testing.T) {
 	}{
 		{"no filter narrows nothing", nil, "", "alice-a alice-b bob-a"},
 		{"one owner", &authz.Filter{Owners: []string{"alice"}}, "", "alice-a alice-b"},
-		{"two owners", &authz.Filter{Owners: []string{"alice", "bob"}}, "", "alice-a alice-b bob-a"},
+		{"2 owners", &authz.Filter{Owners: []string{"alice", "bob"}}, "", "alice-a alice-b bob-a"},
 		{"an owner with no parse", &authz.Filter{Owners: []string{"carol"}}, "", ""},
 		{"owners that are named and are none", &authz.Filter{Owners: []string{}}, "", ""},
 		{"a label", &authz.Filter{Labels: map[string]string{"team": "a"}}, "", "alice-a bob-a"},

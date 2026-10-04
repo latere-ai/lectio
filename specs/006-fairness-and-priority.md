@@ -365,9 +365,9 @@ Built:
   server's `LECTIO_GROUP_DEFAULTS`. `max_priority` is stored with them
   and held by the API at the submit: the store orders by whatever
   priority a parse carries. Proven through the API over the durable
-  store: two subjects of one group share its `max_queued` and are
-  served as one group, two groups are served by weight, and two
-  projects divide their group and no other.
+  store: 2 subjects of one group share its `max_queued` and are
+  served as one group, 2 groups are served by weight, and 2 projects
+  divide their group and no other.
 
 Proven: every row of the table below that names the dispatch
 simulation, a store test or a concurrency test over Postgres, the 5
