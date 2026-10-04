@@ -29,11 +29,12 @@ flowchart LR
 Specs 001 to 016 are `validated`: the set was reviewed as a whole, by
 three readers working apart, and the control plane, the reader
 interface, the prompts, assembly and intake were revised from what they
-found. Specs 004 to 007, the control plane, are `in-progress`. A
-scaffold of the parsing path and the API exists beside the specs, and
-each spec says under `Implementation status` what of it is built and
-what remains. Spec 017 is `vague`: a problem statement with a proposed
-shape and the questions that have to be answered before it is a design.
+found. Specs 004 to 007, the control plane, and spec 012, identity,
+are `in-progress`. A scaffold of the parsing path and the API exists
+beside the specs, and each spec says under `Implementation status`
+what of it is built and what remains. Spec 017 is `vague`: a problem
+statement with a proposed shape and the questions that have to be
+answered before it is a design.
 
 ## Index
 
@@ -50,7 +51,7 @@ shape and the questions that have to be answered before it is a design.
 | [009](009-intake.md) | Intake: detect the type, unwrap, convert, extract natively, count and render pages | large | validated | 002, 005 |
 | [010](010-assembly.md) | Assembly: from page results to one document, with running headers, tables across pages, an outline, and the views a result is read in | medium | validated | 002, 005 |
 | [011](011-structured-extraction.md) | Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from | large | validated | 008, 010 |
-| [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | validated | 001, 003 |
+| [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | in-progress | 001, 003 |
 | [013](013-limits-and-usage.md) | Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records | medium | validated | 005, 006, 012 |
 | [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | validated | 002, 003, 004 |
 | [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | validated | 004, 006, 007 |

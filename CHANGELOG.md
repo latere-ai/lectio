@@ -6,6 +6,11 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: the package `authorizer`, what an authorization endpoint for
+  Lectio is written against: the 11 actions `lectiod` asks, the resource
+  kind and the fields of each, and the limits an allow may carry, with
+  the JSON form an endpoint renders and the function that reads it. The
+  server does not ask an authorizer yet.
 - Added: the durable task store over Postgres, as a package
   (`internal/store/postgres`) the server does not open yet. A parse and
   its tasks are rows; a worker reaches the database through one

@@ -40,7 +40,7 @@ cmd/lectiod/              the server: roles api and worker
 cmd/lectio-convert/       the conversion sidecar: an office suite behind one call
 cmd/lectio-stubs/         the stub model endpoint, authorizer and key endpoint (not built)
 api/                      public: openapi.yaml, the contract, embedded for the server to serve
-authorizer/               public: the action vocabulary and limits (not built)
+authorizer/               public: the action vocabulary and limits
 document/                 public: the object model
 reader/                   public: the reader and extractor interfaces
 reader/chat/              the adapter for OpenAI-compatible chat completions

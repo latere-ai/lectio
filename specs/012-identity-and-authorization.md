@@ -1,11 +1,11 @@
 ---
 title: "Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy"
-status: validated
+status: in-progress
 track: core
 depends_on:
   - specs/001-architecture.md
   - specs/003-api.md
-affects: [authorizer/, internal/auth/, internal/httpapi/]
+affects: [authorizer/, internal/access/, internal/httpapi/]
 effort: medium
 created: 2026-10-03
 updated: 2026-10-04
@@ -46,19 +46,42 @@ request carry.
 ### The vocabulary
 
 Published as Go constants in the public package `authorizer`, with
-`Vocabulary()` for an authorizer to validate against.
+`Vocabulary()` for an authorizer to validate against and `Fields` for
+the members each action sends.
 
-| Kind | Actions | Resource fields sent |
+| Kind | Action | Resource fields sent |
 |---|---|---|
-| `Parse` | `parse.create`, `parse.read`, `parse.list`, `parse.cancel`, `parse.delete` | `id`, `owner`, `class`, `priority`, `reader`, `labels`, `origin`, `pages` (the selection's size, when known) |
-| `File` | `file.create`, `file.read`, `file.delete` | `id`, `owner`, `size`, `media_type` |
+| `Parse` | `parse.create` | `id`, `owner`, `class`, `priority`, `reader`, `labels`, `origin`, `pages` |
+| `Parse` | `parse.read` | `id`, `owner`, `class`, `priority`, `reader`, `labels`, `origin`, `pages` |
+| `Parse` | `parse.list` | none |
+| `Parse` | `parse.cancel` | `id`, `owner`, `class`, `priority`, `reader`, `labels`, `origin`, `pages` |
+| `Parse` | `parse.delete` | `id`, `owner`, `class`, `priority`, `reader`, `labels`, `origin`, `pages` |
+| `File` | `file.create` | `owner`, `size`, `media_type` |
+| `File` | `file.read` | `id`, `owner`, `size`, `media_type` |
+| `File` | `file.delete` | `id`, `owner`, `size`, `media_type` |
 | `Reader` | `reader.list` | none |
 | `Usage` | `usage.read` | `owner`, `group` |
 | `Queue` | `queue.read` | `group` |
 
-A request may name an `owner` other than the caller's subject (a
-service submitting for a user, a member acting in an organization's
-space); the authorizer decides whether the caller may.
+A member Lectio does not know for a request is left out, never sent
+empty. `pages` is the size of the parse's selection and is sent once it
+is known: at a submit only for a selection with no open range, and for
+a stored parse once its pages were counted. `reader` is the reader a
+parse pins. `size` is sent by an upload only when the request declares
+one.
+
+`parse.create` is asked by a submit, which sends no `id`, and by every
+request that queues model work on a stored parse: a retry, a figure
+run, an extraction ([[003-api]]). Those send the stored parse's `id`
+and its fields, and the work stays the parse's owner's.
+
+On a create, `owner` is the owner the request names. A request may
+name an owner other than the caller's subject (a service submitting
+for a user, a member acting in an organization's space); the
+authorizer decides whether the caller may. A request that names none
+leaves `owner` out, which means: in the caller's context. Either way
+the allow says whose the new object is, in its limits, so Lectio reads
+no claim to learn it.
 
 ### The question
 
@@ -73,35 +96,82 @@ and the request fails closed with `503 authorizer_unavailable`.
 
 ### Limits
 
-The limits on an allow of `parse.create` are how an operator's plane
-tells Lectio what this caller's work is held to. Lectio enforces what
-it is told and stores no plan.
+The limits on an allow are how an operator's plane tells Lectio what
+this caller's work is held to. Lectio enforces what it is told and
+stores no plan.
 
 ```go
 package authorizer
 
 type Limits struct {
+    Owner         string        // the owner a created parse or file is recorded under; empty is the caller's subject
     Group         string        // the fairness group the parse joins; empty is the owner
     Weight        int           // the group's share, 1..1000; 0 keeps the default
     Project       string        // the project of the group the parse joins; empty is the group's own
     ProjectWeight int           // the project's share of its group, 1..1000; 0 keeps the default
-    MaxRunning    int           // leased tasks at once for the group
-    MaxQueued     int           // non-terminal parses for the group
-    MaxPriority   int           // bound on |priority|
+    MaxRunning    int           // leased tasks at once for the group; 0 is no cap
+    MaxQueued     int           // non-terminal parses for the group; 0 is no cap
+    MaxPriority   int           // bound on |priority|; 0 admits priority 0 alone
     Classes       []string      // classes the caller may use; empty is both
     Readers       []string      // readers the caller may pin; empty is all
     MaxFileBytes  int64         // lower than the server's, never higher
-    MaxPages      int           // per parse
-    PagesPerDay   int           // for the group, rolling 24 hours
+    MaxPages      int           // per parse; lower than the server's, never higher
+    PagesPerDay   int           // for the group, rolling 24 hours; 0 is no budget
     Retention     time.Duration // how long results are kept; lower than the server's
 }
 ```
 
-`WireLimits` is the JSON form with every member optional, and
-`DecodeLimits(authz.Decision)` reads it. A member the answer does not
-name leaves the configured default in force; zero means no ceiling
-where the comment says so. A limit Lectio is handed and cannot enforce
-is a refusal with `capability_unsupported`, never a silent pass.
+`WireLimits` is the JSON form, with every member optional and exactly
+these keys:
+
+| Key | Member | Type |
+|---|---|---|
+| `owner` | `Owner` | string |
+| `group` | `Group` | string |
+| `weight` | `Weight` | integer |
+| `project` | `Project` | string |
+| `project_weight` | `ProjectWeight` | integer |
+| `max_running` | `MaxRunning` | integer |
+| `max_queued` | `MaxQueued` | integer |
+| `max_priority` | `MaxPriority` | integer |
+| `classes` | `Classes` | list of strings |
+| `readers` | `Readers` | list of strings |
+| `max_file_bytes` | `MaxFileBytes` | integer |
+| `max_pages` | `MaxPages` | integer |
+| `pages_per_day` | `PagesPerDay` | integer |
+| `retention_seconds` | `Retention` | integer, in seconds |
+
+The allow of `parse.create` is read for any of them. The allow of
+`file.create` is read for `owner`, `group`, `max_file_bytes` and
+`retention_seconds`. The limits of any other allow are not read.
+
+`DecodeLimits(authz.Decision)` reads the object into a `WireLimits`,
+and `WireLimits.Over(defaults)` lays what it names over the server's
+configured defaults and returns the `Limits` in force. A member the
+answer does not name leaves the configured default in force. Of the
+members it names:
+
+- `owner`, `group`, `project`, `classes` and `readers` replace the
+  default when they are not empty;
+- `weight` and `project_weight` replace it when above zero;
+- `max_running`, `max_queued`, `max_priority` and `pages_per_day`
+  replace it whatever they are, so an answer of zero lifts a default
+  cap, and bounds the priority at zero;
+- `max_file_bytes`, `max_pages` and `retention_seconds` replace it only
+  when above zero and below the server's: an allow lowers those and
+  never raises them.
+
+An object that does not parse, a figure below zero and a weight above
+1000 make the answer no decision, and the request fails closed with
+`503 authorizer_unavailable`: a ceiling Lectio cannot read is not one
+it can hold. A limit Lectio is handed and cannot enforce is a refusal
+with `422 capability_unsupported`, never a silent pass; a member this
+version does not know is such a limit.
+
+`Owner` is what makes a create safe to ask for somebody else. The
+request says whose the new parse or file should be, or says nothing;
+the allow answers whose it is. With no `owner` on the allow, it is the
+owner the request named, and the caller's subject when it named none.
 
 `Group` is the important one. It is how two members of one
 organization share one queue and one budget, and how a person's own
@@ -146,7 +216,13 @@ control: access is to a parse.
 
 ## Implementation status
 
-Built: a stand-in, and none of the design above.
+Built, as a library the server does not call yet:
+
+- `authorizer`: the vocabulary and the fields each action sends, held
+  equal to the table above by a test, and `Limits`, `WireLimits`,
+  `DecodeLimits` and `Over`.
+
+A stand-in, in the server:
 
 - `httpapi.Tokens`, a fixed table from bearer token to owner. The
   development server holds one entry, the token in `LECTIO_DEV_TOKEN`
@@ -159,12 +235,9 @@ Built: a stand-in, and none of the design above.
   That is the owner policy's rule for one subject, without admin
   subjects.
 
-Remaining: the verifier, the `authorizer` package with its vocabulary
-and limits, the authorizer client, the action asked by each route, the
-admin subjects, and service callers naming an owner. The action a
-field request asks ([[011-structured-extraction]]) is not in the
-vocabulary yet, since that route did not exist when the table above
-was written.
+Remaining: the verifier, the authorizer client, the owner policy with
+its admin subjects, the action asked by each route, and service callers
+naming an owner.
 
 ## Acceptance criteria
 
@@ -173,7 +246,11 @@ was written.
 | The verifier passes the shared conformance suite | `authkit/conformance` |
 | Every route asks exactly the action in the table of [[003-api]], with the resource fields above | a test that records the authorizer's requests for each route |
 | The authorizer client passes the contract's conformance suite: cache, retry, fail closed | `authz/conformance` |
-| Each member of `Limits` has a test in which an allow carrying it changes the outcome, and the absent member leaves the default | a table test |
+| The constants of `authorizer` are the vocabulary table above: the same actions in the same order, each on its kind with its fields | `TestTheVocabularyIsTheSpecs` |
+| The limits object carries exactly the 14 keys of the table above, and `DecodeLimits` reads back what `WireLimits` renders | `TestTheWireNamesEveryMemberAndNoOther`, `TestDecodeReadsWhatAnAuthorizerRenders` |
+| Each member of `Limits`: an allow carrying it changes the limits in force, and the absent member leaves the default | `TestEachMemberOverTheDefaults` |
+| A limits object with a figure out of range is read as no decision, and one that names a member this version does not know is told apart from it | `TestDecodeRefusesWhatItCannotHold`, `TestDecodeNamesAMemberItDoesNotKnow` |
+| Each member of `Limits` has a test in which an allow carrying it changes the outcome of a request | a table test over the API |
 | Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | a dispatch test |
 | Two subjects whose allows name one `Group` and two `Project`s share `MaxQueued`, are served in the ratio of their `ProjectWeight`s within the group, and change no other group's dispatch count | a dispatch test |
 | Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | API tests |
