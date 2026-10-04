@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -401,6 +402,7 @@ func TestAParseThatCannotStartFails(t *testing.T) {
 		"its file is gone":                {store.Parse{File: "fil_none"}, testfixtures.PNG, []string{"stub"}, fault.FileNotFound},
 		"a format this build cannot read": {store.Parse{}, testfixtures.PPTX, []string{"stub"}, fault.UnsupportedMediaType},
 		"a selection naming no page":      {store.Parse{Pages: "9"}, testfixtures.MultiTIFF, []string{"stub"}, fault.InvalidPages},
+		"more pages than its allow lets":  {store.Parse{MaxPages: 2}, testfixtures.MultiTIFF, []string{"stub"}, fault.TooManyPages},
 		"no reader is configured":         {store.Parse{}, testfixtures.PNG, nil, fault.ReaderUnavailable},
 		"the reader it named is not here": {store.Parse{Reader: "other"}, testfixtures.PNG, []string{"stub"}, fault.ReaderUnavailable},
 	} {
@@ -410,6 +412,32 @@ func TestAParseThatCannotStartFails(t *testing.T) {
 		if p.State != store.StateFailed || code(p.Error) != string(tc.want) || p.Error.Detail == "" || p.FinishedAt == nil {
 			t.Errorf("%s: %+v (%v)", name, p, p.Error)
 		}
+	}
+}
+
+// TestAParseAtTheLimitOfItsPagesIsRead: the limit an allow puts on the pages
+// of one parse is on what the parse selects. At the limit every page is
+// read, and a selection inside it gets a longer document past it.
+func TestAParseAtTheLimitOfItsPagesIsRead(t *testing.T) {
+	var calls atomic.Int64
+	rd := &stub.Reader{Fail: func(reader.Page) error { calls.Add(1); return nil }}
+	for name, parse := range map[string]store.Parse{
+		"3 pages under a limit of 3":      {MaxPages: 3},
+		"2 of 3 pages under a limit of 2": {MaxPages: 2, Pages: "1-2"},
+	} {
+		calls.Store(0)
+		r := start(t, &Runner{Readers: map[string]reader.Reader{"stub": rd}, Chain: []string{"stub"}})
+		parse.ID = "prs_1"
+		want := int64(parse.MaxPages)
+		if p := run(t, r, parse, testfixtures.MultiTIFF); p.State != store.StateSucceeded || int64(p.PagesDone) != want || calls.Load() != want {
+			t.Errorf("%s: %s with %d pages done and %d calls (%v)", name, p.State, p.PagesDone, calls.Load(), p.Error)
+		}
+	}
+	// One page past the limit, no page is read.
+	calls.Store(0)
+	r := start(t, &Runner{Readers: map[string]reader.Reader{"stub": rd}, Chain: []string{"stub"}})
+	if p := run(t, r, store.Parse{ID: "prs_1", MaxPages: 2}, testfixtures.MultiTIFF); p.State != store.StateFailed || calls.Load() != 0 {
+		t.Errorf("3 pages under a limit of 2: %s with %d calls", p.State, calls.Load())
 	}
 }
 

@@ -33,10 +33,16 @@ type fileView struct {
 	SHA256    string    `json:"sha256"`
 	MediaType string    `json:"media_type"`
 	CreatedAt time.Time `json:"created_at"`
+	// ExpiresAt is when the file may be removed, absent for one that is
+	// kept.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 func viewFile(f store.File) fileView {
-	return fileView{ID: f.ID, Name: f.Name, Size: f.Size, SHA256: f.SHA256, MediaType: f.MediaType, CreatedAt: f.CreatedAt}
+	return fileView{
+		ID: f.ID, Name: f.Name, Size: f.Size, SHA256: f.SHA256, MediaType: f.MediaType,
+		CreatedAt: f.CreatedAt, ExpiresAt: f.ExpiresAt,
+	}
 }
 
 // createFile stores an upload: the body itself, or the part named "file"
@@ -93,7 +99,7 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request, c call) erro
 	if err != nil {
 		return err
 	}
-	f, created, err := s.putFile(r.Context(), d.Limits.Owner, name, declared, data)
+	f, created, err := s.putFile(r.Context(), d.Limits.Owner, name, declared, data, d.Limits.Retention)
 	if err != nil {
 		return err
 	}
@@ -132,10 +138,22 @@ func readFile(w http.ResponseWriter, body io.Reader, limit int64) ([]byte, error
 	return data, nil
 }
 
-// putFile tells what the bytes are and stores them as the owner's file.
-// The same bytes are one file per owner, so created is false for bytes the
-// owner already has.
-func (s *Server) putFile(ctx context.Context, owner, name, declared string, data []byte) (f store.File, created bool, err error) {
+// fileRetention is how long a file that a submit fetched is kept: the
+// server's retention of a file, or the shorter one the submit's allow names
+// for what the parse writes. The allow of a submit says how long a parse is
+// kept, which is the longer of the server's two settings, so it shortens a
+// file's time only when it is below it.
+func (s *Server) fileRetention(l authorizer.Limits) time.Duration {
+	if l.Retention > 0 && (s.FileRetention == 0 || l.Retention < s.FileRetention) {
+		return l.Retention
+	}
+	return s.FileRetention
+}
+
+// putFile tells what the bytes are and stores them as the owner's file,
+// kept for retention. The same bytes are one file per owner, so created is
+// false for bytes the owner already has.
+func (s *Server) putFile(ctx context.Context, owner, name, declared string, data []byte, retention time.Duration) (f store.File, created bool, err error) {
 	if mediaType, _, err := mime.ParseMediaType(declared); err == nil {
 		declared = mediaType
 	}
@@ -145,7 +163,7 @@ func (s *Server) putFile(ctx context.Context, owner, name, declared string, data
 	}
 	return s.Backend.PutFile(ctx, store.File{
 		ID: s.IDs.New(id.File), Owner: owner, Name: name, MediaType: mediaType,
-		SHA256: store.Digest(data), Size: int64(len(data)), CreatedAt: s.now(), Data: data,
+		SHA256: store.Digest(data), Size: int64(len(data)), CreatedAt: s.now(), Data: data, Retention: retention,
 	})
 }
 

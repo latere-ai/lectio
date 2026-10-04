@@ -268,11 +268,15 @@ func within(p store.Parse, l authorizer.Limits) error {
 	return nil
 }
 
-// admission is what a parse joins the fair queue with, as its allow says.
+// admission is what a parse is admitted with, as its allow says: the
+// group and the project it joins, their bounds, the pages its group may
+// have read in a day, the most pages it may select, and how long it is
+// kept.
 func admission(l authorizer.Limits) store.Admission {
 	return store.Admission{
 		Group: l.Group, Project: l.Project, Weight: l.Weight, ProjectWeight: l.ProjectWeight,
 		MaxRunning: l.MaxRunning, MaxQueued: l.MaxQueued, MaxPriority: l.MaxPriority,
+		PagesPerDay: l.PagesPerDay, MaxPages: l.MaxPages, Retention: l.Retention,
 	}
 }
 
@@ -320,7 +324,7 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, c call) err
 		if limit > 0 && int64(len(got.Data)) > limit {
 			return fault.New(fault.FileTooLarge, "the file is %d bytes, over the limit of %d bytes", len(got.Data), limit)
 		}
-		if file, _, err = s.putFile(r.Context(), owner, got.Name, got.MediaType, got.Data); err != nil {
+		if file, _, err = s.putFile(r.Context(), owner, got.Name, got.MediaType, got.Data, s.fileRetention(d.Limits)); err != nil {
 			return err
 		}
 	} else {

@@ -75,13 +75,21 @@ func (b *Backend) log() *slog.Logger {
 
 // PutFile writes the bytes to the object store and then the file's row. The
 // same bytes are one file per owner: when the owner has them, nothing is
-// written. An upload that lost to another of the same bytes at the same
-// instant removes the object it wrote.
+// stored, and the file is kept for the retention of this upload from now.
+// An upload that lost to another of the same bytes at the same instant
+// removes the object it wrote.
 func (b *Backend) PutFile(ctx context.Context, f store.File) (store.File, bool, error) {
 	if have, ok, err := b.Store.FileByContent(ctx, f.Owner, f.SHA256); err != nil {
 		return store.File{}, false, err
 	} else if ok {
-		return viewFile(have), false, nil
+		if err := b.Store.KeepFile(ctx, have.ID, f.Retention); err != nil {
+			return store.File{}, false, err
+		}
+		kept, err := b.Store.File(ctx, have.ID)
+		if err != nil {
+			return store.File{}, false, err
+		}
+		return viewFile(kept), false, nil
 	}
 	key := blob.SourceKey(f.Owner, f.SHA256, f.ID)
 	if err := b.Objects.Put(ctx, key, f.Data, f.MediaType); err != nil {
@@ -89,6 +97,7 @@ func (b *Backend) PutFile(ctx context.Context, f store.File) (store.File, bool, 
 	}
 	row, created, err := b.Store.InsertFile(ctx, postgres.File{
 		ID: f.ID, Owner: f.Owner, Name: f.Name, Size: f.Size, SHA256: f.SHA256, MediaType: f.MediaType, Key: key,
+		Retention: f.Retention,
 	})
 	if err != nil || !created {
 		// The row was not written, so nothing names the object.
@@ -103,7 +112,10 @@ func (b *Backend) PutFile(ctx context.Context, f store.File) (store.File, bool, 
 }
 
 func viewFile(f postgres.File) store.File {
-	return store.File{ID: f.ID, Owner: f.Owner, Name: f.Name, MediaType: f.MediaType, SHA256: f.SHA256, Size: f.Size, CreatedAt: f.CreatedAt}
+	return store.File{
+		ID: f.ID, Owner: f.Owner, Name: f.Name, MediaType: f.MediaType, SHA256: f.SHA256, Size: f.Size,
+		CreatedAt: f.CreatedAt, ExpiresAt: f.ExpiresAt,
+	}
 }
 
 // File returns a file whoever owns it.
@@ -131,8 +143,10 @@ func (b *Backend) DeleteFile(ctx context.Context, owner, id string) error {
 }
 
 // Submit writes the parse and its first task in one transaction. The
-// admission's group, project and bounds are the fair queue's, and the
-// parse's deadline is the caller's or the longest one allowed.
+// admission's group, project and bounds are the fair queue's, its pages for
+// a day the group's budget, and its ceiling on pages and its retention the
+// parse's own. The parse's deadline is the caller's or the longest one
+// allowed.
 func (b *Backend) Submit(ctx context.Context, p store.Parse, a store.Admission, key, digest string) (store.Parse, bool, error) {
 	deadline := b.MaxDeadline
 	if deadline <= 0 {
@@ -145,6 +159,7 @@ func (b *Backend) Submit(ctx context.Context, p store.Parse, a store.Admission, 
 		Parse: p.ID, Owner: p.Owner,
 		Group: a.Group, Project: a.Project, Weight: a.Weight, ProjectWeight: a.ProjectWeight,
 		MaxRunning: a.MaxRunning, MaxQueued: a.MaxQueued, MaxPriority: a.MaxPriority,
+		PagesPerDay: a.PagesPerDay, MaxPages: a.MaxPages, Retention: a.Retention,
 		Priority: p.Priority, Pin: p.Reader, AllowFailedPages: p.AllowFailedPages, Deadline: deadline,
 		File:    p.File,
 		Options: postgres.ParseOptions{Pages: p.Pages, Languages: p.Languages, Reuse: p.Reuse},

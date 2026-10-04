@@ -305,6 +305,13 @@ func (r *Runner) drive(ctx context.Context, p store.Parse) {
 		r.finish(ctx, p.ID, err)
 		return
 	}
+	// The allow's ceiling on one parse holds here, where its pages are
+	// counted and before any is read.
+	if n := len(prepared.Manifest.Selected); p.MaxPages > 0 && n > p.MaxPages {
+		r.assemble(p.ID, nil)
+		r.finish(ctx, p.ID, fault.New(fault.TooManyPages, "the parse selects %d pages, and its limit is %d", n, p.MaxPages))
+		return
+	}
 	r.update(p.ID, func(p *store.Parse) {
 		p.Manifest, p.PagesTotal, p.Stage = &prepared.Manifest, len(prepared.Manifest.Selected), store.StageReading
 	})

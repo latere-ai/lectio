@@ -33,6 +33,13 @@ type File struct {
 	Size      int64
 	CreatedAt time.Time
 	Data      []byte
+
+	// Retention is how long the file is kept from an upload of it, and
+	// past the end of the last parse that read it, as its allow or the
+	// server's setting says. Zero keeps it. ExpiresAt is when a durable
+	// backend may remove the file, and nil where nothing expires.
+	Retention time.Duration
+	ExpiresAt *time.Time
 }
 
 // The states of a parse.
@@ -84,6 +91,10 @@ type Parse struct {
 	AllowFailedPages int
 	Labels           map[string]string
 
+	// MaxPages is the most pages the parse may select, as its allow says.
+	// Zero leaves the server's own bound on a document alone.
+	MaxPages int
+
 	// ContentSHA is the digest of the file's bytes. With a page's number
 	// and the readers that may read it, it names a page's result whoever
 	// asks for it. Reuse says whether this parse may take a page an
@@ -116,11 +127,13 @@ type Parse struct {
 	ManifestToken int64
 }
 
-// Admission is what a parse is admitted to the fair queue with: the group
-// and the project it joins, their weights, and the bounds the group is held
-// to (specs/006-fairness-and-priority.md). The zero value is the owner
-// policy's: the group is the owner, every weight is 1, and nothing is
-// bounded. An authorizer's allow supplies the rest
+// Admission is what a parse is admitted with: the group and the project it
+// joins in the fair queue, their weights, and the bounds the group is held
+// to (specs/006-fairness-and-priority.md), and what its allow holds the
+// parse itself to (specs/013-limits-and-usage.md,
+// specs/014-sources-and-retention.md). The zero value is the group of the
+// owner, every weight 1, and nothing bounded. An authorizer's allow, laid
+// over the server's settings, supplies the rest
 // (specs/012-identity-and-authorization.md).
 type Admission struct {
 	Group         string
@@ -130,6 +143,16 @@ type Admission struct {
 	MaxRunning    int
 	MaxQueued     int
 	MaxPriority   int
+
+	// PagesPerDay is how many pages the group's parses may count in one
+	// day. Zero is no budget.
+	PagesPerDay int
+	// MaxPages is the most pages the parse may select. Zero leaves the
+	// server's own bound alone.
+	MaxPages int
+	// Retention is how long the parse and what it wrote are kept after it
+	// ended. Zero keeps them.
+	Retention time.Duration
 }
 
 // Terminal reports whether the parse has ended.

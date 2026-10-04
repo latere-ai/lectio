@@ -110,7 +110,7 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 			Store: st, Objects: objects, Pipeline: pipeline, Readers: readers.Readers, Costs: costs,
 			Credential: func(string, string, string) reader.Credential { return s.ModelKey },
 			Slots:      s.Workers, Lease: s.Lease, Flush: s.Flush, Poll: s.Poll, Grace: s.Grace,
-			CacheBytes: s.CacheBytes, Log: log,
+			CacheBytes: s.CacheBytes, Retention: st, Sweep: s.SweepInterval, Log: log,
 		}
 		checks = append(checks, health.Check{Name: "worker", Run: func(context.Context) error { return w.Ready() }})
 	}
@@ -140,8 +140,9 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 			},
 			Auth: who.Authenticator, Authz: who.Authorizer,
 			Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
-			Fetcher:  &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
-			BasePath: s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
+			Fetcher:       &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
+			FileRetention: s.FileRetention,
+			BasePath:      s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
 		}
 		if err := checked(ctx, who, log); err != nil {
 			return errors.Join(err, probes.Close())

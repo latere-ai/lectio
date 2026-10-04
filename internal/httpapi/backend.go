@@ -84,8 +84,11 @@ type Backend interface {
 
 // Memory is the Backend of a development server: everything is kept in the
 // process by a memory store, and parses are run by an in-process runner.
-// Nothing survives a restart, and an Admission is not applied: the runner
-// gives every owner the same turn.
+// Nothing survives a restart, so nothing expires either. Of an Admission
+// it holds the most pages a parse may select. It has one queue for every
+// owner and no group: a server over it refuses an allow that sets a bound
+// of a group, a budget of pages or a retention, and does not pass it in
+// silence (access.New).
 type Memory struct {
 	Store  *store.Memory
 	Runner *run.Runner
@@ -109,7 +112,8 @@ func (m *Memory) DeleteFile(_ context.Context, owner, id string) error {
 
 // Submit stores the parse and hands it to the runner. A parse outlives the
 // request that submitted it, so it runs under the runner's context.
-func (m *Memory) Submit(_ context.Context, p store.Parse, _ store.Admission, key, digest string) (store.Parse, bool, error) {
+func (m *Memory) Submit(_ context.Context, p store.Parse, a store.Admission, key, digest string) (store.Parse, bool, error) {
+	p.MaxPages = a.MaxPages
 	stored, created, err := m.Store.CreateParse(p, key, digest)
 	if err != nil {
 		return store.Parse{}, false, err

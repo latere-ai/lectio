@@ -52,6 +52,11 @@ type Server struct {
 	Limits  pages.Limits
 	Fetcher *fetch.Fetcher
 
+	// FileRetention is how long a file that a submit fetched from a URL is
+	// kept, unless the submit's allow names a shorter time. Zero keeps it.
+	// An upload's retention is its own allow's.
+	FileRetention time.Duration
+
 	// BasePath is where the API is mounted. Empty takes "/v1".
 	BasePath string
 
