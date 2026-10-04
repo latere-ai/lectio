@@ -1,6 +1,6 @@
 ---
 title: "Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records"
-status: validated
+status: in-progress
 track: core
 depends_on:
   - specs/005-parse-graph.md
@@ -52,7 +52,7 @@ one row per parse and reader, summed from what each task accumulated.
 | Limit | Source | Enforced |
 |---|---|---|
 | file size | server setting, lowered by the allow | at upload and at snapshot, while streaming |
-| pages per parse | server setting, lowered by the allow | in `prepare`, after counting; `too_many_pages` |
+| pages per parse | server setting on the document's pages, lowered by the allow for the pages the parse selects | in `prepare`, after counting; `too_many_pages` |
 | pages per day for a group | the allow | reserved in `prepare`, once the page count is known, by one statement that refuses a reservation past the limit; `budget_exhausted`. A submit of a group with nothing left is refused at once |
 | queued parses, running tasks | the allow | [[006-fairness-and-priority]] |
 | submits per minute | server setting, overridable by the allow | a fixed window per group, one row, one statement |
@@ -81,6 +81,12 @@ submitted with 10 pages of budget left is refused in `prepare`, before
 any page is read. When the parse ends, the pages it reserved and did
 not read, because they failed, were canceled, or the parse failed, are
 given back to the row of the day it reserved on.
+
+The day is a date in UTC. The limit is the group's setting, written by
+each submit of the group as its bounds are
+([[006-fairness-and-priority]]), so a limit the authorizer changes holds
+from the group's next submit. A page taken from an earlier read counts
+as a page read: it is reserved and not given back.
 
 The two counts of [[006-fairness-and-priority]], queued parses and
 running tasks, are made under a lock on the group's row for the same
@@ -180,26 +186,54 @@ per-tenant report in a user interface.
 
 ## Implementation status
 
-One part is built, in the task store
-([[004-durable-tasks]], [[007-model-capacity]]): whether keys are one
-for every group or one per group is a setting the store is opened
-with, and it decides the scope a slot is taken in and a rate limit
-pauses. The key source that would make a key per group real is not
-built, and nothing sets the setting yet. The rest of this spec is not
-built. The server's own limits on a file's
-size and page count and on a deadline are enforced ([[009-intake]],
-[[003-api]]), one key from `LECTIO_MODEL_KEY` is passed to every
-reader call, and a parse sums its pages' usage. There is no limit per
-group, no key source, no meter, and the `usage` route answers `501`.
+Built:
+
+- Pages per day, in the durable server. Migration `000004_limits`
+  carries `group_days`, the group's `pages_per_day`, and the statement
+  that reserves (`lectio_reserve`). The settle of `prepare` reserves the
+  parse's selected pages against the group's day and fails the parse
+  with `budget_exhausted` when the day does not hold them, before a
+  page task is written. A submit of a group whose day holds nothing more
+  is `402 budget_exhausted`. The pages a parse reserved and did not read
+  go back to the day it reserved on when it ends, by its last task, by a
+  cancel or by its deadline. Every statement is one function call, as
+  the rest of the store's, and runs behind a transaction-mode pooler.
+- Pages per parse. The server's `LECTIO_MAX_PAGES` bounds a document's
+  pages in intake ([[009-intake]]). The allow's lower `max_pages` bounds
+  what one parse selects: it is stored on the parse and held in the
+  settle of `prepare`, and in a development server by the in-process
+  runner.
+- File size: `LECTIO_MAX_FILE_BYTES`, lowered by the allow, while an
+  upload is read and at a submit ([[003-api]]).
+- The deadline, attempts and expiries ([[004-durable-tasks]]).
+- The default of a group's pages per day, with its other defaults, is
+  `LECTIO_GROUP_DEFAULTS` ([[016-distribution]]).
+- In the task store ([[004-durable-tasks]], [[007-model-capacity]]):
+  whether keys are one for every group or one per group is a setting
+  the store is opened with, and it decides the scope a slot is taken in
+  and a rate limit pauses. Nothing sets it yet.
+
+Remaining:
+
+- A development server holds no budget: it refuses an allow, and a
+  default, that sets `pages_per_day`
+  ([[012-identity-and-authorization]]).
+- Submits per minute, and model tokens per parse.
+- The key source: one key from `LECTIO_MODEL_KEY` is passed to every
+  reader call.
+- The meters. A parse sums its pages' usage on its own row; there is no
+  `usage` table, no roll-up, and the `usage` route answers `501`.
+- A URL source is held to the allow's lower file size after it was
+  fetched under the server's own, and not while it streams.
 
 ## Acceptance criteria
 
 | Criterion | Proven by |
 |---|---|
-| Each row of the limits table has a test at the limit and one past it, with the stated code | a table test |
-| A group with 10 pages of daily budget left submits a 300-page file: the parse fails in `prepare` with `budget_exhausted` and no reader call is made | an end-to-end test with a counting stub reader |
-| A group with 10 pages of daily budget left submits 50 parses of 10 pages at once: exactly one reserves, 49 fail in `prepare`, and 10 pages are read | a concurrency test over Postgres |
-| A parse that reserved 100 pages and was canceled after 30 gives 70 back, and a parse of 70 pages submitted next reserves | an end-to-end test |
+| Each row of the limits table has a test at the limit and one past it, with the stated code | for the rows that are built: file size `TestEachMemberOfAnAllowChangesTheOutcome/MaxFileBytes` and `TestUploadsAreChecked`; pages per parse `TestAParseSelectsNoMorePagesThanItsAllowLets` and `TestAParseAtTheLimitOfItsPagesIsRead`; pages per day `TestAGroupsPagesForADayAreReserved`; queued parses `TestConcurrentSubmitsAtMaxQueued`. Submits per minute and tokens per parse are not built |
+| A group with 10 pages of daily budget left submits a 300-page file: the parse fails in `prepare` with `budget_exhausted` and no reader call is made | `TestEachMemberOfAnAllowChangesTheOutcome/PagesPerDay`, through the API over the durable backend with a counting stub reader, at 2 pages left and a file of 3 |
+| A group with 10 pages of daily budget left submits 50 parses of 10 pages at once: exactly one reserves, 49 fail in `prepare`, and 10 pages are read | `TestFiftyParsesWithTenPagesLeft`, with 5 workers settling at once, and `TestReservationsAtOnceNeverPassTheLimit` for the statement alone; both on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode |
+| A parse that reserved 100 pages and was canceled after 30 gives 70 back, and a parse of 70 pages submitted next reserves | `TestPagesReservedAndNotReadAreGivenBack`, a store test over Postgres |
 | A parse submitted with no deadline has `deadline_at` at `LECTIO_MAX_DEADLINE` from its submit | an API test |
 | Submit-rate limiting holds across two API replicas: 120 per minute in total, not each | a test with two processes |
 | With `LECTIO_KEYS=endpoint`, pages of two groups are read with two different keys, and the stub gateway's records attribute each page to its group | an end-to-end test |

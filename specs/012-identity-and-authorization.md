@@ -128,9 +128,13 @@ cannot be read. The request then fails closed with `503
 authorizer_unavailable`, and the error names neither the endpoint nor
 its bearer. `filter` narrows a list to owners and labels.
 
-A read of a stored object answers a deny the way it answers a missing
-object, with the `404` of its kind, so an id cannot be probed for what
-somebody else owns.
+A request about a stored object, a read or a change, answers a deny the
+way it answers a missing object, with the `404` of its kind, so an id
+cannot be probed for what somebody else owns. That holds for a subject
+that may read the object and may not change it: a route asks one
+question, and its deny does not say which of the two it was. A deny of a
+create, of a list, or of a read that is about no stored object is the
+`403`.
 
 ### Limits
 
@@ -153,8 +157,8 @@ type Limits struct {
     Classes       []string      // classes the caller may use; empty is both
     Readers       []string      // readers the caller may pin; empty is all
     MaxFileBytes  int64         // lower than the server's, never higher
-    MaxPages      int           // per parse; lower than the server's, never higher
-    PagesPerDay   int           // for the group, rolling 24 hours; 0 is no budget
+    MaxPages      int           // pages one parse may select; lower than the server's, never higher
+    PagesPerDay   int           // for the group, in one day counted in UTC; 0 is no budget
     Retention     time.Duration // how long results are kept; lower than the server's
 }
 ```
@@ -204,7 +208,27 @@ An object that does not parse, a figure below zero and a weight above
 `503 authorizer_unavailable`: a ceiling Lectio cannot read is not one
 it can hold. A limit Lectio is handed and cannot enforce is a refusal
 with `422 capability_unsupported`, never a silent pass; a member this
-version does not know is such a limit.
+version does not know is such a limit. So is a member a server cannot
+hold where it keeps its work: a development server has one queue for
+every caller and keeps nothing, so it refuses an allow in which
+`max_running`, `max_queued`, `pages_per_day` or `retention_seconds`
+would change what is in force. A member that changes nothing, a cap of
+zero or a ceiling above the server's own, is no limit and is not
+refused.
+
+Where each member holds:
+
+| Member | Held |
+|---|---|
+| `owner` | the create records it; every read and change after asks about it |
+| `group`, `project`, `weight`, `project_weight`, `max_running`, `max_queued` | the submit writes them to the group's and the project's rows, which the fair queue reads ([[006-fairness-and-priority]]) |
+| `max_priority` | at the submit: a priority outside it is `400 invalid_request` on `priority` |
+| `classes` | at the submit: a class outside them is `403 forbidden` on `class` |
+| `readers` | at the submit, and at a figure run that names a describer: `403 reader_not_permitted` |
+| `max_file_bytes` | while an upload is read, and at a submit against the file it names or fetched: `413 file_too_large` |
+| `max_pages` | in `prepare`, on the pages the parse selects: the parse fails with `too_many_pages` |
+| `pages_per_day` | reserved in `prepare`, and a group with nothing left is `402 budget_exhausted` at the submit ([[013-limits-and-usage]]) |
+| `retention_seconds` | recorded on the parse or the file at its create ([[014-sources-and-retention]]) |
 
 `Owner` is what makes a create safe to ask for somebody else. The
 request says whose the new parse or file should be, or says nothing;
@@ -297,7 +321,7 @@ control: access is to a parse.
 
 ## Implementation status
 
-Built, as libraries the server does not call yet:
+Built:
 
 - `authorizer`: the vocabulary and the fields each action sends, held
   equal to the table above by a test, and `Limits`, `WireLimits`,
@@ -311,25 +335,41 @@ Built, as libraries the server does not call yet:
   table of routes, each with the action it asks and the fields it
   sends, held equal to the contract and to the table of [[003-api]].
   `access.New` selects what is behind the two interfaces from the
-  settings.
+  settings, and names the limits the server it builds cannot hold.
 - The identity declaration of the gate: `role: core`
   ([[016-distribution]]).
+- `internal/httpapi`: every route authenticates through the first
+  interface and asks the second the action of its row, before it acts.
+  A stored parse or file is read by its id alone, the question carries
+  it as it is stored, and a deny is the `404` of its kind. A planned
+  route asks as the built one will and then answers `501`. A create is
+  recorded under the owner its allow names, a list is narrowed by the
+  allow's filter, to its owners and by its labels beside the caller's
+  own, and each member of the limits is held where the table above
+  says.
+- `cmd/lectiod`: both servers build their identity from the settings
+  and log which mode is in force, `oidc` or `development token` and
+  `authorizer` or `owner policy`. At start the server reads its
+  issuers' keys and sends the authorizer the probe. An issuer or an
+  endpoint that does not answer is named and the server starts, since
+  every request then fails closed. An endpoint that allows the probe
+  is refused. A worker verifies no token and builds no identity.
 
-A stand-in, in the server:
+Remaining:
 
-- `httpapi.Tokens`, a fixed table from bearer token to owner. The
-  development server holds one entry, the token in `LECTIO_DEV_TOKEN`
-  (default `dev`) for the owner `dev`. A request with no bearer is
-  `401 missing_token`, and one with a token the table lacks is `401
-  invalid_token`.
-- Owner scoping in the store. Every read and write of a file or a
-  parse names the owner, and another owner's object is not found, so a
-  caller reads, lists, cancels and deletes its own and no one else's.
-  That is the owner policy's rule for one subject, without admin
-  subjects.
-
-Remaining: the handlers asking. No route asks its action yet, a submit
-and an upload take no `owner`, and no limit of an allow is enforced.
+- A request cannot name an owner: a submit and an upload carry none,
+  so every create is asked in the caller's context and the allow says
+  whose the new object is. The owner policy therefore records every
+  create under the caller's subject, and a service that submits for
+  its users is served by an authorizer that names the owner.
+- A missing parse or file is answered `404` before any question is
+  asked, so while the authorizer does not answer, an id that exists
+  (`503`) can be told from one that does not (`404`).
+- The `group` an allow of `file.create` names is read and held by
+  nothing: a file joins no queue.
+- `GET /usage` and `GET /queue` are planned ([[003-api]]). They ask
+  `usage.read` and `queue.read` with no owner and no group, and answer
+  `501`.
 
 ## Acceptance criteria
 
@@ -339,7 +379,7 @@ and an upload take no `owner`, and no limit of an allow is enforced.
 | A verified token becomes a caller whose subject is `<iss>\|<sub>` and whose claims are the token's, verbatim; two issuers that agree on a `sub` are two subjects | `TestAVerifiedTokenBecomesACaller`, `TestTwoIssuersAreTwoSubjects` |
 | A token for another audience, of an issuer that is not listed, expired or not yet valid past the skew, or with a signature that does not check out is `invalid_token` with the reason, and the error never repeats the token | `TestWhatTheVerifierRefuses`, `TestTheSkewOnExpAndNbf` |
 | The table of routes kept as data has one row for every route of the contract, in the contract's order, each asking an action of the vocabulary with fields the vocabulary publishes for it, and equals the table of [[003-api]] | `TestEveryRouteOfTheContractHasARow`, `TestEveryRowAsksAnActionOfTheVocabulary`, `TestTheRowsAreTheSpecs` |
-| Every route asks exactly the action in the table of [[003-api]], with the resource fields above | a test that records the authorizer's requests for each route |
+| Every route asks exactly the action in the table of [[003-api]], with the resource fields above, before it acts; a deny and an outage are answered with nothing done | `TestEveryRouteAsksItsAction`, `TestWhatAQuestionCarries`, `TestADenyAndAnOutageAnswerBeforeAnythingIsDone`, over the memory backend and the durable one |
 | The endpoint `lectiod` asks answers the contract for every row of the vocabulary | `TestAuthorizerConformance`, which runs `authz/conformance` against the stub authorizer |
 | The client holds an allow for its `ttl`, a deny briefly and an outage never, asks a create every time, retries once on a connection failure, and fails closed with `authorizer_unavailable` on anything that is not a well-formed answer | `TestWhatTheClientRemembers`, `TestACreateIsAlwaysAsked`, `TestOneRetryOnAConnectionFailure`, `TestTheClientFailsClosed` |
 | The authorizer receives the subject, every claim verbatim, the action and the resource; a deny is a decision with its reason, limits that cannot be read are no decision, and a limit this version does not know is `capability_unsupported` | `TestTheEnvelopeCarriesTheCallerAndTheQuestion`, `TestOneQuestionEndToEnd`, `TestADenyIsADecision`, `TestLimitsTheServerCannotHold` |
@@ -349,12 +389,14 @@ and an upload take no `owner`, and no limit of an allow is enforced.
 | Each member of `Limits`: an allow carrying it changes the limits in force, and the absent member leaves the default | `TestEachMemberOverTheDefaults`, and through the question a submit asks, `TestEachLimitOfASubmit` |
 | The allow of `file.create` is read for 4 members, and the limits of any other action's allow are not read | `TestAnUploadIsHeldToFourMembers`, `TestTheLimitsOfAReadAreNotRead` |
 | A limits object with a figure out of range is read as no decision, and one that names a member this version does not know is told apart from it | `TestDecodeRefusesWhatItCannotHold`, `TestDecodeNamesAMemberItDoesNotKnow` |
-| Each member of `Limits` has a test in which an allow carrying it changes the outcome of a request | a table test over the API |
-| Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | a dispatch test |
-| Two subjects whose allows name one `Group` and two `Project`s share `MaxQueued`, are served in the ratio of their `ProjectWeight`s within the group, and change no other group's dispatch count | a dispatch test |
-| Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | API tests |
+| Each member of `Limits` has a test in which an allow carrying it changes the outcome of a request, and the absent member leaves the server's default | `TestEachMemberOfAnAllowChangesTheOutcome`, a case per member over the durable backend, which fails when a member has none |
+| A limit a server cannot hold is refused with `capability_unsupported` and names the member; one that changes nothing in force is not | `TestALimitTheServerDoesNotEnforceIsRefused`, `TestWhatEachServerHoldsARequestTo`, and through a running development server `TestTheModesOfADevelopmentServer` |
+| A list is narrowed by its allow's filter: its owners, and its labels beside the caller's own | `TestAListIsNarrowedByItsAllowsFilter` |
+| Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | `TestSubjectsOfOneGroupAreServedAsOne`, `TestSubjectsOfDifferentGroupsAreServedByWeight`: parses submitted through the API, claimed one at a time from the durable store |
+| Two subjects whose allows name one `Group` and two `Project`s share `MaxQueued`, are served in the ratio of their `ProjectWeight`s within the group, and change no other group's dispatch count | `TestProjectsDivideTheirGroupAndNoOther`, run with the projects' weights both ways |
+| Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | `TestTheOwnerPolicyThroughTheAPI`, `TestACallerIsKnownAndSeesOnlyItsOwn`, and with verified tokens against a running durable server `TestTheDurableServerUnderTheOwnerPolicy` |
 | The rows of the owner policy: a subject and its own, another's, a create, the reads that range over owners, an admin that reads and does not change, and no subject | `TestTheOwnerPolicy`, `TestASubjectAndAnotherSubjectsParse` |
 | The owner policy answers the contract's conformance suite, and narrows an allow by the grants of a token | `TestOwnerPolicyConformance`, `TestOwnerPolicyNarrowsByTheGrants`, `TestTheGrantsOfATokenNarrowTheOwnersReach` |
-| The settings select who is calling and who decides, apart; a server that is not a development one and lists no issuer is refused, naming the variable | `TestTheSettingsSelectTheMode`, `TestAServerWithNoIssuerIsRefused`, and the 3 tests named `EndToEnd` in `internal/access` |
-| A probe id is denied for every subject and action by the stub authorizer and by the owner policy | `TestTheProbeIsDeniedForEverySubjectAndAction` |
+| The settings select who is calling and who decides, apart; a server that is not a development one and lists no issuer is refused, naming the variable | `TestTheSettingsSelectTheMode`, `TestAServerWithNoIssuerIsRefused`, and the 3 tests named `EndToEnd` in `internal/access`; in running servers `TestTheModesOfADevelopmentServer`, `TestTheDurableServerAsksItsAuthorizer`, `TestTheDurableServerUnderTheOwnerPolicy` and `TestTheServerDoesNotStartOnWhatItCannotRun` |
+| A probe id is denied for every subject and action by the stub authorizer and by the owner policy; a server sends it at start and is refused an endpoint that allows it | `TestTheProbeIsDeniedForEverySubjectAndAction`, `TestCheckReadsTheProbesAnswer`, and in running servers `TestTheDurableServerAsksItsAuthorizer` and `TestTheModesOfADevelopmentServer` |
 | The development token stands for one subject and is never printed; under the owner policy its caller owns what it creates and nothing else | `TestTheDevelopmentTokenStandsForOneSubject`, `TestWhatTheDevelopmentTokenRefuses`, `TestTheDevelopmentCallerUnderTheOwnerPolicy` |

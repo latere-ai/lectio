@@ -146,10 +146,10 @@ whether the binary reads the variable today.
 | `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX` | none, none | [[002-object-model]] | yes |
 | `LECTIO_S3_ENDPOINT`, `LECTIO_S3_REGION`, `LECTIO_S3_ACCESS_KEY`, `LECTIO_S3_SECRET_KEY` | none | [[002-object-model]] | yes |
 | `LECTIO_S3_PATH_STYLE` | false | [[002-object-model]] | yes |
-| `LECTIO_OIDC_ISSUERS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
-| `LECTIO_OIDC_AUDIENCE` | `lectio` | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
-| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
-| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
+| `LECTIO_OIDC_ISSUERS` | none | [[012-identity-and-authorization]] | yes: by the API; a worker verifies no token |
+| `LECTIO_OIDC_AUDIENCE` | `lectio` | [[012-identity-and-authorization]] | yes |
+| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | yes |
+| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | yes: under the owner policy |
 | `LECTIO_CONFIG` | none: the stub reader | [[008-readers]] | yes |
 | `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes |
 | `LECTIO_KEYS` | `static` | [[013-limits-and-usage]] | yes: `static` is the one value taken |
@@ -160,7 +160,8 @@ whether the binary reads the variable today.
 | `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_SWEEP_INTERVAL` | 60s, 3, 30s | [[004-durable-tasks]] | yes |
 | `LECTIO_WORKER_FLUSH`, `LECTIO_WORKER_POLL` | 200ms, 1s | [[004-durable-tasks]] | yes |
 | `LECTIO_TASK_RETENTION` | 7 days | [[004-durable-tasks]] | no |
-| `LECTIO_CLASS_WEIGHTS`, `LECTIO_GROUP_DEFAULTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
+| `LECTIO_CLASS_WEIGHTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
+| `LECTIO_GROUP_DEFAULTS` | none: a share of 1, no bound, no budget, priority 0 alone | [[006-fairness-and-priority]] | yes |
 | `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | yes |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
 | `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | yes: the working copies a worker holds, in memory |
@@ -172,10 +173,11 @@ whether the binary reads the variable today.
 | `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
 | `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
 | `LECTIO_FETCH_ALLOW` | none | [[014-sources-and-retention]] | yes |
-| `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION`, `LECTIO_KEEP_PAGE_IMAGES` | 24h, 30 days, true | [[014-sources-and-retention]] | no |
+| `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | 24h, 720h | [[014-sources-and-retention]] | yes: the durable server; a development server keeps nothing |
+| `LECTIO_KEEP_PAGE_IMAGES` | true | [[014-sources-and-retention]] | no |
 | `LECTIO_USAGE_DETAIL` | 35 days | [[013-limits-and-usage]] | no |
 | `LECTIO_DEV` | false | this spec | yes |
-| `LECTIO_DEV_TOKEN` | `dev` | this spec | yes: also the durable server's one caller until a verifier is built |
+| `LECTIO_DEV_TOKEN` | `dev` | this spec | yes: the one caller of a development server that lists no issuer |
 
 A value that does not parse is an error that names its variable and
 never its value: a variable may hold a secret by mistake.
@@ -210,12 +212,32 @@ Who is calling and who decides are selected apart
 
 A development server that lists issuers verifies tokens against them
 and takes no static token, so the verifier and an authorizer can be
-tried over the memory store.
+tried over the memory store. The durable server takes no static token
+at all: `LECTIO_DEV_TOKEN` is read by a development server alone.
 
-`LECTIO_DEV=true` runs one process with the memory store, the owner
-scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
-stub reader unless `LECTIO_CONFIG` names real ones, and logs at start
-that nothing is durable. Without it, `lectiod` is the durable server:
+At start the server logs the mode in force, reads each issuer's keys
+and sends the authorizer the probe. An issuer or an authorizer that does
+not answer is named in the log and the server starts: a token of that
+issuer is verified when its keys can be read, and every request fails
+closed while the authorizer gives no decision. An authorizer that
+allows the probe does not read what it is asked, and the server is
+refused. The API role does all of this; a worker verifies no token,
+asks nobody, and needs none of these variables.
+
+`LECTIO_GROUP_DEFAULTS` is a comma-separated list of `name=value` over
+`weight`, `max_running`, `max_queued`, `max_priority` and
+`pages_per_day`: what a group takes when the allow of its parse names
+none, and under the owner policy always. A member the list leaves out
+is zero, which is a share of 1, no bound and no budget, and for
+`max_priority` the priority 0 alone. A development server is refused a
+default it cannot hold: `max_running`, `max_queued` and
+`pages_per_day`. `LECTIO_FILE_RETENTION` and `LECTIO_PARSE_RETENTION`
+are durations as Go writes them, such as `24h` and `720h`.
+
+`LECTIO_DEV=true` runs one process with the memory store, one static
+token (`LECTIO_DEV_TOKEN`) under the owner policy unless the table
+above selects otherwise, and the stub reader unless `LECTIO_CONFIG`
+names real ones, and logs at start that nothing is durable. Without it, `lectiod` is the durable server:
 it refuses to start when a required setting is missing and names it,
 the database URL and the bucket's 5 settings among them.
 `lectiod version` prints the build's version. The command takes no
@@ -398,7 +420,10 @@ Built:
   on the internal listener, the schema applied by the API at start
   under the migrator's own lock, and the stop described above. A
   missing database URL or bucket setting is named and the command exits
-  non-zero.
+  non-zero, and so is a missing issuer for a process that serves the
+  API. Both servers verify their callers and ask who decides as the
+  table of modes says, and a durable worker runs the retention sweep
+  ([[014-sources-and-retention]]).
 - `internal/config`: the settings marked as read in the table, and the
   Reader and Policy documents ([[008-readers]]), each Reader a pool of
   the task store with its `maxInFlight`, 8 when it names none, and its
@@ -410,9 +435,8 @@ Built:
   `internal/access` verifies with the shared verifier and asks through
   the shared authorizer client. The rule about roles is not turned on:
   it cannot be turned off again, and no file here names the flag it
-  forbids. The selection of the table above is `access.New`, which no
-  command calls yet: `lectiod` still takes its one static token
-  through `httpapi.Tokens`.
+  forbids. The selection of the table above is `access.New`, which both
+  servers of `lectiod` build their identity with.
 - A graceful stop: an upload that is still sending its body when the
   signal arrives is answered.
 - `cmd/lectio-convert` and `deploy/converter/Dockerfile`: the conversion
@@ -449,11 +473,10 @@ Built:
   written against the settings of the durable server and has not parsed
   a file: Postgres and the object store start and the bucket is made.
   The stack has not been started with a build that has the durable
-  server, and that server takes its one static token and not a token of
-  the issuer the stack names. The stack has no stubs
-  and no identity provider: the command stops unless
-  `LECTIO_OIDC_ISSUERS` names one, and a caller brings a token that
-  issuer wrote.
+  server. The stack has no stubs and no identity provider: the command
+  stops unless `LECTIO_OIDC_ISSUERS` names one, the server verifies its
+  callers against it under the owner policy, and a caller brings a
+  token that issuer wrote.
 - `deploy_test.go`, the tests of the deploy tree, and 2 jobs of the
   verify workflow. From the files as written, on every run of the gate:
   every container's security context, probes and resources; the
@@ -506,7 +529,10 @@ Remaining:
   run over the memory backend and over the durable one; and the
   end-to-end tests of `cmd/lectiod`, which run the server as processes
   over one Postgres and one bucket and kill, suspend, terminate and
-  restart them. `internal/testservers` starts the containers, one set
+  restart them, with a stub issuer of the test binary that every
+  durable server of the tests verifies its callers against, and the
+  stub authorizer of the shared contract where a test asks one.
+  `internal/testservers` starts the containers, one set
   per test binary, and the suites that need them skip where no
   container runtime answers. There is no memory twin of the task store
   for a conformance suite to hold to the same cases. The soak and the
@@ -517,9 +543,6 @@ Remaining:
   `make live-convert`, which converts a fixture of each converted
   format through a running sidecar, and `make live-quality`, which
   reads the quality corpus and scores it. No workflow runs them.
-- The durable server authenticates with the one static token of
-  `LECTIO_DEV_TOKEN` until the verifier of
-  [[012-identity-and-authorization]] is wired in, and says so at start.
 - `LECTIO_DEV` holds page images in memory. The local directory for
   objects exists in `internal/blob` and no setting selects it.
 - `GET /healthz` stays on the public listener. The object store is not

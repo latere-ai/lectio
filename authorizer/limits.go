@@ -61,8 +61,8 @@ type Limits struct {
 	// MaxPages is the most pages one parse may select. An allow lowers
 	// the server's figure and never raises it.
 	MaxPages int
-	// PagesPerDay is how many pages the group may have read in any 24
-	// hours. 0 is no budget.
+	// PagesPerDay is how many pages the group's parses may count in one
+	// day, counted in UTC. 0 is no budget.
 	PagesPerDay int
 	// Retention is how long a file or a parse's results are kept. An
 	// allow lowers the server's figure and never raises it.
