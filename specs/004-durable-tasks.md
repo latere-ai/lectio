@@ -101,6 +101,7 @@ CREATE TABLE tasks (
   input_tokens  bigint   NOT NULL DEFAULT 0,
   output_tokens bigint   NOT NULL DEFAULT 0,
   error         jsonb,
+  event         bigint,                        -- the change of its parse that settled a page
   created_at    timestamptz NOT NULL DEFAULT now(),
   settled_at    timestamptz,
   PRIMARY KEY (parse_id, task_id)
@@ -109,6 +110,7 @@ CREATE INDEX tasks_runnable ON tasks (group_id, project_id, class, lane, priorit
   WHERE state = 'queued';
 CREATE INDEX tasks_leased ON tasks (lease_owner) WHERE state = 'leased';
 CREATE INDEX tasks_slots  ON tasks (reader, scope) WHERE state = 'leased' AND calling;
+CREATE INDEX tasks_events ON tasks (parse_id, event) WHERE event IS NOT NULL;
 ```
 
 Task ids are deterministic from the parse, so writing a parse's tasks
@@ -169,6 +171,7 @@ stateDiagram-v2
   queued --> canceled: parse canceled
   leased --> canceled: parse canceled, in the cancel's own transaction
   failed --> queued: retry requested, attempt reset
+  succeeded --> queued: assemble of a retried parse, its pages settled again
 ```
 
 ### The worker's lease
@@ -367,23 +370,34 @@ sweep in `sweeps` holds when it last ran.
 - **Deadlines**: a parse past its deadline is failed with
   `deadline_exceeded` and its unsettled tasks canceled, in the cancel's
   own statement.
-- **Settled tasks**: the `succeeded` task rows of a parse are deleted
-  when the parse settles; the parse row keeps the counters and the
-  document index keeps the output keys. `failed` and `canceled` rows
-  stay for `LECTIO_TASK_RETENTION` (default 7 days), which is what a
-  retry and an operator read.
+- **Settled tasks**: the task rows of a parse are deleted when it ends
+  with every page read. The parse row keeps the counters, the document
+  index the output keys, and one row beside the parse the change that
+  settled each page, which the event stream numbers its pages by
+  ([[003-api]]). A parse that ends with a failed page, or that is
+  stopped, keeps every row: the failed and the canceled ones say why,
+  and a retry needs them all (Retry, below). They stay for
+  `LECTIO_TASK_RETENTION` (default 7 days), which is what a retry and
+  an operator read.
 - **Orphaned outputs**: objects under a settled parse's prefix that its
   document index does not list are deleted.
 - Retention sweeps for files and parses are [[014-sources-and-retention]].
 
 ### Row volume
 
-The task table holds what is queued or running, plus failures. At a
-sustained 40 pages a second in parses of 20 pages, that is the backlog
-(bounded per group by `max_queued`, [[006-fairness-and-priority]]),
-200 leased rows, and a week of failed rows: thousands to a few hundred
+The task table holds what is queued or running, plus the rows of the
+parses that ended with a failed page or were stopped. At a sustained 40
+pages a second in parses of 20 pages, that is the backlog (bounded per
+group by `max_queued`, [[006-fairness-and-priority]]), 200 leased rows,
+and a week of the parses that failed: thousands to a few hundred
 thousand rows, not the hundred million that keeping every settled page
-row for a week would be. The meter is one row per parse and reader, not
+row for a week would be. A parse with a failed page keeps the rows of
+its other pages too, so what the table holds of failures grows with the
+pages of the parses that had one and not with the failed pages alone: a
+parse of 3,000 pages with 1 failed page keeps 3,000 rows until it is
+retried and read whole, deleted, or past the retention. What a parse
+that was read whole leaves behind is 1 row beside it with a few bytes
+per page. The meter is one row per hour, group, owner and reader, not
 one per page ([[013-limits-and-usage]]).
 
 ### Cancel
@@ -400,6 +414,59 @@ cancel at its next exchange, within one flush interval while it has
 work, and aborts the call; until then the call's slot is already free
 for others, which is a short overshoot of the pool and not a leak.
 Results already written stay readable until the parse is deleted.
+
+### Retry
+
+`POST /parses/{parse}/retry` is one transaction, as a submit is, and it
+moves rows that exist. It is for a parse that `assemble` ended with a
+failed page ([[005-parse-graph]]).
+
+- Each failed page row returns to `queued` with `attempt`, `expiries`,
+  `invalid` and `chain_at` at 0, as a new task has them, so the page
+  starts again at the first reader of its chain. Its error is cleared.
+  Its `lease_token` is kept, so its next claim is under a token after
+  every earlier one and writes a key no earlier attempt wrote.
+- The rows of the pages that were read stay `succeeded` and are not
+  touched. They are what the next `assemble` finds those pages through.
+- The parse returns to `running`, with `pages_open` at the number of
+  failed pages and `pages_failed` at 0. Its error, its end and the key
+  of its document index are cleared: while it runs it is read as any
+  running parse is, page by page through the task rows. Its deadline is
+  the retry plus the time its submit gave it.
+- When the retried pages have settled, the row of the `assemble` that
+  ended the parse returns to `queued`, its token kept too, and it runs
+  again over every page. The index it writes has a key of its own. The
+  earlier index, and the pages the earlier `assemble` wrote again, are
+  left for the orphan sweep.
+
+That is why a parse that ended with a failed page keeps every task row
+(Sweeps, above). The rows of the pages that were read are the one place
+a running parse's pages are found, and a row that stays keeps its
+token, so the fence holds across a retry as it does across a claim. A
+new `assemble` row would start again at token 1, and its index would
+have the key of the first run's, which a worker of that run that was
+taken for dead may still write.
+
+A retry takes no task from a worker. The rows it moves are `failed`, no
+lease names them, and no settle can match them. So it is a submit to
+the queue and not a cancel, and it does not take the lock the exchange
+takes. It locks its group's row, as a submit does, counts the group's
+parses that have not ended against `max_queued`, and reserves the
+failed pages of the day of the retry ([[006-fairness-and-priority]],
+[[013-limits-and-usage]]). It then locks the parse's row, so of several
+retries of one parse at once, one queues its pages and the others find
+a parse that has not ended.
+
+A retry is refused for a parse that has not ended, for one with no
+failed page, and for one that ended before `assemble` did: canceled,
+out of time, or failed in `prepare` or in `assemble`. Such a parse has
+no document index, the pages it did not settle were canceled and not
+failed, and reading it again is a new submit, which takes the pages
+that were read from the earlier read ([[005-parse-graph]]). The same
+holds for a parse that was stopped while a retry of it ran. A retry is
+also refused for a parse whose task rows are not all there, which one
+that ended before the rows were kept is, and for one past its
+retention, whose objects the retention sweep may be removing.
 
 ### Behind a connection pooler
 
@@ -469,18 +536,24 @@ Built:
   and the outcome that moves it ([[005-parse-graph]],
   [[007-model-capacity]]), and a third the files, the members of a parse
   its caller chose, the reads kept by page, and the part of a parse a
-  claim carries. Step 5 of the exchange, a slot taken and
+  claim carries. A fourth holds the limits of [[013-limits-and-usage]]
+  and the retention of [[014-sources-and-retention]]. A fifth holds
+  `lectio_retry`, the count of a parse's changes with the change that
+  settled each page and `lectio_events`, the meter with `lectio_usage`,
+  `lectio_queue`, and the rule that a parse with a failed page keeps
+  its rows. Step 5 of the exchange, a slot taken and
   given back per call of a task that makes several, is not built: a
   task holds the slot of its claim until it settles. The sweeps for
   settled tasks past their retention and for orphaned outputs are not
-  built.
+  built, so the rows of a parse that ended with a failed page or was
+  stopped stay until the parse is deleted.
 
 - `internal/store/postgres`: `Migrate` over the direct URL, refusing a
   schema that is dirty or newer than the binary, and a store with
   `Open` over the serving URL, `Register`, `Exchange`, `Submit`,
-  `Cancel`, the reads `Parse`, `Tasks` and `Queue`, and what the API
-  serves from: files, an owner's parses with their filters and paging,
-  and the delete of each. `internal/config` reads both URLs and
+  `Cancel`, `Retry`, the reads `Parse`, `Tasks`, `Events`, `Usage` and
+  `Queue`, and what the API serves from: files, an owner's parses with
+  their filters and paging, and the delete of each. `internal/config` reads both URLs and
   `lectiod` opens the store with them.
 
 - `internal/worker`: the worker process. It registers, makes one
@@ -541,8 +614,13 @@ task's row and the document index name, both objects being in the
 bucket; a page whose call returns after its parse was canceled has its
 settle refused, with no output, no progress and no `assemble` task; a
 worker sent `SIGTERM` gives its tasks back within the grace period with
-no attempt and no expiry counted and removes its registration; and an
-API process that is killed and replaced serves the same parse.
+no attempt and no expiry counted and removes its registration; an
+API process that is killed and replaced serves the same parse, and a
+stream of the parse's events opened at the new process continues after
+the event a client last saw at the old one; and a worker killed while
+it reads the pages of a retry loses its lease and not the retry, which
+another worker completes with the pages that were read before left
+alone.
 
 Proven by 2 runs that take a fleet and minutes, so each is a test of
 `cmd/lectiod` behind a variable and outside every workflow. Each was run
@@ -572,7 +650,9 @@ proven at the store with a virtual clock and not with a connection that
 is cut, and the orphan sweep of the third row, which is not built.
 
 Remaining: the sweeps for settled tasks past their retention and for
-orphaned outputs, retry, and step 5 of the exchange. The store has no
+orphaned outputs, and step 5 of the exchange. A retry leaves the index
+and the rewritten pages of the run before it in the bucket until the
+parse is deleted, since the orphan sweep is not built. The store has no
 twin in memory, so `internal/run`, the in-process runner, still stands
 in for this spec in a development server: it holds the page-level
 shape of the work and keeps its queue in memory, so there nothing is
@@ -595,3 +675,5 @@ durable and a restart loses every parse that had not ended.
 | Every statement runs unchanged through a transaction-mode pooler | the store conformance suite run through PgBouncer in transaction mode |
 | 25 worker processes with 200 slots and a stub reader of one-second pages sustain 190 pages a second through one pooled backend connection, with at most 130 statements a second and no lease lost | a throughput test through a pooler with a pool of one |
 | The claim inside an exchange uses `tasks_runnable` and stays under 5 ms at one million queued rows | a benchmark with `EXPLAIN` assertions |
+| A retry returns the failed page rows of a parse to the queue under the tokens after their last, and no other row, in one transaction; several at once queue the pages once; the `assemble` that follows runs under the token after its last | `TestARetryQueuesAgainOnlyThePagesThatFailed` and `TestRetriesAtOnceQueueThePagesOnce`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode; `TestAPageThatFailsAgainCanBeReadAgain`, `TestARetriedParseHasItsTimeFromTheRetry` |
+| A worker killed with `SIGKILL` while it reads the pages of a retry loses them after one lease period, another worker reads them and the parse ends `succeeded`, and the pages that were read before the retry are not read again | `TestARetryOutlivesAKilledWorker`, a process-level test |

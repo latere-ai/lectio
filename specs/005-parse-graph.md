@@ -172,14 +172,26 @@ There is no `finalize` task. The settle of `assemble` ends the parse
 in the same transaction: it records the index's key on the parse, sets
 the parse to `succeeded` when the number of failed pages is at most the
 submit's `allow_failed_pages`, which is 0 unless the caller raised it,
-and to `failed` with `page_unreadable` and the count of pages
-otherwise, rolls the tasks' usage into the meter and refunds the pages
-that were reserved and not read ([[013-limits-and-usage]]), and deletes
-the parse's `succeeded` task rows. Either way everything that was read
-is kept and readable, and `POST /parses/{parse}/retry` re-queues only
-the failed pages, sets `pages_open` to their number, and lets
-`assemble` run again when they settle. Work a tenant paid for is never
-discarded because a later page failed.
+and to `failed` with the count of pages otherwise, and refunds the
+pages that were reserved and not read ([[013-limits-and-usage]]). What
+the tasks used is in the meter already: each settle wrote it.
+
+The parse's own error follows its pages. When every failed page carries
+the same code, the parse fails with that code: one whose failed pages
+were all refused for budget fails with `budget_exhausted`, and one
+whose reader could not be reached with `reader_unavailable`, so a
+caller reads from the parse alone whether reading it again can help.
+When the failed pages carry several codes the parse fails with
+`page_unreadable`.
+
+A parse that ends with every page read keeps no task row: its counters
+are on its own row and its output keys in the index. One that ends with
+a failed page keeps every row ([[004-durable-tasks]]). Either way
+everything that was read is kept and readable, and `POST
+/parses/{parse}/retry` re-queues only the failed pages, sets
+`pages_open` to their number, and lets `assemble` run again when they
+settle, over the pages that were read before and the pages read now.
+Work a tenant paid for is never discarded because a later page failed.
 
 A failed `prepare` or `assemble` fails the parse. A failed
 `extract-<name>` fails its field and leaves the parse as it was
@@ -202,7 +214,7 @@ order, retry one without the others, and stop between any two.
 | Parse | When |
 |---|---|
 | `queued` | no task has been leased yet |
-| `running` | a task has been leased and the parse has not ended |
+| `running` | a task has been leased and the parse has not ended; a retry returns a parse that ended to it |
 | `succeeded`, `failed` | set by the settle of `assemble`, or by a failed `prepare` |
 | `failed` with `deadline_exceeded` | the deadline passed before `assemble` settled |
 | `canceled` | set by the cancel itself, in its own transaction |
@@ -282,10 +294,12 @@ Built:
   `pages_open`, or for a native format counts the pages done and
   writes `assemble`; the settle that takes `pages_open` to 0 writes
   `assemble`; and the settle of `assemble` ends the parse by
-  `allow_failed_pages`, records the index's key, and deletes the rows
-  of the tasks that succeeded. A failed `prepare` or `assemble` fails
-  the parse. Store tests prove the first, second and ninth rows of the
-  table below.
+  `allow_failed_pages`, with the code of its failed pages, records the
+  index's key, and deletes the task rows of a parse with every page
+  read. A failed `prepare` or `assemble` fails the parse. A retry
+  queues the failed page rows again and the `assemble` row after them
+  ([[004-durable-tasks]]). Store tests prove the first, second and
+  ninth rows of the table below.
 - `internal/worker`: the tasks as a worker runs them. `prepare` reads
   the file from the bucket, runs `Prepare`, writes the working copy
   when the file was opened or converted and the pages of a native
@@ -320,12 +334,10 @@ Remaining:
 - In a development server nothing is a row: the runner keeps its queue
   in memory, so a restart loses every parse that had not ended
   ([[004-durable-tasks]]).
-- At the end of a parse, rolling the tasks' usage into the meter and
-  giving back the pages that were reserved and not read
-  ([[013-limits-and-usage]]). The parse row carries the calls and
-  tokens of every settle.
-- `retry`, and `extract-<name>` tasks. The fifth row of the table below
-  waits for `retry`.
+- `extract-<name>` tasks.
+- In a development server a parse that fails for its pages says
+  `page_unreadable` whatever they failed with, and has no retry
+  ([[003-api]]).
 - The row of the table of reader errors as an end-to-end test with a
   counting stub: it is proven at the worker and at the store, and not
   yet through both at once.
@@ -344,13 +356,14 @@ Remaining:
 | A parse of a native format writes no page task: its pages are readable when `prepare` settles | a store test |
 | With one worker killed after k pages, the completed parse made exactly n reader calls plus at most the number of tasks in flight at the kill | an end-to-end test with a counting stub reader |
 | A page read by two workers after a kill is served from the key its row recorded, and the document index lists that key | an end-to-end test with a stub reader that answers differently each call |
-| A parse with one unreadable page ends `failed`, returns the other pages and a document that marks the missing one, and after `retry` with a working reader ends `succeeded` having read one page | an end-to-end test |
+| A parse with one unreadable page ends `failed`, returns the other pages and a document that marks the missing one, and after `retry` with a working reader ends `succeeded` having read one page | `TestARetryReadsOnlyThePagesThatFailed`, through the API over the durable backend, with a reader that counts its calls per page: 1 call more for the page that failed and none for the 2 others. `TestARetryOutlivesAKilledWorker` of `cmd/lectiod`, with processes |
 | The same parse submitted with `allow_failed_pages: 1` ends `succeeded` with the failed page listed | an end-to-end test |
 | Each row of the table of reader errors has a test in which a stub reader returns that class and the reader calls, the attempts and the page's error are as stated | a table test with a counting stub reader |
 | A parse canceled while a page is being read is `canceled` when the cancel returns, and the page's result, when its call returns, is not recorded | an end-to-end test with a stub reader that blocks |
-| When a parse settles, its `succeeded` task rows are gone, its counters and usage are on the parse, and every page is still readable | a store test |
+| When a parse ends with every page read, its task rows are gone, its counters and usage are on the parse, and every page is still readable; one that ends with a failed page keeps every row | `TestARetryQueuesAgainOnlyThePagesThatFailed`, `TestAParseRunsFromPrepareToItsEnd` and `TestANativeParseWritesNoPageTask`, store tests |
 | Two parses of one tenant, 300 pages and 2 pages, submitted in that order to one worker: the 2-page parse finishes before the 300-page parse reaches page 10 | a dispatch test |
 | A second submit of the same file makes a parse of its own whose pages are marked `reused`, and the reader's call count does not change; with `reuse: false` every page is read | a runner test with a counting stub |
 | A parse of pages 1 to 3 followed by one of pages 1 to 10 calls the reader for seven pages | the same test |
 | A page that failed, or whose reply was cut, is read again by the next parse | the same test |
 | Peak worker memory for a 500-page parse is within 10% of the peak for a 5-page parse of the same page size | a memory test |
+| A parse fails with the code its failed pages carry when they all carry one, and with `page_unreadable` when they differ | `TestAFailedParseSaysWhatItsPagesFailedWith`, a store test; `TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce` and `TestABudgetRefusalFailsTheParseWithBudgetExhausted` through the durable server |
