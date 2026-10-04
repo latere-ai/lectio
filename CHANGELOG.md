@@ -182,6 +182,17 @@ refused before it is pushed.
   formats that need conversion are refused with
   `unsupported_media_type`, as before.
 - Added: `.odt` and `.odp` files are detected.
+- Added: a quality corpus and its bars. 13 files, each with the truth
+  it is scored against: plain text, Markdown, CSV, a Word document, a
+  workbook, a Word 97 file, a presentation, rich text, a typeset PDF,
+  the same pages as a scanned PDF, a PNG, a JPEG and a TIFF. 5 measures
+  compare a parse with a truth: character error rate, kinds, table
+  cells, reading order and boxes. The gate holds the files read with no
+  model to their truths exactly. `make live-quality` reads the corpus
+  with the reader `LECTIO_LIVE_CONFIG` names, through the durable
+  server, writes `report.md` and `report.json`, and fails when a file
+  is under a bar. [`docs/quality.md`](docs/quality.md) has the corpus,
+  the measures, the bars and the settings.
 - Added: `make live-convert`, an opt-in test that converts a fixture of
   every converted format through a running sidecar.
 - Fixed: a list item no longer keeps the bullet or the number an engine

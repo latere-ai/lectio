@@ -136,6 +136,12 @@ It parses the file with that reader and writes the Markdown, each
 page's blocks and each page's image to `LECTIO_LIVE_OUT` when it is
 set. It calls a model, so it is never part of `make check`.
 
+To put numbers on a reader, `make live-quality` reads a corpus of files
+whose content is known, through the durable server, scores each against
+its truth, and fails when a file is under its bar.
+[`docs/quality.md`](docs/quality.md) has the corpus, the measures and
+the bars.
+
 ## Run it durably
 
 Without `LECTIO_DEV`, `lectiod` keeps its work in Postgres and its
