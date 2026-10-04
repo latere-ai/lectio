@@ -29,6 +29,7 @@ import (
 	"latere.ai/x/lectio/reader/chat"
 	"latere.ai/x/lectio/reader/layout"
 	"latere.ai/x/lectio/reader/stub"
+	"latere.ai/x/lectio/reader/text"
 )
 
 // APIVersion is the version every document declares.
@@ -324,6 +325,13 @@ const (
 // fleet when its document names none: the slots of one worker process.
 const DefaultMaxInFlight = 8
 
+// DefaultTextInFlight is that bound for a reader that reads a page from
+// the text its file carries. It calls no endpoint whose capacity the bound
+// would protect, and it stands first in a chain, where every page passes
+// it: held to one process's slots, it would hold a fleet to them. 64 is
+// the slots of 8 worker processes.
+const DefaultTextInFlight = 64
+
 // Queue is what the task store is opened with: the settings of the process
 // and the readers the documents declare, each with its pool.
 func (s Settings) Queue(r Readers) tasks.Settings {
@@ -357,6 +365,7 @@ type document struct {
 
 // readerSpec is the spec of a Reader.
 type readerSpec struct {
+	// Adapter is chat, layout, text or stub.
 	Adapter  string `yaml:"adapter"`
 	Endpoint string `yaml:"endpoint"`
 	Model    string `yaml:"model"`
@@ -562,8 +571,9 @@ func strict(node yaml.Node, into any) error {
 // build makes the reader a Reader document declares, and the describer
 // when the document's adapter can say what a figure shows: one that
 // reaches a model that takes an instruction can, and one that reaches a
-// layout engine with a contract of its own cannot. pool is the reader as the
-// task store sees it.
+// layout engine with a contract of its own, or that reads a page's own
+// text and reaches nothing, cannot. pool is the reader as the task store
+// sees it.
 func build(doc document) (rd reader.Reader, describer reader.Describer, pool tasks.Pool, unapplied []string, err error) {
 	name := doc.Metadata.Name
 	if name == "" {
@@ -590,6 +600,8 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, pool tas
 		return nil, nil, pool, nil, errors.New("maxInFlight is below zero")
 	case spec.Cost < 0 || spec.Cost != float64(pool.Cost):
 		return nil, nil, pool, nil, errors.New("cost is not a whole number of units, 1 or more")
+	case spec.MaxInFlight == 0 && spec.Adapter == "text":
+		pool.MaxInFlight = DefaultTextInFlight
 	case spec.MaxInFlight == 0:
 		pool.MaxInFlight = DefaultMaxInFlight
 	}
@@ -612,10 +624,18 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, pool tas
 		}
 	case "layout":
 		rd, err = layout.New(layout.Config{Name: name, Endpoint: spec.Endpoint, Image: img, Timeout: timeout})
+	case "text":
+		// It reads the page's own text and calls nothing, so what says
+		// where a call goes and what it asks is refused: a document that
+		// names a model here expects one to read the page.
+		if spec.Endpoint != "" || spec.Model != "" {
+			return nil, nil, pool, nil, errors.New("a text reader reads a page from the text its file carries and calls no endpoint: endpoint and model are not its members")
+		}
+		rd, err = text.New(text.Config{Name: name, Image: img})
 	case "stub":
 		rd, describer = &stub.Reader{}, &stub.Describer{}
 	default:
-		err = fmt.Errorf("adapter is %q, want chat, layout or stub", spec.Adapter)
+		err = fmt.Errorf("adapter is %q, want chat, layout, text or stub", spec.Adapter)
 	}
 	if err != nil {
 		return nil, nil, pool, nil, err

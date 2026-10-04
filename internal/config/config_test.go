@@ -297,6 +297,71 @@ func TestAConfigurationThatDoesNotHoldIsRefusedWhole(t *testing.T) {
 	}
 }
 
+// TestAReaderOfAPagesOwnTextNeedsNoEndpoint: a Reader document of the text
+// adapter names no endpoint, no model and no key, a policy puts it before
+// a reader that calls a model, and its pool is bounded by what a fleet of
+// workers runs and not by what one endpoint takes.
+func TestAReaderOfAPagesOwnTextNeedsNoEndpoint(t *testing.T) {
+	head := "apiVersion: lectio.latere.ai/v1\n"
+	dir := write(t, map[string]string{"readers.yaml": head + `kind: Reader
+metadata: { name: own }
+spec: { adapter: text }
+---
+` + head + `kind: Reader
+metadata: { name: vision }
+spec: { adapter: chat, endpoint: 'https://gateway.example/v1', model: some-model }
+---
+` + head + `kind: Policy
+metadata: { name: default }
+spec:
+  read: { chain: [own, vision] }
+  describe: { chain: [vision] }
+`})
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := got.Readers["own"].Describe()
+	if strings.Join(got.Chain, ",") != "own,vision" || d.Name != "own" || !d.Text || d.Version == "" || d.Image.DPI != 160 || d.Image.Format != "png" {
+		t.Fatalf("chain %v, the text reader %+v", got.Chain, d)
+	}
+	// It describes no figure, and a model reader does not ask for a
+	// page's text.
+	if got.Describers["own"] != nil || got.Describers["vision"] == nil || got.Readers["vision"].Describe().Text {
+		t.Fatalf("describers %v", got.Describers)
+	}
+	pools := map[string]tasks.Pool{}
+	for _, p := range got.Pools {
+		pools[p.Reader] = p
+	}
+	if pools["own"] != (tasks.Pool{Reader: "own", MaxInFlight: DefaultTextInFlight, Cost: 1}) || pools["vision"].MaxInFlight != DefaultMaxInFlight {
+		t.Fatalf("the pools: %+v", got.Pools)
+	}
+
+	// Its image and its pool are its document's to set, and a reader with
+	// another image is another version.
+	set := write(t, map[string]string{"reader.yaml": head + "kind: Reader\nmetadata: { name: own }\nspec: { adapter: text, image: { dpi: 96, format: jpeg }, maxInFlight: 200, cost: 1 }\n"})
+	one, err := Load(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := one.Readers["own"].Describe(); o.Image.DPI != 96 || o.Image.Format != "jpeg" || o.Version == d.Version || one.Pools[0].MaxInFlight != 200 || strings.Join(one.Chain, ",") != "own" {
+		t.Fatalf("a text reader with an image of its own: %+v, pools %+v", o, one.Pools)
+	}
+
+	for name, tc := range map[string]struct{ spec, want string }{
+		"an endpoint":             {"{ adapter: text, endpoint: 'https://gateway.example/v1' }", "calls no endpoint"},
+		"a model":                 {"{ adapter: text, model: some-model }", "calls no endpoint"},
+		"an image format unknown": {"{ adapter: text, image: { format: webp } }", "webp"},
+		"asked to describe":       {"{ adapter: text }\n---\n" + head + "kind: Policy\nmetadata: { name: p }\nspec: { read: { chain: [own] }, describe: { chain: [own] } }", "cannot describe a figure"},
+	} {
+		bad := write(t, map[string]string{"reader.yaml": head + "kind: Reader\nmetadata: { name: own }\nspec: " + tc.spec + "\n"})
+		if got, err := Load(bad); err == nil || !strings.Contains(err.Error(), tc.want) || got.Readers != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
 // TestTheDurableServersSettings: what the durable server is run with has the
 // specs' defaults, and each is read from its variable.
 func TestTheDurableServersSettings(t *testing.T) {
