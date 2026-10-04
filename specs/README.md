@@ -87,7 +87,9 @@ The numbers are identifiers, not the order of work. The order is:
    and CSV, image rendering, and assembly with its views. Not built:
    PDF rendering, conversion, and native office formats.
 6. **Fields** (011), **telemetry** (015), and the first release. Built:
-   the extractor interface and its adapters. Not built: the rest.
+   the extractor interface and its adapters; and for the release, the
+   2 images, the deploy tree and the workflow that publishes them,
+   which has not run. Not built: the rest.
 
 Steps 2 to 4 are where this system differs from a script that calls a
 model in a loop, and they come before breadth of formats on purpose.

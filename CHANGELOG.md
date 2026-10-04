@@ -25,6 +25,37 @@ refused before it is pushed.
   kind and the fields of each, and the limits an allow may carry, with
   the JSON form an endpoint renders and the function that reads it. The
   server does not ask an authorizer yet.
+- Added: an image of the server. `Dockerfile` builds `lectiod` alone on
+  a distroless base: no shell, no package manager, no office suite, run
+  as user 65532. It is 37 MiB, and it runs with a read-only root file
+  system and no capability.
+- Added: `deploy/`, Kustomize manifests for a cluster. `deploy/base`
+  holds one Deployment for the API and one for the workers, the API's
+  Service, a network policy for each role and a disruption budget. It
+  names no namespace, registry or host: an overlay carries the settings
+  and the Reader and Policy documents as 2 ConfigMaps, and the
+  credentials are Secrets applied by hand. `deploy/README.md` lists
+  every name and key. The manifests are written for the durable server,
+  with its roles, its internal listener and its probes, which this
+  build does not have yet.
+- Added: `deploy/components/converter`, which an overlay adds to run the
+  conversion sidecar in a cluster: Pods of its own, under a policy that
+  admits the workers' calls and refuses every connection the sidecar
+  opens. An installation without it refuses the formats that need
+  conversion, as before.
+- Added: `deploy/examples/compose.yaml`, the stack on one machine:
+  Postgres, an object store with its bucket, `lectiod` in the role
+  `all`, and the sidecar on a socket with no network. It needs the
+  durable server too. `docs/running.md` says how to start it and run a
+  parse against it.
+- Added: a release publishes 2 images, `ghcr.io/<owner>/lectiod:<tag>`
+  and `ghcr.io/<owner>/lectio-convert:<tag>`, for linux/amd64 and
+  linux/arm64, each signed and with an attested bill of materials and
+  provenance, and attaches `deploy-<tag>.tar.gz`: the deploy tree with
+  both images pinned to the release by digest.
+- Changed: the sidecar's image stamps its build, so `lectio-convert
+  version` in an image names the version it was built from. It printed
+  `dev` before.
 - Added: the durable task store over Postgres, as a package
   (`internal/store/postgres`) the server does not open yet. A parse and
   its tasks are rows; a worker reaches the database through one

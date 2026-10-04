@@ -134,6 +134,31 @@ It parses the file with that reader and writes the Markdown, each
 page's blocks and each page's image to `LECTIO_LIVE_OUT` when it is
 set. It calls a model, so it is never part of `make check`.
 
+## Build and deploy it
+
+```sh
+podman build -t lectiod .                                         # the server
+podman build -f deploy/converter/Dockerfile -t lectio-convert .   # the conversion sidecar
+```
+
+The server's image holds `lectiod` and nothing else: no shell, no
+office suite, 37 MiB. It runs as a user that is not root, with a
+read-only root file system. [`docs/running.md`](docs/running.md) runs
+it 3 ways: the development server in a container, the whole stack on
+one machine with compose, and a cluster.
+
+[`deploy/`](deploy/README.md) holds the cluster's manifests: a base
+with one Deployment for the API and one for the workers, a component
+that adds the sidecar with no way out to any network, and 2 example
+overlays. The base names no host, registry or secret value; an
+installation's overlay does. The manifests and the compose file are
+written for the durable server and wait for it, as the status above
+says.
+
+A release publishes both images, signed and with a bill of materials
+and provenance attested, and attaches the deploy tree with both images
+pinned by digest.
+
 ## What it is for
 
 A language model, a search index, or a workflow cannot use a scanned
