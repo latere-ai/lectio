@@ -324,8 +324,9 @@ func (w *Worker) assemble(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 			return
 		}
 	}
-	idx := objects.Index{Document: assemble.Document(c.Parse, read), Keys: make([]objects.Entry, len(pages))}
-	idx.Renderings = []string{"markdown", "text"}
+	doc := assemble.Document(c.Parse, read)
+	doc.Renderings = []string{"markdown", "text"}
+	idx := objects.Index{Document: doc, Keys: make([]objects.Entry, len(pages))}
 	for i, p := range pages {
 		p.stored.Page = read[i]
 		after, err := json.Marshal(read[i])

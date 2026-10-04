@@ -190,11 +190,8 @@ func (w *Worker) Abandoned() int64 { return w.gone.Load() }
 // its last exchange, when that one failed.
 func (w *Worker) Run(ctx context.Context) error {
 	w.init()
-	// A task outlives the signal that stops the worker: it has the grace
-	// period to finish.
-	base := context.WithoutCancel(ctx)
 	l := &loop{
-		w: w, base: base, held: map[tasks.Ref]*running{},
+		w: w, held: map[tasks.Ref]*running{},
 		done: make(chan finished, w.Slots), idle: w.Poll,
 	}
 	if !l.register(ctx) {
@@ -207,15 +204,15 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		l.exchange(ctx)
 	}
-	return l.stop()
+	// The worker's last steps are not ended by the signal that stops it.
+	return l.stop(context.WithoutCancel(ctx))
 }
 
 // loop is the state of a running worker. One goroutine owns it; a task's
 // goroutine reaches it only through done.
 type loop struct {
-	w    *Worker
-	base context.Context
-	id   string
+	w  *Worker
+	id string
 
 	held map[tasks.Ref]*running
 	done chan finished
@@ -349,7 +346,7 @@ func (l *loop) exchange(ctx context.Context) {
 	// The exchange is not ended by the signal that stops the worker: a
 	// statement cut off after the store ran it would leave claims in a
 	// reply nobody read.
-	bound, cancel := context.WithTimeout(l.base, max(l.w.renewal(), time.Second))
+	bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(l.w.renewal(), time.Second))
 	reply, err := l.w.Store.Exchange(bound, l.id, req)
 	cancel()
 	if err != nil {
@@ -391,7 +388,7 @@ func (l *loop) exchange(ctx context.Context) {
 		}
 	}
 	for _, c := range reply.Claims {
-		l.start(c)
+		l.start(ctx, c)
 	}
 
 	l.wake = reply.SleepUntil
@@ -407,9 +404,10 @@ func (l *loop) exchange(ctx context.Context) {
 	}
 }
 
-// start runs a claimed task on a goroutine of its own.
-func (l *loop) start(c tasks.Claim) {
-	ctx, cancel := context.WithCancel(l.base)
+// start runs a claimed task on a goroutine of its own. The task outlives the
+// signal that stops the worker: it has the grace period to finish.
+func (l *loop) start(parent context.Context, c tasks.Claim) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	ref := tasks.Ref{Parse: c.Parse, Task: c.Task}
 	l.held[ref] = &running{claim: c, cancel: cancel}
 	go func() {
@@ -429,8 +427,7 @@ func (l *loop) start(c tasks.Claim) {
 // stop ends the worker: the tasks it runs get the grace period to finish,
 // and what finishes is settled as it does. Then the rest are told to stop
 // and given back, and the last exchange removes the worker's registration.
-func (l *loop) stop() error {
-	ctx := l.base
+func (l *loop) stop(ctx context.Context) error {
 	l.w.Log.InfoContext(ctx, "the worker is stopping", "worker", l.id, "tasks", len(l.held))
 	grace := time.NewTimer(l.w.Grace)
 	defer grace.Stop()

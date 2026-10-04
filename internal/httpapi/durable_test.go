@@ -35,7 +35,9 @@ type durableBench struct {
 // runner. The stop it returns ends the worker.
 func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runner *run.Runner) (stop func()) {
 	t.Helper()
-	dsn := testservers.Database(t, d.srv)
+	// The database is the case's and not the server's: it is dropped when
+	// the case ends, after the server's context has.
+	dsn := testservers.Database(t, d.srv) //nolint:contextcheck
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		t.Fatalf("migrating: %v", err)
 	}
