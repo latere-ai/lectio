@@ -697,6 +697,12 @@ func TestTheStoreKeepsNothingOnItsConnection(t *testing.T) {
 		if _, err := h.store.Queue(ctx); err != nil {
 			t.Fatal(err)
 		}
+		if row, ok, err := h.store.Task(ctx, "prs_a", "page-1"); err != nil || !ok || row.State != tasks.Succeeded {
+			t.Fatalf("reading one task: %+v, %t, %v", row, ok, err)
+		}
+		if err := h.store.Ping(ctx); err != nil {
+			t.Fatal(err)
+		}
 		var prepared, locks int
 		if err := h.store.Decode(ctx, &prepared, `SELECT count(*)::text FROM pg_prepared_statements`); err != nil {
 			t.Fatal(err)
