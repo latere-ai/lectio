@@ -61,12 +61,13 @@ internal/native/          formats read with no model
 internal/objects/         the shapes a parse writes to the object store
 internal/parse/           the steps of a parse: Prepare and ReadPage
 internal/prompts/         every instruction sent to a model, as template files
+internal/quality/         the measures a parse is scored by against a truth, the bars, and the report of a run
 internal/render/          the page renderer
 internal/run/             the in-process runner
 internal/store/           the memory store
 internal/store/postgres/  the durable task store, and its migrations
 internal/tasks/           the protocol a worker and a task store share
-internal/testfixtures/    files the tests read
+internal/testfixtures/    files the tests read, and the quality corpus: files with the truth each is scored against
 internal/testservers/     the containers the suites run against: Postgres, a pooler, an object store
 internal/worker/          a worker process: the exchange loop and the tasks of a parse
 internal/version/         the build's version, stamped by the linker
@@ -75,8 +76,9 @@ deploy/bootstrap/         the namespace and the template of the Secrets, applied
 deploy/components/        the conversion sidecar for a cluster, as a part an overlay adds
 deploy/converter/         the image of the conversion sidecar
 deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the sidecar
-docs/                     running it; the configuration reference and the API guide (not built)
-test/                     conformance, end-to-end, soak, fixtures (not built)
+docs/                     running it; the quality corpus, its measures and bars; the configuration reference and the API guide (not built)
+test/quality/             the quality corpus held to its truths: the gate's tests, and the live run
+test/                     conformance, end-to-end, soak (not built)
 tools/                    the script that writes a release's deploy archive; generators and checks (not built)
 ```
 
@@ -266,11 +268,67 @@ server.
 | store conformance | every push, against the memory store and Postgres in a container, directly and through a transaction-mode pooler | every store method, identically on each |
 | end-to-end | every push | the API, two processes, the stubs, kills and restarts |
 | dispatch simulation | every push | the fairness properties, with a virtual clock over the real store |
+| quality | every push | a file read from its own structure matches its truth exactly; for a file a model reads, what the pipeline alone decides, and what assembly makes of pages read without a mistake |
 | soak | nightly and before a release | exactly-once settlement under random kills |
-| live | before a release, opt-in | a real model reads the fixture pages |
+| live | before a release, opt-in | a real model reads the quality corpus through the durable server, and every file's scores reach the bars of its class |
 
 A claim about durability or fairness is accepted only from the
-end-to-end, simulation or soak tiers.
+end-to-end, simulation or soak tiers. A claim about how well a reader
+reads is accepted only from the live tier: the quality tier calls no
+model.
+
+### Quality
+
+Reading is held to numbers. The quality corpus, in
+`internal/testfixtures/quality`, is files of the kinds of input the
+server reads, each with its truth: page by page, the blocks in
+reading order with their kind, their text, a table's cells and spans,
+and a block's box where the file's layout is known. Every file is made
+for the repository, and how each was made is recorded beside it, so it
+can be made again. The typeset pages are printed from one HTML source
+whose elements name their kind, and the truth is read off the same
+elements, so the page and its truth cannot disagree. The same pages as
+images, in a PDF with no text, a PNG, a JPEG and a TIFF, share that
+truth.
+
+`internal/quality` scores the pages of a parse against a truth with 5
+measures: the character error rate of the transcription, the share of
+blocks found with the right kind, the share of table cells right in
+place, spans and text, the share of neighboring blocks that keep their
+order, and the share of boxes that overlap the truth's by half. A file
+has a class, `exact`, `typeset`, `scan` or `converted`, and a class has
+a bar for each measure. The measures, the classes and the bars are
+stated once for a reader of the documentation, in `docs/quality.md`,
+and a test holds that table to the bars in the code. The bars are bars
+for this corpus and no claim about other documents.
+
+The quality tier is the tests of `test/quality` that the gate runs.
+Each file read with no model goes through `Prepare` and assembly and
+must match its truth with no error. Each file a model reads goes
+through the pipeline with the stub reader, which holds the detected
+type, the conversion asked for, the page count, a selection, the size
+of the image a reader is given and the blank pages; with a reader that
+returns the truth, which must then score perfect on every measure; and,
+for assembly, as pages whose reader labeled no furniture, in which the
+running header, the page numbers, the table that continues and the
+outline must be found. A converter in these tests is a fake that
+answers with a fixed file, as in the tests of `internal/parse` and
+`cmd/lectiod`.
+
+The live tier's quality run is `make live-quality`. It builds `lectiod`,
+starts Postgres and an object store in containers, runs the durable
+server in the role `all` as a process, and takes every file through the
+API with the reader that `LECTIO_LIVE_CONFIG` names: upload, parse with
+no page reused, read each page back. It scores each file, writes
+`report.md` and `report.json` with, per file, the pages, the blocks, the
+5 measures, the seconds per page and the tokens, and fails when a file
+is under a bar of its class. `LECTIO_MODEL_KEY` is handed to the server
+and written nowhere. The files that need conversion run when
+`LECTIO_LIVE_CONVERTER` names a sidecar. The run stands up an issuer of
+its own and calls with a token of it, which a server that verifies its
+callers verifies and a server that takes one static token is given as
+that token. These `LECTIO_LIVE_*` variables are the test's and not the
+binary's, so the table of configuration does not list them.
 
 ### Deploying
 
@@ -400,6 +458,15 @@ Built:
   script over the tree. The workflow has not run: no tag has been cut
   with it.
 
+- The quality tier and the live quality run, as described under
+  Quality: the corpus of 13 files with their truths, `internal/quality`,
+  the tests of `test/quality` in the gate, `make live-quality`, and
+  `docs/quality.md`. The live run has read the corpus with one reader, a
+  layout engine on the machine it ran on, through the durable server;
+  no hosted model has read it. The corpus holds no HTML and no XML,
+  which a parse refuses, and none of the other converted formats
+  (`.ppt`, `.odp`, `.odt`, `.key`).
+
 Remaining:
 
 - `lectio-stubs` and its image, the rest of `docs/`, the generated
@@ -424,10 +491,11 @@ Remaining:
   for a conformance suite to hold to the same cases. The soak and the
   throughput run are tests of `cmd/lectiod` that run when
   `LECTIO_SOAK` or `LECTIO_THROUGHPUT` is set, and in no workflow. The
-  live tier is 2 tests run by hand:
-  `make live`, which reads a real file with a configured reader, and
+  live tier is 3 tests run by hand:
+  `make live`, which reads a real file with a configured reader,
   `make live-convert`, which converts a fixture of each converted
-  format through a running sidecar.
+  format through a running sidecar, and `make live-quality`, which
+  reads the quality corpus and scores it. No workflow runs them.
 - The durable server authenticates with the one static token of
   `LECTIO_DEV_TOKEN` until the verifier of
   [[012-identity-and-authorization]] is wired in, and says so at start.
@@ -448,3 +516,8 @@ Remaining:
 | The server image contains no office suite and is under 60 MiB; the conversion sidecar converts the presentation fixture with its network disabled | image tests |
 | A tag without a changelog section is refused by the pre-push hook and by the release workflow | the gate's own check |
 | No file in the repository contains a deployment's hostname, account or credential | a repository scan in the gate |
+| Every file of the quality corpus that is read with no model comes out of the pipeline equal to its truth: no character, kind, cell or order wrong | `TestAFileReadFromItselfMatchesItsTruth` |
+| Every file of the corpus that a model reads is detected, converted, counted, selected and rendered as the corpus states, and its blank pages cost no call | `TestAFileAModelReadsIsPreparedAndRendered` |
+| A reader that returns the truth scores perfect through the pipeline, and assembly finds the survey's running header, page numbers, span and outline | `TestAReadingWithNoMistakeScoresPerfectThroughThePipeline`, `TestAssemblyFindsWhatTheSurveyHolds` |
+| The bars a run is judged by are the bars the documentation states | `TestTheBarsAreStatedOnceInTheDocumentation` |
+| A configured reader reads the corpus through the durable server and every file reaches the bars of its class | `make live-quality`, run by hand |
