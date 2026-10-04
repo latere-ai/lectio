@@ -69,8 +69,8 @@ deploy/base/              manifests for a cluster, with no host or account in th
 deploy/bootstrap/         the namespace and the template of the Secrets, applied by hand
 deploy/components/        the conversion sidecar for a cluster, as a part an overlay adds
 deploy/converter/         the image of the conversion sidecar
-deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the stubs (not built)
-docs/                     running it, the configuration reference, the API guide (not built)
+deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the sidecar
+docs/                     running it; the configuration reference and the API guide (not built)
 test/                     conformance, end-to-end, soak, fixtures (not built)
 tools/                    generators and checks (not built)
 ```
@@ -321,9 +321,19 @@ Built:
   `/tmp`. No cluster has run them, and the sidecar has not been run
   with a read-only root file system.
 
+- `deploy/examples/compose.yaml` and `docs/running.md`: Postgres, an
+  object store with its bucket, `lectiod` in the role `all` with the
+  stub reader, and the sidecar on a socket with no network. It is
+  written against the settings of the durable server and has not parsed
+  a file: Postgres and the object store start and the bucket is made,
+  and `lectiod` of this build reads the stack's settings and exits,
+  since it starts with `LECTIO_DEV=true` only. The stack has no stubs
+  and no identity provider, so a caller brings a token of its own
+  issuer.
+
 Remaining:
 
-- `lectio-stubs` and its image, the compose file, `docs/`, the generated configuration reference and its
+- `lectio-stubs` and its image, the rest of `docs/`, the generated configuration reference and its
   test, the image tests, the tests of the deploy tree, and the release
   workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end

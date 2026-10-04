@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# Lectio on one machine: Postgres, an S3-compatible object store with its
+# bucket, lectiod in both roles in one process, and the conversion sidecar.
+# docs/running.md says how to start it and how to run a parse against it.
+#
+#   podman compose -f deploy/examples/compose.yaml up --build
+#
+# Every credential here is an example and is written in this file. The
+# stack is for a laptop: only lectiod's port is published, and on the
+# loopback interface alone. An installation that serves anyone takes its
+# credentials from where it keeps secrets, as deploy/base does.
+#
+# Pages are read by the stub reader, which calls no model: no LECTIO_CONFIG
+# is set. To read them with a model, mount a file of Reader and Policy
+# documents into lectiod and point LECTIO_CONFIG at it.
+#
+# The stack has no identity provider. LECTIO_OIDC_ISSUERS in the
+# environment of the command names yours, and a token it issued for the
+# audience `lectio` is what a request carries.
+
+name: lectio
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: lectio
+      POSTGRES_USER: lectio
+      POSTGRES_PASSWORD: lectio-example-password
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lectio -d lectio"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The object store. The image is pinned by digest as well as by tag: the
+  # tag says which version runs and the digest which bytes.
+  objects:
+    image: ghcr.io/latere-ai/minio:RELEASE.2026-09-25T12-30-31Z@sha256:025fb85cf53bad7b734dc05b012c65ce617105248ddd044d8974fb636f2a8824
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: lectio-example-access-key
+      MINIO_ROOT_PASSWORD: lectio-example-secret-key
+    volumes:
+      - objects:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Creates the bucket and exits. lectiod starts after it has run.
+  bucket:
+    image: ghcr.io/latere-ai/mc:RELEASE.2026-09-24T19-45-33Z@sha256:6e37dec77ff93cb690b9ba3f1fe2c3b34efa1cd77181fca909039819bd670a24
+    depends_on:
+      objects:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set local http://objects:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing local/lectio
+    environment:
+      MINIO_ROOT_USER: lectio-example-access-key
+      MINIO_ROOT_PASSWORD: lectio-example-secret-key
+
+  # The conversion sidecar, with no network at all: it listens on a socket
+  # in a volume it shares with lectiod, so it has no route to any address,
+  # lectiod's included. It holds no credential. Its root file system is
+  # read only; each conversion writes under /tmp and is removed when it
+  # ends.
+  lectio-convert:
+    build:
+      context: ../..
+      dockerfile: deploy/converter/Dockerfile
+    network_mode: none
+    environment:
+      LECTIO_CONVERT_ADDR: unix:/run/lectio/convert.sock
+    volumes:
+      - convert:/run/lectio
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  # lectiod in the role `all`: the API and a worker in one process. It runs
+  # the migrations at start. Its root file system is read only and it has
+  # no volume but the sidecar's socket.
+  lectiod:
+    build:
+      context: ../..
+    depends_on:
+      postgres:
+        condition: service_healthy
+      bucket:
+        condition: service_completed_successfully
+      lectio-convert:
+        condition: service_started
+    environment:
+      LECTIO_ROLE: all
+      LECTIO_ADDR: ":8080"
+      LECTIO_DATABASE_URL: postgres://lectio:lectio-example-password@postgres:5432/lectio?sslmode=disable
+      LECTIO_BUCKET: lectio
+      LECTIO_S3_ENDPOINT: http://objects:9000
+      LECTIO_S3_REGION: us-east-1
+      LECTIO_S3_ACCESS_KEY: lectio-example-access-key
+      LECTIO_S3_SECRET_KEY: lectio-example-secret-key
+      LECTIO_S3_PATH_STYLE: "true"
+      LECTIO_CONVERTER_URL: unix:///run/lectio/convert.sock
+      LECTIO_OIDC_ISSUERS: ${LECTIO_OIDC_ISSUERS:-https://issuer.example}
+      LECTIO_OIDC_AUDIENCE: lectio
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - convert:/run/lectio
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres:
+  objects:
+  convert:
