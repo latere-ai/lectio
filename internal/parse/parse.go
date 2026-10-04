@@ -44,6 +44,15 @@ type PDFCounter interface {
 	CountPDF(ctx context.Context, data []byte) (int, error)
 }
 
+// PDFTexter hands over what a page of a PDF holds besides its image: its
+// words with their positions and their type, and where it paints anything
+// else. A renderer that holds a PDF engine is one. A reader that asks for
+// a page's own text is given it from here, and a pipeline whose renderer
+// is none gives such a reader no text.
+type PDFTexter interface {
+	TextPDF(ctx context.Context, data []byte, n int) (reader.PageText, error)
+}
+
 // Manifest is what Prepare found out about a file: everything a page's
 // work needs to know that is not the page itself.
 type Manifest struct {
@@ -208,11 +217,13 @@ type PageOptions struct {
 
 // ReadPage does the work of one page: render it, have the reader read it,
 // check the answer, and number the blocks. A page with nothing on it is
-// returned without a call.
+// returned without a call. A reader that asks for the page's own text is
+// handed it beside the image, when the file is one that carries its text.
 //
 // An error from the reader comes back as the reader classified it, so the
-// caller can tell what to do next: wait, try again, or give up on the page.
-// A reply that is not usable is a reader.Invalid error.
+// caller can tell what to do next: wait, try again, give the page to the
+// next reader, or give up on it. A reply that is not usable is a
+// reader.Invalid error.
 func (p *Pipeline) ReadPage(ctx context.Context, m Manifest, working []byte, n int, r reader.Reader, opt PageOptions) (Page, error) {
 	desc := r.Describe()
 	img, err := p.Renderer.Render(ctx, working, m.MediaType, n, desc)
@@ -228,10 +239,16 @@ func (p *Pipeline) ReadPage(ctx context.Context, m Manifest, working []byte, n i
 		return Page{Page: page, Image: img}, nil
 	}
 
-	res, err := r.ReadPage(ctx, reader.Page{
+	in := reader.Page{
 		Number: n, Data: img.Data, MediaType: img.MediaType, Width: img.Width, Height: img.Height,
 		Languages: opt.Languages, Credential: opt.Credential,
-	})
+	}
+	if desc.Text {
+		if err := p.handText(ctx, m, working, n, &in); err != nil {
+			return Page{}, err
+		}
+	}
+	res, err := r.ReadPage(ctx, in)
 	if err != nil {
 		return Page{}, err
 	}
@@ -240,6 +257,9 @@ func (p *Pipeline) ReadPage(ctx context.Context, m Manifest, working []byte, n i
 	}
 
 	page.Reader, page.Model, page.Truncated = desc.Name, res.Model, res.Truncated
+	if res.TextLayer {
+		page.Source = document.SourceTextLayer
+	}
 	page.Blocks = document.Number(n, res.Blocks)
 	usage := res.Usage
 	page.Usage = &usage
@@ -247,4 +267,25 @@ func (p *Pipeline) ReadPage(ctx context.Context, m Manifest, working []byte, n i
 		return Page{}, &reader.Error{Class: reader.Invalid, Detail: "the reader's blocks do not fit the object model", Err: err}
 	}
 	return Page{Page: page, Image: img}, nil
+}
+
+// handText gives a page as a reader receives it what the file itself
+// holds of page n. It leaves the page without when there is none to hand
+// over: the file is no PDF, the renderer reads no text, or the page's text
+// could not be read within the bounds a page is held to. The last is not
+// a failure of the page, which rendered: a reader that needs the text
+// declines the page, and one that reads the image reads it.
+func (p *Pipeline) handText(ctx context.Context, m Manifest, working []byte, n int, in *reader.Page) error {
+	source, ok := p.Renderer.(PDFTexter)
+	if !ok || m.MediaType != detect.MIMEPDF {
+		return nil
+	}
+	text, err := source.TextPDF(ctx, working, n)
+	switch {
+	case err == nil:
+		in.Text = &text
+	case ctx.Err() != nil || fault.CodeOf(err) != fault.DocumentCorrupt:
+		return err
+	}
+	return nil
 }
