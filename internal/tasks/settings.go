@@ -91,11 +91,13 @@ type Settings struct {
 	KeysPerGroup bool
 
 	// Pools are the configured readers. ReadChain is the routing policy's
-	// order for a page, and ExtractChain its order for an extraction; a
-	// task whose parse named a reader uses that reader alone.
-	Pools        []Pool
-	ReadChain    []string
-	ExtractChain []string
+	// order for a page, ExtractChain its order for an extraction, and
+	// DescribeChain its order for a figure; a task whose parse or whose
+	// request named a reader uses that reader alone.
+	Pools         []Pool
+	ReadChain     []string
+	ExtractChain  []string
+	DescribeChain []string
 }
 
 // WithDefaults returns the settings with every zero member at its default.
@@ -182,7 +184,7 @@ func (s Settings) Validate() error {
 	for _, chain := range []struct {
 		name    string
 		readers []string
-	}{{"read", s.ReadChain}, {"extract", s.ExtractChain}} {
+	}{{"read", s.ReadChain}, {"extract", s.ExtractChain}, {"describe", s.DescribeChain}} {
 		for _, name := range chain.readers {
 			if !names[name] {
 				errs = append(errs, fmt.Errorf("tasks: the %s chain names %q, which has no pool", chain.name, name))

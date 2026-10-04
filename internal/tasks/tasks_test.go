@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-func TestOnlyPagesAndExtractionsCallAModel(t *testing.T) {
-	for kind, want := range map[Kind]bool{Prepare: false, Page: true, Assemble: false, Extract: true} {
+func TestOnlyPagesExtractionsAndFiguresCallAModel(t *testing.T) {
+	for kind, want := range map[Kind]bool{Prepare: false, Page: true, Assemble: false, Extract: true, Figure: true} {
 		if kind.CallsModel() != want {
 			t.Errorf("%s calls a model: %t, want %t", kind, kind.CallsModel(), want)
 		}
@@ -46,10 +46,30 @@ func TestATaskIDIsFixedByItsPlaceInTheParse(t *testing.T) {
 			t.Errorf("PageOf(%q) = %d, and it is no page task", id, n)
 		}
 	}
+
+	// An extraction's task carries its field's name and a figure's the ref
+	// of its block, and only an id of that kind is read back as one.
+	if name, ok := FieldOf(ExtractID("line-items")); !ok || name != "line-items" {
+		t.Fatalf("FieldOf(extract-line-items) = %q, %t", name, ok)
+	}
+	if FigureID("3.2") != "figure-3.2" {
+		t.Fatalf("the id of a figure's task is %q", FigureID("3.2"))
+	}
+	if ref, ok := FigureOf(FigureID("3.2")); !ok || ref != "3.2" {
+		t.Fatalf("FigureOf(figure-3.2) = %q, %t", ref, ok)
+	}
+	for _, id := range []string{PrepareID, AssembleID, "page-1", "extract-", "figure-"} {
+		if name, ok := FieldOf(id); ok {
+			t.Errorf("FieldOf(%q) = %q, and it is no extraction's task", id, name)
+		}
+		if ref, ok := FigureOf(id); ok {
+			t.Errorf("FigureOf(%q) = %q, and it is no figure's task", id, ref)
+		}
+	}
 }
 
 func TestTheOutcomesAreTheStoresOwn(t *testing.T) {
-	for _, o := range []Outcome{Done, Retryable, Permanent, Wait, Next, Returned} {
+	for _, o := range []Outcome{Done, Retryable, Permanent, Wait, Next, Continue, Returned} {
 		if !o.Valid() {
 			t.Errorf("%q is not valid", o)
 		}
@@ -115,6 +135,8 @@ func TestARequestIsCheckedBeforeItIsSent(t *testing.T) {
 			{Parse: "prs_c", Task: AssembleID, Outcome: Done, Assemble: &Assembled{Index: "parses/prs_c/index.3.json"}},
 			// A prepare that failed has prepared nothing to say.
 			{Parse: "prs_d", Task: PrepareID, Outcome: Permanent, Error: &Error{Code: "document_corrupt"}},
+			// An extraction between 2 calls names what it has so far.
+			{Parse: "prs_e", Task: ExtractID("invoice"), Outcome: Continue, Output: "parses/prs_e/fields/invoice.2.progress.json"},
 		},
 		Held: []Held{{Parse: "prs_a", Task: "page-2", Token: 1}},
 	}
@@ -132,6 +154,7 @@ func TestARequestIsCheckedBeforeItIsSent(t *testing.T) {
 		"a prepare that says nothing":   {Settles: []Settle{{Parse: "prs_a", Task: PrepareID, Outcome: Done}}},
 		"an assemble with no index":     {Settles: []Settle{{Parse: "prs_a", Task: AssembleID, Outcome: Done, Assemble: &Assembled{}}}},
 		"an assemble that says nothing": {Settles: []Settle{{Parse: "prs_a", Task: AssembleID, Outcome: Done}}},
+		"a step that keeps nothing":     {Settles: []Settle{{Parse: "prs_a", Task: ExtractID("invoice"), Outcome: Continue}}},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -188,6 +211,7 @@ func TestSettingsAStoreCannotRunWithAreNamed(t *testing.T) {
 		`the reader "default"'s cost`:  func(s *Settings) { s.Pools[0].Cost = -2 },
 		`the read chain names "gone"`:  func(s *Settings) { s.ReadChain = []string{"default", "gone"} },
 		`the extract chain names "x"`:  func(s *Settings) { s.ExtractChain = []string{"x"} },
+		`the describe chain names "y"`: func(s *Settings) { s.DescribeChain = []string{"default", "y"} },
 		"outside 1 to 1000":            func(s *Settings) { s.BatchWeight = 5000 },
 		"the backoff cap is below the": func(s *Settings) { s.BackoffBase, s.BackoffCap = time.Minute, time.Second },
 	} {

@@ -32,14 +32,20 @@ const (
 	Page Kind = "page"
 	// Assemble builds the document from the page results and ends the parse.
 	Assemble Kind = "assemble"
-	// Extract fills one field from the assembled document.
+	// Extract fills one field from the document of a parse that has ended.
+	// One claim of it makes one model call, for a window of the document or
+	// for a repair, and the task goes on from claim to claim until the
+	// field is filled (specs/011-structured-extraction.md).
 	Extract Kind = "extract"
+	// Figure has a describer say what one figure of a parse that has ended
+	// shows (specs/003-api.md).
+	Figure Kind = "figure"
 )
 
 // CallsModel reports whether a task of the kind holds a slot in a reader's
 // pool. A prepare or an assemble task calls no model and is claimed whatever
 // the pools hold.
-func (k Kind) CallsModel() bool { return k == Page || k == Extract }
+func (k Kind) CallsModel() bool { return k == Page || k == Extract || k == Figure }
 
 // State is where a task stands.
 type State string
@@ -84,6 +90,7 @@ const (
 
 	pagePrefix    = "page-"
 	extractPrefix = "extract-"
+	figurePrefix  = "figure-"
 )
 
 // PageID is the id of the task that reads page n.
@@ -106,13 +113,31 @@ func PageOf(taskID string) (n int, ok bool) {
 // ExtractID is the id of the task that fills the field of the name.
 func ExtractID(field string) string { return extractPrefix + field }
 
+// FieldOf is the name of the field an extract task fills. ok is false for
+// the id of a task that is not one.
+func FieldOf(taskID string) (name string, ok bool) {
+	name, ok = strings.CutPrefix(taskID, extractPrefix)
+	return name, ok && name != ""
+}
+
+// FigureID is the id of the task that describes the figure a block's ref
+// names.
+func FigureID(ref string) string { return figurePrefix + ref }
+
+// FigureOf is the ref of the figure a figure task describes. ok is false
+// for the id of a task that is not one.
+func FigureOf(taskID string) (ref string, ok bool) {
+	ref, ok = strings.CutPrefix(taskID, figurePrefix)
+	return ref, ok && ref != ""
+}
+
 // Outcome is how one attempt at a task ended.
 type Outcome string
 
 // The outcomes a worker settles a task with. Done, Retryable, Permanent and
-// Wait are the rows of the table in specs/004-durable-tasks.md; a worker
-// that dies settles nothing, and the store's sweep is what returns its
-// tasks.
+// Wait are the rows of the table in specs/004-durable-tasks.md, and Continue
+// is the step of a task that makes several calls; a worker that dies settles
+// nothing, and the store's sweep is what returns its tasks.
 const (
 	// Done is a task that produced its output.
 	Done Outcome = "succeeded"
@@ -133,6 +158,14 @@ const (
 	// named its reader, and one with no reader left, fails with the error
 	// the settle carries.
 	Next Outcome = "next"
+	// Continue is a task that made a call, kept what it has so far under the
+	// key its settle names, and has another call to make: an extraction
+	// between 2 windows, or before a repair. The task returns to the queue at
+	// once, with no attempt spent and its attempts as a new task has them,
+	// and its next claim carries the key. So each call takes its own slot in
+	// the reader's pool and its own turn in the fair queue, and a worker
+	// that dies loses one call and not the calls before it.
+	Continue Outcome = "continue"
 	// Returned is a task given back unfinished by a worker that is
 	// stopping. No counter changes.
 	Returned Outcome = "returned"
@@ -141,7 +174,7 @@ const (
 // Valid reports whether o is an outcome the store knows.
 func (o Outcome) Valid() bool {
 	switch o {
-	case Done, Retryable, Permanent, Wait, Next, Returned:
+	case Done, Retryable, Permanent, Wait, Next, Continue, Returned:
 		return true
 	}
 	return false
@@ -239,6 +272,49 @@ type Context struct {
 	// owner kept for the same read, for a page task of a parse that takes
 	// such reads. Empty when there is none.
 	Reuse string `json:"reuse,omitempty"`
+
+	// Index is the object key of the parse's document index, for an extract
+	// task of a parse that has one. A parse that ended without one, canceled
+	// or out of time, is read through its task rows.
+	Index string `json:"index,omitempty"`
+
+	// Request is what an extraction was asked, for an extract task: a Field
+	// as one JSON document. It rides as text, so a schema reaches the worker
+	// byte for byte, with its members in the order its caller wrote them.
+	Request string `json:"request,omitempty"`
+
+	// Progress is the object key an earlier claim of the task left what it
+	// had so far under, for an extract task that settled with Continue.
+	// Empty on the task's first claim.
+	Progress string `json:"progress,omitempty"`
+
+	// Figure is the figure to describe, for a figure task.
+	Figure *FigureAsk `json:"figure,omitempty"`
+}
+
+// Field is the request of an extraction as it is kept and as its task is
+// told of it: the members of the request that decide what the model is
+// asked.
+type Field struct {
+	// Schema is the caller's JSON Schema, as it was sent.
+	Schema json.RawMessage `json:"schema"`
+	// Instructions are the caller's guidance for the model. May be empty.
+	Instructions string `json:"instructions,omitempty"`
+	// Citations says whether each value names the blocks it was read from.
+	Citations bool `json:"citations"`
+}
+
+// FigureAsk is one figure as its task is told of it.
+type FigureAsk struct {
+	// Page is the object key of the stored result of the figure's page. The
+	// figure's box, its caption and the key of the page's image are read
+	// from it.
+	Page string `json:"page"`
+	// Reuse is the object key of a description an earlier run kept for the
+	// same figure, of the same owner, the same bytes and the same
+	// describers. Empty when there is none, and for a run that describes
+	// again what is described.
+	Reuse string `json:"reuse,omitempty"`
 }
 
 // Source is a file as a prepare task is told of it.
@@ -293,7 +369,8 @@ type Settle struct {
 
 	Outcome Outcome `json:"outcome"`
 
-	// Output is the object key the task wrote its result under.
+	// Output is the object key the task wrote its result under, for a Done
+	// outcome, and the key of what it has so far, for a Continue.
 	Output string `json:"output,omitempty"`
 
 	// Usage is what this attempt consumed. It is recorded whatever the
@@ -313,9 +390,12 @@ type Settle struct {
 	// page to the next reader in the chain, once for the page.
 	Invalid bool `json:"invalid,omitempty"`
 
-	// Result is what the task says of its output, for a Done outcome: a
-	// small document the store keeps on the task's row as it is and never
-	// reads. A page writes the summary a list of pages is answered from.
+	// Result is what the task says of its output: a small document the
+	// store keeps as it is. A page writes the summary a list of pages is
+	// answered from, with a Done outcome. An extraction writes what a field
+	// says of how it was filled, with the outcome that ends it, whichever
+	// that is. A figure says whether its description was taken from an
+	// earlier run.
 	Result json.RawMessage `json:"result,omitempty"`
 
 	// RetryAfter is how long the endpoint said to wait, for a Wait outcome.
@@ -408,6 +488,10 @@ func (r Request) Validate() error {
 			return fmt.Errorf("tasks: settle %d of %s/%s succeeded and does not say what it prepared", i, s.Parse, s.Task)
 		case s.Outcome == Done && s.Task == AssembleID && (s.Assemble == nil || s.Assemble.Index == ""):
 			return fmt.Errorf("tasks: settle %d of %s/%s succeeded and names no document index", i, s.Parse, s.Task)
+		case s.Outcome == Continue && s.Output == "":
+			// The next claim would start the task over, and what it made
+			// so far would be made and charged again.
+			return fmt.Errorf("tasks: settle %d of %s/%s goes on and names no key of what it has so far", i, s.Parse, s.Task)
 		}
 	}
 	for i, h := range r.Held {
