@@ -196,9 +196,9 @@ var families = []family{
 }
 
 // counted builds a family at a size and counts the work of its check.
-func counted(t testing.TB, f family, n int) (s *Schema, data string, work int) {
+func counted(t testing.TB, f family, n int) (schema, data string, work int) {
 	t.Helper()
-	schema, data := f.build(n)
+	schema, data = f.build(n)
 	s, err := Compile([]byte(schema))
 	if err != nil {
 		t.Fatalf("%s: %v", f.name, err)
@@ -207,16 +207,16 @@ func counted(t testing.TB, f family, n int) (s *Schema, data string, work int) {
 	if err != nil || len(flaws) > 0 {
 		t.Fatalf("%s of %d: %v, %v", f.name, n, flaws, err)
 	}
-	return s, data, s.work(value)
+	return schema, data, s.work(value)
 }
 
 // sized returns a family at the size whose check counts between half a
 // target of work and the target, or the nearest size below it.
-func sized(t testing.TB, f family, target int) (s *Schema, data string, work int) {
+func sized(t testing.TB, f family, target int) (schema, data string, work int) {
 	t.Helper()
 	n := 4
 	for range 16 {
-		s, data, work = counted(t, f, n)
+		schema, data, work = counted(t, f, n)
 		switch {
 		case work > target && n > 1:
 			n = max(1, min(n-1, n*target/work))
@@ -224,14 +224,14 @@ func sized(t testing.TB, f family, target int) (s *Schema, data string, work int
 			// Most families grow with their size, and one doubles with it.
 			n = max(n+1, min(2*n, n*(target/max(work, 1))*3/4))
 		default:
-			return s, data, work
+			return schema, data, work
 		}
 	}
 	for work > target && n > 1 {
 		n--
-		s, data, work = counted(t, f, n)
+		schema, data, work = counted(t, f, n)
 	}
-	return s, data, work
+	return schema, data, work
 }
 
 // perUnit is what a test allows the validator to take for each unit of
@@ -247,25 +247,24 @@ func allowed(work int) time.Duration {
 
 // TestCountedWorkBoundsTheValidatorsTime: for each family of expensive
 // cases, an object sized to count a sixteenth of what a check may take is
-// checked within the time that much work is allowed, so the count is an
-// upper bound of what the validator does. An object sized past what a check
+// held to its schema, the schema read and compiled and the object counted
+// and validated, within the time that much work is allowed, so the count is
+// an upper bound of what the validator does. An object sized past what a check
 // may take is not held to the schema, and is answered without validating.
 // Under the race detector the objects are smaller by what it slows a check
 // down by, and what is held is the same: time for each unit of work.
 func TestCountedWorkBoundsTheValidatorsTime(t *testing.T) {
 	target := MaxCheckWork / 16 / slowdown
 	for _, f := range families {
-		s, data, work := sized(t, f, target)
+		schema, data, work := sized(t, f, target)
 		// The smallest object of a family may count more than the target.
 		if work > MaxCheckWork || work == 0 {
 			t.Errorf("%s: the smallest object counts %d of a target of %d", f.name, work, target)
 			continue
 		}
-		began := time.Now()
-		findings := s.Check([]byte(data), false)
-		took := time.Since(began)
-		if unchecked(findings) || took > allowed(work) {
-			t.Errorf("%s: %d units in %d bytes took %s, allowed %s, unchecked %t", f.name, work, len(data), took, allowed(work), unchecked(findings))
+		findings, took, refused := held(schema, data)
+		if refused != nil || unchecked(findings) || took > allowed(work) {
+			t.Errorf("%s: %d units in %d bytes took %s, allowed %s, unchecked %t, refused %v", f.name, work, len(data), took, allowed(work), unchecked(findings), refused)
 		}
 
 		// The same family, sized past the bound, when that is an object a
@@ -285,7 +284,7 @@ func TestCountedWorkBoundsTheValidatorsTime(t *testing.T) {
 			continue
 		}
 		schema, larger := f.build(n)
-		findings, took, refused := held(schema, larger)
+		findings, took, refused = held(schema, larger)
 		if refused != nil || !unchecked(findings) || took > 400*time.Millisecond*slowdown {
 			t.Errorf("%s: an object of %d bytes past the bound: refused %v, %d findings, after %s", f.name, len(larger), refused, len(findings), took)
 		}
@@ -472,7 +471,8 @@ func TestCalibration(t *testing.T) {
 	}
 	var rows []row
 	for _, f := range families {
-		s, data, work := sized(t, f, target)
+		schema, data, work := sized(t, f, target)
+		s := compiled(t, schema)
 		value, _, err := decode([]byte(data), MaxValueDepth)
 		if err != nil {
 			t.Fatal(err)

@@ -474,14 +474,13 @@ func TestTheWorkOfACheckIsCountedKeywordByKeyword(t *testing.T) {
 // the prices were set by, a chain of 200 references held to each number of
 // a list.
 func TestTheLongestCheckIsWithinWhatAModelCallTakes(t *testing.T) {
-	s, data, work := sized(t, families[0], MaxCheckWork)
+	schema, data, work := sized(t, families[0], MaxCheckWork)
 	if work < MaxCheckWork/2 || work > MaxCheckWork {
 		t.Fatalf("the object counts %d of %d", work, MaxCheckWork)
 	}
-	began := time.Now()
-	findings := s.Check([]byte(data), false)
-	if took := time.Since(began); findings != nil || took > 3*time.Second*slowdown {
-		t.Fatalf("%d units took %s with %d findings", work, took, len(findings))
+	findings, took, refused := held(schema, data)
+	if refused != nil || findings != nil || took > 3*time.Second*slowdown {
+		t.Fatalf("%d units took %s with %d findings, refused %v", work, took, len(findings), refused)
 	}
 }
 
