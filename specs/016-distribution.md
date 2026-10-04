@@ -291,12 +291,19 @@ Built:
   runs as a user that is not root. `lectio-convert version` prints the
   build's version. The image is built by hand; no workflow builds or
   publishes it.
+- `Dockerfile`: the server's image, `lectiod` alone on a distroless
+  base, with no shell and no office suite, run as the numeric user
+  65532. The build stage cross-compiles, so one file builds the image
+  for each platform. Built for one platform it is 37 MiB, and it starts
+  and reads a PDF with a read-only root file system and every
+  capability dropped. It is built by hand; no workflow builds or
+  publishes it.
 
 Remaining:
 
-- `lectio-stubs`, the server's image and the stubs', the rest of
-  `deploy/`, `docs/`, the generated configuration reference and its
-  test, the image tests, and the release workflow.
+- `lectio-stubs` and its image, the rest of `deploy/`, `docs/`, the
+  generated configuration reference and its test, the image tests, and
+  the release workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end
   tests of the API and the development server in one process, and the
   tests of `internal/store/postgres`, which start one Postgres and one

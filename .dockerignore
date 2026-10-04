@@ -1,0 +1,12 @@
+# What an image build does not read. The history is the largest entry of a
+# checkout and no build stage uses it: the version is passed as a build
+# argument, and the Go build stamps nothing from the repository.
+.git
+out/
+dist/
+coverage.out
+*.cover.out
+*.prof
+*.test
+.env
+.env.*
