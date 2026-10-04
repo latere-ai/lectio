@@ -79,6 +79,16 @@ Writing the generated files again does not write those again. They
 change only when someone runs the suite over the new files and commits
 what it wrote.
 
+## A file written when it is asked for
+
+`Logbook(pages, pictures...)` in `logbook.go` writes a PDF that carries
+its text: a harbor log with one entry to a page, a heading, 2 paragraphs
+and the page's number, set in the standard fonts, which a file names
+and does not hold. The pages listed as pictures hold an image and no
+text. It is no file of this directory: a test asks for the length it
+needs, 300 pages are under 300 KB, and `LogbookEntry` says what each page
+reads. Every sentence in it was written for this repository.
+
 ## The quality corpus
 
 The files under `quality/` are documents whose content is known block by

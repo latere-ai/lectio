@@ -19,7 +19,7 @@ import (
 // into a typeset file does.
 //
 // The file is written here so that a test can ask for any length: one of
-// 300 pages is 300 KB. Every sentence in it was written for this
+// 300 pages is under 300 KB. Every sentence in it was written for this
 // repository, and LogbookEntry says what each page reads.
 func Logbook(pages int, pictures ...int) []byte {
 	var out bytes.Buffer
