@@ -99,6 +99,12 @@ type Worker struct {
 	// pages it reads from them. Zero holds one at a time.
 	CacheBytes int64
 
+	// Retention is the store the retention sweep asks what has expired.
+	// Nil runs no sweep. Sweep is how often the worker asks whether the
+	// sweep is due; zero takes DefaultSweep.
+	Retention Retainer
+	Sweep     time.Duration
+
 	// Log takes one line per settled task. Nil takes slog.Default.
 	Log *slog.Logger
 
@@ -197,6 +203,14 @@ func (w *Worker) Run(ctx context.Context) error {
 	if !l.register(ctx) {
 		return nil
 	}
+	// The retention sweep runs beside the loop and ends with it. It holds
+	// no task, so stopping it in the middle leaves rows the next sweep
+	// finds.
+	var swept sync.WaitGroup
+	if w.Retention != nil {
+		swept.Go(func() { w.retain(ctx) })
+	}
+	defer swept.Wait()
 	for ctx.Err() == nil {
 		l.wait(ctx, l.due())
 		if ctx.Err() != nil {
