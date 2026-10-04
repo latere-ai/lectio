@@ -231,6 +231,32 @@ whose `owner` is that subject, lists are filtered to its own, the group
 is the owner, and limits are the configured defaults. Subjects in
 `LECTIO_ADMIN_SUBJECTS` may read any owner's resources and the queue.
 
+The rows, in the order they are tried:
+
+| Question | Answer |
+|---|---|
+| the probe id, as any subject | deny, `probe` |
+| no subject | deny, `anonymous` |
+| an action outside the vocabulary, or asked about another kind | deny, `unknown_action` |
+| `reader.list` | allow: the readers are the server's configuration and nobody's |
+| `parse.read` or `file.read`, as an admin | allow |
+| `parse.list` | allow, with a filter that narrows the list to the subject's own; no filter for an admin |
+| `usage.read` or `queue.read` that names no owner and no group | as `parse.list` |
+| `usage.read` or `queue.read` that names one | allow for an admin, and when every name is the subject; otherwise deny, `not_owner` |
+| a stored parse or file whose owner is the subject, any action | allow |
+| a create that names no owner | allow |
+| anything else | deny, `not_owner` |
+
+An admin reads and does not change: it cannot cancel, delete or retry
+another owner's parse, and cannot create in another owner's name. A
+create that names another owner is denied for every subject, so a
+service that submits for its users needs an authorizer.
+
+The policy names no limit: every request is held to the configured
+defaults, and a create is recorded under the caller's subject. An allow
+is narrowed by the grants of the caller's token, as an authorizer's is,
+and a token whose grants cannot be read is denied.
+
 ### Service callers
 
 A service that submits parses for many users authenticates as itself
@@ -261,7 +287,8 @@ Built, as a library the server does not call yet:
 - `internal/access`: the two interfaces a handler depends on, one that
   turns a request's bearer into a caller and one that answers a
   question with a decision; the resources a question is about; the
-  verifier; and the authorizer client.
+  verifier; the authorizer client; and the owner policy with its admin
+  subjects.
 
 A stand-in, in the server:
 
@@ -276,8 +303,8 @@ A stand-in, in the server:
   That is the owner policy's rule for one subject, without admin
   subjects.
 
-Remaining: the owner policy with its admin subjects, the action asked
-by each route, and service callers naming an owner.
+Remaining: the action asked by each route, and service callers naming
+an owner.
 
 ## Acceptance criteria
 
@@ -299,4 +326,6 @@ by each route, and service callers naming an owner.
 | Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | a dispatch test |
 | Two subjects whose allows name one `Group` and two `Project`s share `MaxQueued`, are served in the ratio of their `ProjectWeight`s within the group, and change no other group's dispatch count | a dispatch test |
 | Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | API tests |
-| A probe id is denied for every subject and action by the stub authorizer and by the owner policy | the vocabulary's `Probe()` test |
+| The rows of the owner policy: a subject and its own, another's, a create, the reads that range over owners, an admin that reads and does not change, and no subject | `TestTheOwnerPolicy`, `TestASubjectAndAnotherSubjectsParse` |
+| The owner policy answers the contract's conformance suite, and narrows an allow by the grants of a token | `TestOwnerPolicyConformance`, `TestOwnerPolicyNarrowsByTheGrants`, `TestTheGrantsOfATokenNarrowTheOwnersReach` |
+| A probe id is denied for every subject and action by the stub authorizer and by the owner policy | `TestTheProbeIsDeniedForEverySubjectAndAction` |
