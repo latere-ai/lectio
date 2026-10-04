@@ -210,6 +210,41 @@ type Claim struct {
 	// with nothing else, and claims nothing more until it settles it, so
 	// that a second death is the task's own.
 	Alone bool `json:"alone,omitempty"`
+
+	// Context is what the task needs of its parse. It rides on the claim so
+	// that running a task costs a worker no statement of its own.
+	Context Context `json:"context"`
+}
+
+// Context is the part of a parse a claim carries, by the kind of its task.
+type Context struct {
+	// Owner is the parse's owner.
+	Owner string `json:"owner,omitempty"`
+
+	// File is the source snapshot and Pages the caller's page selection,
+	// for a prepare task.
+	File  *Source `json:"file,omitempty"`
+	Pages string  `json:"pages,omitempty"`
+
+	// Languages are the hints a page is read with, for a page task.
+	Languages []string `json:"languages,omitempty"`
+
+	// Manifest is what prepare found out about the file, as its settle
+	// wrote it: without its list of pages for a page task, and whole for an
+	// assemble task.
+	Manifest json.RawMessage `json:"manifest,omitempty"`
+
+	// Reuse is the object key of a result an earlier parse of the same
+	// owner kept for the same read, for a page task of a parse that takes
+	// such reads. Empty when there is none.
+	Reuse string `json:"reuse,omitempty"`
+}
+
+// Source is a file as a prepare task is told of it.
+type Source struct {
+	Key       string `json:"key"`
+	Name      string `json:"name,omitempty"`
+	MediaType string `json:"media_type"`
 }
 
 // Usage is what one attempt consumed.

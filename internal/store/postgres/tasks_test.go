@@ -177,14 +177,15 @@ func TestAStaleTokenCannotSettle(t *testing.T) {
 		// The first claim's settle arrives late, under the token it was given.
 		late := done(first)
 		late.Usage = tasks.Usage{Calls: 1, InputTokens: 10}
-		reply := w.exchange(0, late)
-		if len(reply.Refused) != 1 || reply.Refused[0] != (tasks.Ref{Parse: "prs_a", Task: "page-1"}) {
-			t.Fatalf("a settle under a stale token was not refused: %+v", reply)
+		// The worker still runs the task under the token of its second claim,
+		// and says so in the exchange that carries the late settle.
+		reply, err := h.store.Exchange(context.Background(), w.id, tasks.Request{
+			Settles: []tasks.Settle{late},
+			Held:    []tasks.Held{{Parse: second.Parse, Task: second.Task, Token: second.Token}},
+		})
+		if err != nil || len(reply.Refused) != 1 || reply.Refused[0] != (tasks.Ref{Parse: "prs_a", Task: "page-1"}) || len(reply.Lost) != 0 {
+			t.Fatalf("a settle under a stale token was not refused: %+v, %v", reply, err)
 		}
-		// The refused settle took the task out of the worker's hands here;
-		// the store still holds it leased to the worker under the token it
-		// raised.
-		w.held[tasks.Ref{Parse: second.Parse, Task: second.Task}] = second
 
 		// Another live worker cannot settle it under the right token either.
 		if reply := other.exchange(0, done(second)); len(reply.Refused) != 1 {
@@ -733,7 +734,7 @@ func TestSubmitsCancelsAndExchangesAtOnce(t *testing.T) {
 			wg.Go(func() {
 				for i := range each {
 					id := fmt.Sprintf("prs_%d_%03d", s, i)
-					_, err := h.store.Submit(ctx, filled(postgres.Submission{
+					_, _, err := h.store.Submit(ctx, filled(postgres.Submission{
 						Parse: id, Group: "g" + strconv.Itoa(i%3), Project: "p" + strconv.Itoa(s%2), Class: tasks.Class(i % 2),
 					}))
 					fail(err)

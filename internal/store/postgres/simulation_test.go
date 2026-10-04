@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,7 +137,7 @@ func (s *simulation) queue(sub postgres.Submission, parses, n int) []string {
 	results := s.h.admin.SendBatch(context.Background(), batch)
 	for range ids {
 		var answer string
-		if err := results.QueryRow().Scan(&answer); err != nil || answer != "created" {
+		if err := results.QueryRow().Scan(&answer); err != nil || !strings.Contains(answer, `"result": "created"`) {
 			s.h.t.Fatalf("submitting a parse of %s: %q, %v", sub.Group, answer, err)
 		}
 	}

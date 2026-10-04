@@ -228,12 +228,19 @@ and at least once per third of the lease. In order, the exchange:
 3. **Reports** which of the tasks the worker still runs are no longer
    its own: canceled, or reissued after the worker was taken for dead.
    The worker cancels those tasks' contexts, which aborts a model call
-   in flight.
+   in flight. A task that is leased to the worker and that the request
+   neither settles nor names among the tasks it holds was handed out in
+   a reply the worker never read: it returns to the queue with no
+   counter changed, so an answer lost on its way strands no task behind
+   a worker that keeps renewing.
 4. **Claims** up to as many tasks as the worker has free slots, chosen
    by the fair queue among tasks whose reader has room
    ([[006-fairness-and-priority]], [[007-model-capacity]]). Each claim
    sets `state = 'leased'`, `lease_owner`, `leased_at`, raises
-   `lease_token`, and for a task that calls a model takes its slot.
+   `lease_token`, and for a task that calls a model takes its slot. A
+   claim carries what its task needs of its parse, the file for
+   `prepare`, the manifest and the language hints for a page, so
+   running a task costs a worker no statement of its own.
 5. **Takes and releases slots** for tasks that make more than one
    model call ([[007-model-capacity]]).
 

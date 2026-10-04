@@ -165,7 +165,7 @@ SELECT count(*) FROM (
 // the group is the parse's owner, the class interactive, the deadline an hour.
 func (h *harness) submit(sub postgres.Submission) {
 	h.t.Helper()
-	created, err := h.store.Submit(context.Background(), filled(sub))
+	_, created, err := h.store.Submit(context.Background(), filled(sub))
 	if err != nil || !created {
 		h.t.Fatalf("submitting %s: created %t, %v", sub.Parse, created, err)
 	}

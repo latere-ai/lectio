@@ -223,7 +223,7 @@ func TestSubmitRefusesWhatIsNotAParse(t *testing.T) {
 		} {
 			sub := ok
 			change(&sub)
-			if _, err := h.store.Submit(t.Context(), sub); fault.CodeOf(err) != fault.InvalidRequest {
+			if _, _, err := h.store.Submit(t.Context(), sub); fault.CodeOf(err) != fault.InvalidRequest {
 				t.Errorf("%s: Submit = %v, want invalid_request", name, err)
 			}
 		}
@@ -255,7 +255,7 @@ func TestSubmitRefreshesTheGroupAndTheProject(t *testing.T) {
 			MaxRunning: 10, MaxQueued: 20, MaxPriority: 5, Pin: "large",
 		})
 		h.submit(postgres.Submission{Parse: "prs_c", Owner: "carol", Group: "acme", Project: "search", Weight: 5000, ProjectWeight: 7})
-		created, err := h.store.Submit(ctx, filled(postgres.Submission{Parse: "prs_c", Owner: "carol", Group: "acme", Project: "search", Weight: 1}))
+		_, created, err := h.store.Submit(ctx, filled(postgres.Submission{Parse: "prs_c", Owner: "carol", Group: "acme", Project: "search", Weight: 1}))
 		if err != nil || created {
 			t.Fatalf("a submit repeated under one id: created %t, %v", created, err)
 		}
@@ -299,7 +299,7 @@ func TestAGroupAtMaxQueuedIsRefused(t *testing.T) {
 			h.submit(postgres.Submission{Parse: id, Group: "acme", MaxQueued: 2})
 		}
 		next := filled(postgres.Submission{Parse: "prs_3", Group: "acme", MaxQueued: 2})
-		if _, err := h.store.Submit(ctx, next); fault.CodeOf(err) != fault.QueueFull {
+		if _, _, err := h.store.Submit(ctx, next); fault.CodeOf(err) != fault.QueueFull {
 			t.Fatalf("a submit past max_queued = %v", err)
 		}
 		// Another group is not held to this one's bound.
@@ -308,7 +308,7 @@ func TestAGroupAtMaxQueuedIsRefused(t *testing.T) {
 		if err := h.store.Cancel(ctx, "prs_1"); err != nil {
 			t.Fatal(err)
 		}
-		if created, err := h.store.Submit(ctx, next); err != nil || !created {
+		if _, created, err := h.store.Submit(ctx, next); err != nil || !created {
 			t.Fatalf("a submit after a parse ended: created %t, %v", created, err)
 		}
 	})
@@ -378,7 +378,7 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 	if _, err := h.store.Exchange(ctx, w.id, tasks.Request{}); err == nil {
 		t.Error("Exchange on a closed store succeeded")
 	}
-	if _, err := h.store.Submit(ctx, filled(postgres.Submission{Parse: "prs_b", Group: "acme"})); err == nil || fault.CodeOf(err) != fault.Internal {
+	if _, _, err := h.store.Submit(ctx, filled(postgres.Submission{Parse: "prs_b", Group: "acme"})); err == nil || fault.CodeOf(err) != fault.Internal {
 		t.Errorf("Submit on a closed store = %v", err)
 	}
 	if err := h.store.Cancel(ctx, "prs_a"); err == nil || fault.CodeOf(err) != fault.Internal {
@@ -392,6 +392,22 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 	}
 	if _, err := h.store.Queue(ctx); err == nil {
 		t.Error("Queue on a closed store succeeded")
+	}
+	for name, call := range map[string]func() error{
+		"Ping":          func() error { return h.store.Ping(ctx) },
+		"Task":          func() error { _, _, err := h.store.Task(ctx, "prs_a", "prepare"); return err },
+		"ParseOf":       func() error { _, err := h.store.ParseOf(ctx, "acme", "prs_a"); return err },
+		"Parses":        func() error { _, _, err := h.store.Parses(ctx, "acme", postgres.Filter{}, "", 10); return err },
+		"DeleteParse":   func() error { return h.store.DeleteParse(ctx, "acme", "prs_a") },
+		"File":          func() error { _, err := h.store.File(ctx, "acme", "fil_1"); return err },
+		"FileByContent": func() error { _, _, err := h.store.FileByContent(ctx, "acme", "aa"); return err },
+		"InsertFile":    func() error { _, _, err := h.store.InsertFile(ctx, file("acme", "fil_1", "aa")); return err },
+		"DeleteFile":    func() error { _, err := h.store.DeleteFile(ctx, "acme", "fil_1"); return err },
+		"ForgetFile":    func() error { return h.store.ForgetFile(ctx, "fil_1") },
+	} {
+		if err := call(); err == nil || fault.CodeOf(err) != fault.Internal {
+			t.Errorf("%s on a closed store = %v", name, err)
+		}
 	}
 }
 

@@ -99,6 +99,47 @@ const (
 	versionSQL   = `SELECT version, dirty FROM schema_migrations`
 
 	parseSQL = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1`
+	taskSQL  = `SELECT to_jsonb(t)::text FROM tasks t WHERE t.parse_id = $1 AND t.task_id = $2`
+	pingSQL  = `SELECT 1`
+
+	parseOfSQL     = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1 AND p.owner = $2`
+	parseDeleteSQL = `SELECT lectio_parse_delete($1, $2)`
+
+	// parsesSQL reads one page of an owner's parses, newest first. Ids sort
+	// by creation time, so the page after an id is the ids below it. An
+	// empty filter member matches everything, and the labels are matched by
+	// containment: every one named must be on the parse.
+	parsesSQL = `
+SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.parse_id DESC), '[]'::jsonb)::text
+  FROM (SELECT * FROM parses
+         WHERE owner = $1
+           AND ($2 = '' OR state = $2)
+           AND ($3 = '' OR file_id = $3)
+           AND ($4 = '' OR origin->>'path' = $4)
+           AND labels @> $5::jsonb
+           AND ($6 = '' OR parse_id < $6)
+         ORDER BY parse_id DESC LIMIT $7) p`
+
+	fileSQL          = `SELECT to_jsonb(f)::text FROM files f WHERE f.file_id = $1 AND f.owner = $2 AND f.deleted_at IS NULL`
+	fileByContentSQL = `SELECT to_jsonb(f)::text FROM files f WHERE f.owner = $1 AND f.sha256 = $2 AND f.deleted_at IS NULL`
+	fileDeleteSQL    = `SELECT lectio_file_delete($1, $2)`
+	fileForgetSQL    = `DELETE FROM files WHERE file_id = $1 AND deleted_at IS NOT NULL`
+
+	// fileInsertSQL writes a file's row, or answers the row the owner
+	// already has for the same bytes. It answers no row when another
+	// statement is writing those bytes at the same instant: its row is not
+	// visible to this one, and running the statement again finds it.
+	fileInsertSQL = `
+WITH ins AS (
+  INSERT INTO files (file_id, owner, name, size, sha256, media_type, object_key)
+  VALUES ($1, $2, $3, $4, $5, $6, $7)
+  ON CONFLICT (owner, sha256) WHERE deleted_at IS NULL DO NOTHING
+  RETURNING *)
+SELECT jsonb_build_object('created', true, 'file', to_jsonb(ins))::text FROM ins
+UNION ALL
+SELECT jsonb_build_object('created', false, 'file', to_jsonb(f))::text FROM files f
+ WHERE f.owner = $2 AND f.sha256 = $5 AND f.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM ins)
+ LIMIT 1`
 	tasksSQL = `SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.seq, t.task_id), '[]'::jsonb)::text
 	              FROM tasks t WHERE t.parse_id = $1`
 
@@ -413,6 +454,50 @@ type Submission struct {
 	// Deadline is how long the parse has from its submit, on the database's
 	// clock. Nothing waits without bound, so it is required.
 	Deadline time.Duration `json:"-"`
+
+	// File is the file the parse reads. A file the owner does not have is
+	// refused with file_not_found. Empty is a parse with no file, which only
+	// a test of the queue submits.
+	File string `json:"file,omitempty"`
+
+	// Options, Labels and Origin are what the caller chose, kept as they
+	// came and returned with the parse.
+	Options ParseOptions      `json:"options"`
+	Labels  map[string]string `json:"labels,omitempty"`
+	Origin  *Origin           `json:"origin,omitempty"`
+
+	// IdempotencyKey makes the submit safe to repeat for 24 hours: a second
+	// submit of the owner with the key answers the parse the first made,
+	// when BodyDigest is the same, and is refused with idempotency_conflict
+	// when it is not.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	BodyDigest     string `json:"body_digest,omitempty"`
+
+	// ReadBase names what reading a page of this parse means, less the
+	// page: the file's bytes, the languages hinted, and every reader that
+	// may come to read it with its version. A page that was read whole is
+	// kept under it, and a later parse of the owner with the same base
+	// takes the page when its Options say so. Empty keeps and takes nothing.
+	ReadBase string `json:"read_base,omitempty"`
+}
+
+// ParseOptions are the members of a submit that say what is read.
+type ParseOptions struct {
+	// Pages is the caller's selection, empty for every page.
+	Pages string `json:"pages,omitempty"`
+	// Languages are hints for the reader, most likely first.
+	Languages []string `json:"languages,omitempty"`
+	// Reuse says the parse takes a page an earlier parse of the same owner
+	// read whole from the same bytes with the same readers.
+	Reuse bool `json:"reuse"`
+}
+
+// Origin is where a file lives for the caller. It is stored and returned,
+// and never interpreted.
+type Origin struct {
+	Store   string `json:"store,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // submission is a Submission with the deadline in milliseconds.
@@ -421,36 +506,46 @@ type submission struct {
 	DeadlineMS int64 `json:"deadline_ms"`
 }
 
-// Submit writes a parse and its prepare task in one transaction. created is
-// false when a parse of that id is already there, which is what a submit
-// repeated after an answer was lost finds. A group that already holds
-// max_queued parses that have not ended is refused with queue_full; two
-// submits of one group are serialized on the group's row, so they cannot
-// both pass at one below the bound.
-func (s *Store) Submit(ctx context.Context, sub Submission) (created bool, err error) {
+// Submit writes a parse and its prepare task in one transaction. parse is
+// the id of the parse that is there afterwards, and created is false when it
+// was there before: a parse of that id, which is what a submit repeated
+// after an answer was lost finds, or the parse an earlier submit made with
+// the same idempotency key. A group that already holds max_queued parses
+// that have not ended is refused with queue_full; two submits of one group
+// are serialized on the group's row, so they cannot both pass at one below
+// the bound, and two with one idempotency key make one parse.
+func (s *Store) Submit(ctx context.Context, sub Submission) (parse string, created bool, err error) {
 	switch {
 	case sub.Parse == "" || sub.Owner == "":
-		return false, fault.New(fault.InvalidRequest, "a parse has an id and an owner")
+		return "", false, fault.New(fault.InvalidRequest, "a parse has an id and an owner")
 	case sub.Class != tasks.Interactive && sub.Class != tasks.Batch:
-		return false, fault.New(fault.InvalidRequest, "the class is %d", sub.Class)
+		return "", false, fault.New(fault.InvalidRequest, "the class is %d", sub.Class)
 	case sub.Deadline < time.Millisecond:
-		return false, fault.New(fault.InvalidRequest, "a parse has a deadline")
+		return "", false, fault.New(fault.InvalidRequest, "a parse has a deadline")
 	}
 	if sub.Group == "" {
 		sub.Group = sub.Owner
 	}
 	doc, err := json.Marshal(submission{Submission: sub, DeadlineMS: sub.Deadline.Milliseconds()})
 	if err != nil {
-		return false, fmt.Errorf("store: encoding the submit of %s: %w", sub.Parse, err)
+		return "", false, fmt.Errorf("store: encoding the submit of %s: %w", sub.Parse, err)
 	}
-	answer, err := s.text(ctx, submitSQL, submitAtSQL, string(doc))
-	switch {
-	case err != nil:
-		return false, fmt.Errorf("store: submitting %s: %w", sub.Parse, err)
-	case answer == "queue_full":
-		return false, fault.New(fault.QueueFull, "the group %s holds as many parses as it may", sub.Group)
+	var answer struct {
+		Result string `json:"result"`
+		Parse  string `json:"parse"`
 	}
-	return answer == "created", nil
+	if err := s.decode(ctx, &answer, submitSQL, submitAtSQL, string(doc)); err != nil {
+		return "", false, fmt.Errorf("store: submitting %s: %w", sub.Parse, err)
+	}
+	switch answer.Result {
+	case "queue_full":
+		return "", false, fault.New(fault.QueueFull, "the group %s holds as many parses as it may", sub.Group)
+	case "file_not_found":
+		return "", false, fault.New(fault.FileNotFound, "no file %s", sub.File)
+	case "conflict":
+		return "", false, fault.New(fault.IdempotencyConflict, "the idempotency key was used with another body")
+	}
+	return answer.Parse, answer.Result == "created", nil
 }
 
 // Cancel moves a parse and its queued and leased tasks to canceled in one
@@ -494,6 +589,19 @@ type Parse struct {
 	CreatedAt        time.Time       `json:"created_at"`
 	StartedAt        *time.Time      `json:"started_at"`
 	FinishedAt       *time.Time      `json:"finished_at"`
+
+	// What the caller chose, and how many of the pages done were taken from
+	// an earlier read.
+	File        string            `json:"file_id"`
+	Options     ParseOptions      `json:"options"`
+	Labels      map[string]string `json:"labels"`
+	Origin      *Origin           `json:"origin"`
+	PagesReused int               `json:"pages_reused"`
+}
+
+// Terminal reports whether the parse has ended.
+func (p Parse) Terminal() bool {
+	return p.State == "succeeded" || p.State == "failed" || p.State == "canceled"
 }
 
 // Parse returns a parse with its counters.
@@ -599,4 +707,172 @@ func (s *Store) Queue(ctx context.Context) ([]GroupQueue, error) {
 		return nil, fmt.Errorf("store: reading the queue: %w", err)
 	}
 	return out, nil
+}
+
+// Task returns one task row of a parse. ok is false when the parse has no
+// such row: the task was never written, or it succeeded and its parse ended.
+func (s *Store) Task(ctx context.Context, parseID, taskID string) (task Task, ok bool, err error) {
+	err = s.decode(ctx, &task, taskSQL, "", parseID, taskID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Task{}, false, nil
+	case err != nil:
+		return Task{}, false, fmt.Errorf("store: reading %s of %s: %w", taskID, parseID, err)
+	}
+	return task, true, nil
+}
+
+// Ping reports whether the database answers.
+func (s *Store) Ping(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx, pingSQL); err != nil {
+		return fmt.Errorf("store: the database does not answer: %w", err)
+	}
+	return nil
+}
+
+// ParseOf returns an owner's parse. Another owner's parse is not found.
+func (s *Store) ParseOf(ctx context.Context, owner, parseID string) (Parse, error) {
+	var p Parse
+	err := s.decode(ctx, &p, parseOfSQL, "", parseID, owner)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", parseID)
+	case err != nil:
+		return Parse{}, fmt.Errorf("store: reading %s: %w", parseID, err)
+	}
+	return p, nil
+}
+
+// Filter narrows a list of parses. A zero member matches everything.
+type Filter struct {
+	State      string
+	File       string
+	OriginPath string
+	// Labels must each be on a parse with the same value.
+	Labels map[string]string
+}
+
+// Parses returns an owner's parses that match, newest first: at most limit
+// of them, starting after the parse whose id is after. more reports whether
+// others follow.
+func (s *Store) Parses(ctx context.Context, owner string, f Filter, after string, limit int) (out []Parse, more bool, err error) {
+	labels, err := json.Marshal(f.Labels)
+	if err != nil || f.Labels == nil {
+		labels = []byte("{}")
+	}
+	// One row past the limit says whether a next page exists.
+	if err := s.decode(ctx, &out, parsesSQL, "", owner, f.State, f.File, f.OriginPath, string(labels), after, limit+1); err != nil {
+		return nil, false, fmt.Errorf("store: listing the parses of an owner: %w", err)
+	}
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
+}
+
+// DeleteParse removes an owner's parse that has ended, with its task rows
+// and the reads kept from it. The caller removes the parse's objects first:
+// a delete that stops between the two leaves a row to delete again, and
+// never an object nothing names.
+func (s *Store) DeleteParse(ctx context.Context, owner, parseID string) error {
+	answer, err := s.text(ctx, parseDeleteSQL, "", owner, parseID)
+	switch {
+	case err != nil:
+		return fmt.Errorf("store: deleting %s: %w", parseID, err)
+	case answer == "missing":
+		return fault.New(fault.ParseNotFound, "no parse %s", parseID)
+	case answer == "not_terminal":
+		return fault.New(fault.NotTerminal, "parse %s has not ended", parseID)
+	}
+	return nil
+}
+
+// File is the row of a source snapshot. The bytes are in the object store
+// under Key.
+type File struct {
+	ID        string    `json:"file_id"`
+	Owner     string    `json:"owner"`
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	SHA256    string    `json:"sha256"`
+	MediaType string    `json:"media_type"`
+	Key       string    `json:"object_key"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// File returns an owner's file.
+func (s *Store) File(ctx context.Context, owner, fileID string) (File, error) {
+	var f File
+	err := s.decode(ctx, &f, fileSQL, "", fileID, owner)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return File{}, fault.New(fault.FileNotFound, "no file %s", fileID)
+	case err != nil:
+		return File{}, fmt.Errorf("store: reading %s: %w", fileID, err)
+	}
+	return f, nil
+}
+
+// FileByContent returns the file an owner has for the bytes of a digest. ok
+// is false when the owner has none.
+func (s *Store) FileByContent(ctx context.Context, owner, sha256 string) (f File, ok bool, err error) {
+	err = s.decode(ctx, &f, fileByContentSQL, "", owner, sha256)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return File{}, false, nil
+	case err != nil:
+		return File{}, false, fmt.Errorf("store: reading a file by its content: %w", err)
+	}
+	return f, true, nil
+}
+
+// InsertFile writes a file's row. The same bytes are one file per owner:
+// when the owner already has a file with the digest, that file is returned
+// and created is false, and the caller removes the object it wrote for f.
+func (s *Store) InsertFile(ctx context.Context, f File) (stored File, created bool, err error) {
+	var answer struct {
+		Created bool `json:"created"`
+		File    File `json:"file"`
+	}
+	// The second run is for two uploads of the same bytes at one instant.
+	for range 2 {
+		err = s.decode(ctx, &answer, fileInsertSQL, "", f.ID, f.Owner, f.Name, f.Size, f.SHA256, f.MediaType, f.Key)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			break
+		}
+	}
+	if err != nil {
+		return File{}, false, fmt.Errorf("store: writing %s: %w", f.ID, err)
+	}
+	return answer.File, answer.Created, nil
+}
+
+// DeleteFile begins the delete of an owner's file and returns the key of
+// its object: the file is gone for every caller from here on. The caller
+// removes the object and then calls ForgetFile. A file that a parse which
+// has not ended reads is refused with not_terminal.
+func (s *Store) DeleteFile(ctx context.Context, owner, fileID string) (key string, err error) {
+	var answer struct {
+		Result string `json:"result"`
+		Key    string `json:"key"`
+	}
+	if err := s.decode(ctx, &answer, fileDeleteSQL, "", owner, fileID); err != nil {
+		return "", fmt.Errorf("store: deleting %s: %w", fileID, err)
+	}
+	switch answer.Result {
+	case "missing":
+		return "", fault.New(fault.FileNotFound, "no file %s", fileID)
+	case "not_terminal":
+		return "", fault.New(fault.NotTerminal, "a parse that has not ended reads file %s", fileID)
+	}
+	return answer.Key, nil
+}
+
+// ForgetFile removes the row of a file whose delete began, once its object
+// is gone.
+func (s *Store) ForgetFile(ctx context.Context, fileID string) error {
+	if _, err := s.pool.Exec(ctx, fileForgetSQL, fileID); err != nil {
+		return fmt.Errorf("store: removing the row of %s: %w", fileID, err)
+	}
+	return nil
 }

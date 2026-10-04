@@ -606,7 +606,7 @@ func TestConcurrentSubmitsAtMaxQueued(t *testing.T) {
 		for i := range 50 {
 			wg.Go(func() {
 				sub := filled(postgres.Submission{Parse: "prs_at_once_" + string(rune('A'+i)), Group: "acme", MaxQueued: bound})
-				created, err := h.store.Submit(context.Background(), sub)
+				_, created, err := h.store.Submit(context.Background(), sub)
 				switch {
 				case err == nil && created:
 					admitted.Add(1)
