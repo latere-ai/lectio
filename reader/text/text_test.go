@@ -613,11 +613,18 @@ func TestAPageThatIsMostlyDrawingIsDeclined(t *testing.T) {
 		t.Errorf("a page of shapes: %q", why)
 	}
 
-	over := letter()
-	over.table([]float64{72, 200, 300}, []float64{100, 120, 140}, body, []string{"a", "b"}, []string{"c", "d"})
-	over.Drawings = append(over.Drawings, reader.Rect{X0: 250, Y0: 110, X1: 420, Y1: 200})
-	if why := declined(t, "a drawing over a table", &over.PageText); !strings.Contains(why, "over a table") {
-		t.Errorf("a drawing over a table: %q", why)
+	// A drawing that reaches into a table, and a mark drawn inside a cell
+	// in place of a word.
+	for name, drawing := range map[string]reader.Rect{
+		"a drawing over a table":     {X0: 250, Y0: 110, X1: 420, Y1: 200},
+		"a mark drawn inside a cell": {X0: 240, Y0: 124, X1: 248, Y1: 132},
+	} {
+		over := letter()
+		over.table([]float64{72, 200, 300}, []float64{100, 120, 140}, body, []string{"a", "b"}, []string{"c", ""})
+		over.Drawings = append(over.Drawings, drawing)
+		if why := declined(t, name, &over.PageText); !strings.Contains(why, "over a table") {
+			t.Errorf("%s: %q", name, why)
+		}
 	}
 }
 

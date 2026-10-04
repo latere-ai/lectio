@@ -179,10 +179,16 @@ func (p *page) bullets() {
 // inside it.
 func (p *page) figures() error {
 	// What a figure is made of: a drawing, and a painted area that holds
-	// no word, as a bar of a chart does and a background does not.
+	// no word, as a bar of a chart does and a background does not. A
+	// drawing inside a table is what a cell holds in place of words, a
+	// mark or a picture, and a table of this reader has words alone.
 	var parts []rect
 	for d, r := range p.t.Drawings {
-		if !p.spent[d] && !p.inTable(r) {
+		switch {
+		case p.spent[d]:
+		case p.inTable(r):
+			return decline("a drawing of the page lies over a table")
+		default:
 			parts = append(parts, r)
 		}
 	}
@@ -392,14 +398,14 @@ func joinLines(lines []string) string {
 			out.WriteString(text)
 			continue
 		}
-		so := out.String()
-		last, size := utf8.DecodeLastRuneInString(so)
+		joined := out.String()
+		last, size := utf8.DecodeLastRuneInString(joined)
 		first, _ := utf8.DecodeRuneInString(text)
-		before, _ := utf8.DecodeLastRuneInString(so[:len(so)-size])
+		before, _ := utf8.DecodeLastRuneInString(joined[:len(joined)-size])
 		switch {
 		case last == '\u00ad':
 			out.Reset()
-			out.WriteString(so[:len(so)-size])
+			out.WriteString(joined[:len(joined)-size])
 		case last == '-' && unicode.IsLetter(before) && unicode.IsLower(first):
 		default:
 			out.WriteByte(' ')

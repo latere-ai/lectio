@@ -413,12 +413,8 @@ func (p *page) table(l *lattice) error {
 
 	// The leading rows that are set apart from the rest, in bold or on a
 	// background, are the table's header.
-	marked := make([]bool, l.rows)
-	for r := range marked {
-		marked[r] = p.headerRow(l, r)
-	}
 	head := 0
-	for head < l.rows && marked[head] {
+	for head < l.rows && p.headerRow(l, head) {
 		head++
 	}
 	if head == l.rows {
