@@ -756,6 +756,7 @@ type Task struct {
 	Priority     int          `json:"priority"`
 	Seq          int          `json:"seq"`
 	Pin          string       `json:"pin"`
+	Stuck        bool         `json:"stuck"`
 	State        tasks.State  `json:"state"`
 	Attempt      int          `json:"attempt"`
 	Expiries     int          `json:"expiries"`

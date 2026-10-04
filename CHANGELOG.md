@@ -24,8 +24,12 @@ refused before it is pushed.
   keeps nothing of what it applied, so such a schema costs work that
   doubles with every definition. A reply that would take more than
   2,097,152 applications of its schema to check is not checked, and
-  fails the extraction with `schema_not_satisfied`. A document longer than the extractor's input
-  is read in windows, at most 32, and the replies are merged. An
+  fails the extraction with `schema_not_satisfied`. A document longer
+  than the extractor's input is read in windows, at most 32, and the
+  replies are merged. An
+  extraction that has made a call stays with its extractor: it waits
+  while that one is paused, and moves down the chain only when the
+  extractor declines it or its replies are not usable. An
   extraction may be asked while its parse runs and waits for the parse
   to end. A parse holds at most 64 extractions. A development server
   answers `501` for the 3 routes.

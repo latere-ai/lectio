@@ -436,6 +436,110 @@ func TestAnExtractionFollowsTheClassOfItsExtractorsError(t *testing.T) {
 	})
 }
 
+// TestAnExtractionStaysWithTheExtractorThatBeganIt: an extraction that has
+// made a call was cut for the extractor that made it, and another would
+// start it over and be paid for the same windows again. So when that
+// extractor is paused between 2 claims the extraction waits for it, while
+// one that has made no call yet is taken by the next of the chain. It is
+// claimed for its own extractor when the pause ends, with no pin a caller
+// set. It leaves the extractor only by the outcome that moves a task down
+// the chain, starts over with the one after, stays with that one, and has
+// no extractor to return to.
+func TestAnExtractionStaysWithTheExtractorThatBeganIt(t *testing.T) {
+	logic(t, extractors(), func(t *testing.T, h *harness) {
+		w := h.worker()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 1)
+		h.field("prs_a", "long", "")
+		h.field("prs_a", "other", "")
+		claims := w.claim(2, 2)
+		long, other := claims[0], claims[1]
+		if long.Task != "extract-long" || long.Reader != "text" || other.Reader != "text" {
+			t.Fatalf("the extractions were claimed as %s", names(claims))
+		}
+		// One makes its first call. The other is told to wait, which pauses
+		// the extractor for 7 seconds.
+		w.settle(step(long), limited(other, 7*time.Second))
+		if row := h.task("prs_a", "extract-long"); !row.Stuck || row.Pin != "text" || row.Lane != "extract:text" || row.Output != step(long).Output {
+			t.Fatalf("after its first call the extraction is %+v", row)
+		}
+
+		// While the extractor is paused, an extraction that has made no call
+		// is taken by the next of the chain, and the one that has waits.
+		h.field("prs_a", "fresh", "")
+		fresh := w.claim(3, 1)[0]
+		if fresh.Task != "extract-fresh" || fresh.Reader != "strong" {
+			t.Fatalf("with the first extractor paused, %s was claimed for %s", fresh.Task, fresh.Reader)
+		}
+		h.advance(6 * time.Second)
+		w.claim(3, 0)
+
+		// The pause ends: it is claimed for its own extractor, with what it
+		// had so far, and is told of no pin.
+		h.advance(2 * time.Second)
+		claims = w.claim(3, 2)
+		long = claims[0]
+		if long.Task != "extract-long" || long.Reader != "text" || long.Pin != "" || long.Context.Progress == "" || claims[1].Task != "extract-other" {
+			t.Fatalf("after the pause the claims are %s, the first %+v", names(claims), long)
+		}
+
+		// The extractor declines it: it moves to the one after and is its
+		// own no more, until that one has made a call.
+		w.settle(declined(long, "schema_not_satisfied"))
+		if row := h.task("prs_a", "extract-long"); row.Stuck || row.Pin != "" || row.Lane != "extract@1" {
+			t.Fatalf("an extraction its extractor declined is %+v", row)
+		}
+		long = w.claim(1, 1)[0]
+		if long.Reader != "strong" {
+			t.Fatalf("it was claimed for %s", long.Reader)
+		}
+		w.settle(step(long))
+		if row := h.task("prs_a", "extract-long"); !row.Stuck || row.Pin != "strong" || row.Lane != "extract:strong" {
+			t.Fatalf("after a call of the second extractor the extraction is %+v", row)
+		}
+		// No extractor is left after the last: declined there, it fails.
+		long = w.claim(1, 1)[0]
+		w.settle(declined(long, "schema_not_satisfied"))
+		if f := h.read("prs_a", "long"); f.State != postgres.FieldFailed || f.Error.Code != "schema_not_satisfied" || f.Calls != 2 {
+			t.Fatalf("with no extractor left the extraction is %+v, error %+v", f, f.Error)
+		}
+
+		// 2 replies that were not usable move it once, as they move a page,
+		// and it leaves its extractor then too.
+		w.settle(done(claims[1]), done(fresh))
+		h.field("prs_a", "garbled", "")
+		c := w.claim(1, 1)[0]
+		w.settle(step(c))
+		for range 2 {
+			h.advance(time.Minute)
+			c = w.claim(1, 1)[0]
+			bad := ended(c, tasks.Retryable, "schema_not_satisfied")
+			bad.Invalid = true
+			w.settle(bad)
+		}
+		if row := h.task("prs_a", "extract-garbled"); row.Stuck || row.Pin != "" || row.Lane != "extract@1" {
+			t.Fatalf("after 2 replies that were not usable the extraction is %+v", row)
+		}
+
+		// One that named its extractor is pinned by its caller, and stays so.
+		h.field("prs_a", "pinned", "text")
+		h.advance(time.Minute)
+		for _, c := range w.claim(2, 2) {
+			if c.Task == "extract-pinned" {
+				if c.Pin != "text" {
+					t.Fatalf("a pinned extraction is told of the pin %q", c.Pin)
+				}
+				w.settle(step(c))
+				continue
+			}
+			w.settle(done(c))
+		}
+		if row := h.task("prs_a", "extract-pinned"); row.Stuck || row.Pin != "text" {
+			t.Fatalf("after a call a pinned extraction is %+v", row)
+		}
+		h.consistent()
+	})
+}
+
 // TestAWorkerThatDiesMidExtractionLosesOneCall: an extraction whose worker
 // dies between 2 of its calls returns to the queue with one expiry and what
 // it had so far: the worker that takes it next is handed the key the last

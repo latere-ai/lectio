@@ -27,6 +27,13 @@ ALTER TABLE parses
   ADD COLUMN fields    integer NOT NULL DEFAULT 0,   -- extractions asked of it
   ADD COLUMN described integer NOT NULL DEFAULT 0;   -- figures of it that hold a description
 
+-- A task that stays with the reader that began it: an extraction that has
+-- made a call. Its pin is that reader and no caller's. It waits for the
+-- reader as a pinned task does, and unlike one it has a chain: the outcomes
+-- that move a task down the chain move it, and it then starts over with the
+-- reader after.
+ALTER TABLE tasks ADD COLUMN stuck boolean NOT NULL DEFAULT false;
+
 -- fields holds one extraction of a parse: what was asked, where it stands,
 -- and where its result is. The result's bytes are in the object store. A
 -- field is pending from its request until its task ends, whether it waits
@@ -719,7 +726,10 @@ END $$;
 -- extraction between 2 windows or before a repair. The task returns to the
 -- queue at once with the key of what it has so far, no attempt spent and
 -- its attempts as a new task has them. Its next claim takes a slot and a
--- charge of its own, so such a task holds a slot only while it calls.
+-- charge of its own, so such a task holds a slot only while it calls. From
+-- its first step on the task stays with the reader that made the call: it
+-- is pinned to it, waits for it, and leaves it only by the 2 outcomes that
+-- move a task down the chain, for the reader after.
 CREATE OR REPLACE FUNCTION lectio_settle(p_worker text, p_s jsonb, p_cfg settings, p_now timestamptz)
 RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE
@@ -738,6 +748,8 @@ DECLARE
   v_chain_at  integer;
   v_invalid   integer;
   v_escalated boolean;
+  v_pin       text;
+  v_stuck     boolean;
   v_read      integer;
   v_calls     integer := coalesce((p_s->'usage'->>'calls')::integer, 0);
   v_in        bigint  := coalesce((p_s->'usage'->>'input_tokens')::bigint, 0);
@@ -756,11 +768,15 @@ BEGIN
   v_chain_at  := v_t.chain_at;
   v_invalid   := v_t.invalid;
   v_escalated := v_t.escalated;
+  v_pin       := v_t.pin;
+  v_stuck     := v_t.stuck;
   -- The position after the reader that read the task: a reader that was
-  -- passed over at the claim is not tried again by a task that moves on.
+  -- passed over at the claim is not tried again by a task that moves on. A
+  -- task a caller pinned has no chain to move down. One that stays with the
+  -- reader that began it has, and leaves that reader when it moves.
   v_chain := lectio_chain(v_t.kind, p_cfg);
   v_next  := coalesce(array_position(v_chain, v_t.reader), v_t.chain_at + 1);
-  v_moves := v_t.pin IS NULL AND v_next < coalesce(array_length(v_chain, 1), 0);
+  v_moves := (v_t.pin IS NULL OR v_t.stuck) AND v_next < coalesce(array_length(v_chain, 1), 0);
   CASE v_outcome
     WHEN 'succeeded' THEN
       v_state := 'succeeded';
@@ -779,6 +795,10 @@ BEGIN
         v_invalid   := 0;
         v_escalated := true;
         v_available := p_now;
+        IF v_t.stuck THEN
+          v_pin   := NULL;
+          v_stuck := false;
+        END IF;
       ELSIF v_attempt >= p_cfg.attempts THEN
         v_state := 'failed';
       ELSE
@@ -795,6 +815,10 @@ BEGIN
         v_attempt   := 0;
         v_invalid   := 0;
         v_available := p_now;
+        IF v_t.stuck THEN
+          v_pin   := NULL;
+          v_stuck := false;
+        END IF;
       ELSE
         v_state := 'failed';
       END IF;
@@ -814,6 +838,14 @@ BEGIN
       v_attempt   := 0;
       v_invalid   := 0;
       v_available := p_now;
+      -- The call was made, so the task stays with the reader that made it.
+      -- What it has so far was cut for that reader's input: another reader
+      -- would start it over, and the calls made so far would be paid again
+      -- each time a pause or a breaker moved the task between 2 readers.
+      IF v_t.pin IS NULL AND v_t.reader IS NOT NULL THEN
+        v_pin   := v_t.reader;
+        v_stuck := true;
+      END IF;
     WHEN 'returned' THEN
       v_state := 'queued';
       v_error := v_t.error;
@@ -848,11 +880,11 @@ BEGIN
   -- that is the worker slot it held.
   v_units := greatest(1, coalesce((p_s->>'units')::integer, 0));
   PERFORM lectio_correct(v_t, v_units,
-    CASE WHEN v_state = 'queued' THEN lectio_lane(v_t.kind, v_t.pin, v_chain_at) END);
+    CASE WHEN v_state = 'queued' THEN lectio_lane(v_t.kind, v_pin, v_chain_at) END);
 
   UPDATE tasks SET
          state = v_state, attempt = v_attempt, available_at = v_available, calling = false,
-         chain_at = v_chain_at, invalid = v_invalid, escalated = v_escalated,
+         chain_at = v_chain_at, invalid = v_invalid, escalated = v_escalated, pin = v_pin, stuck = v_stuck,
          lease_owner = CASE WHEN v_state = 'queued' THEN NULL ELSE lease_owner END,
          reader      = CASE WHEN v_state = 'queued' THEN NULL ELSE reader END,
          scope       = CASE WHEN v_state = 'queued' THEN NULL ELSE scope END,
@@ -1132,7 +1164,8 @@ BEGIN
     p_claims := p_claims || jsonb_build_object(
       'parse', v_t.parse_id, 'task', v_t.task_id, 'kind', v_t.kind, 'token', v_token,
       'group', v_t.group_id, 'project', v_t.project_id, 'attempt', v_t.attempt, 'expiries', v_t.expiries,
-      'pin', v_t.pin, 'reader', v_reader, 'scope', CASE WHEN v_reader IS NULL THEN NULL ELSE v_scope END,
+      'pin', CASE WHEN v_t.stuck THEN NULL ELSE v_t.pin END, 'reader', v_reader,
+      'scope', CASE WHEN v_reader IS NULL THEN NULL ELSE v_scope END,
       'alone', v_t.expiries > 0);
     v_free  := v_free - 1;
     v_held  := v_held + 1;

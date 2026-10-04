@@ -290,14 +290,32 @@ The first claim reads the document, cuts it for the extractor it was
 claimed for, and writes the cut once, `fields/<name>.<token>.input.json`.
 Every later claim reads its window from there, so the calls of one
 extraction are over one reading of the document, and the pages are
-read from the object store once. A task that moved down the policy's
-chain to another extractor cuts the document again for that one, whose
-bound on a call's text is its own, and starts its calls over.
+read from the object store once.
+
+An extraction that has made a call stays with the extractor that made
+it. A page that finds its reader paused or its breaker open passes over
+it to the next of the chain, and an extraction does too until its first
+call has been answered. From then on what it has was cut for that
+extractor's input, and another extractor would cut the document again
+and start the calls over, so an extraction between 2 extractors whose
+pause or breaker comes and goes would be billed for the same windows
+each time it changed hands. So the step that keeps the first reply
+also pins the task to its extractor: it waits while that extractor is
+paused, shut or full, as a task whose request named an extractor does,
+and until its deadline. It leaves the extractor only by the 2 outcomes
+that move a page down the chain ([[005-parse-graph]]): the extractor
+declined the document or its endpoint rejects the request, or its
+second reply in a row was not usable. It then goes to the extractor
+after, cuts the document again for that one, whose bound on a call's
+text is its own, starts its calls over, and stays there. A chain is
+walked in one direction, so an extraction starts over at most once for
+each extractor of it.
 
 The task is the parse's: it runs in the parse's group and project, in
 its class and at its priority, behind the parse's own `prepare` and
 `assemble` and ahead of the group's pages of that priority. It is
-claimed for the extractor its request named, which pins it, or for the
+claimed for the extractor its request named, which pins it, for the
+extractor that made its first call, or, before that call, for the
 first extractor of the policy's `extract` chain that is not passed over
 ([[007-model-capacity]]).
 
@@ -540,6 +558,7 @@ Remaining:
 |---|---|
 | A schema that is invalid, too large or too deep is refused when the request arrives, with the reason | `TestASchemaIsCheckedWhenAnExtractionIsAsked`, through the API over the durable backend: nothing is queued and no model is called; `TestASchemaIsCheckedWhenItArrives` of `internal/extract`, with a reference to an address, to a file and to a sibling document among the refused |
 | A schema of 40 definitions that each apply the next one 2 times is refused with `invalid_schema` in well under 1 second, and so is every schema that applies more than 256 subschemas to one value or applies itself without end; a schema that recurs through its members and items, and one that shares its definitions, are taken and held | `TestASchemaThatDoublesItsWorkIsRefusedWhenItArrives`, `TestASchemaThatAppliesItselfWithoutEndIsRefused`, `TestASchemaThatRecursThroughItsMembersIsTakenAndHeld`, `TestASchemaThatSharesItsDefinitionsIsTaken`, `TestADynamicAnchorNamesOneSubschema` and `TestASubschemaInAnotherDialectIsRefused` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
+| With 2 extractors in the chain, an extraction whose first call was answered by the first waits when that one is paused between 2 claims, while an extraction that has made no call is taken by the second; it is claimed for the first again when the pause ends, and moves to the second, once, only when the first declines it or its replies are not usable | `TestAnExtractionStaysWithTheExtractorThatBeganIt` at the store, with a virtual clock |
 | A reply that would take more than 2,097,152 applications of its schema to check is not held to it: the field fails `schema_not_satisfied` after 1 call, with no repair, and the claim returns its slot | `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema` and `TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
 | Two schemas requested against one succeeded parse, one after the other, produce two fields and no reader call | `TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain`, through the API over the durable backend, with a reader that counts its calls |
 | For a fixture invoice and a stub text model, the result validates against the schema and every citation resolves to a block whose text contains the value | the same test, reading each citation with `resolve=true` and the block it names |

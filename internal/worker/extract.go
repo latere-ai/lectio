@@ -131,8 +131,10 @@ func (w *Worker) conclude(ctx context.Context, c tasks.Claim, s *tasks.Settle, n
 // extraction stands. A claim that carries the key of what an earlier claim
 // kept reads both from there. The first claim, and a claim for another
 // extractor than the one the document was cut for, reads the document, cuts
-// it, and keeps the cut under its own token. ok is false when the attempt
-// has ended.
+// it, and keeps the cut under its own token. The task store keeps an
+// extraction with the extractor that made its first call, so the second
+// case is a task that moved down the policy's chain, which it does at most
+// once for each extractor. ok is false when the attempt has ended.
 func (w *Worker) resume(ctx context.Context, c tasks.Claim, name string, ext reader.Extractor, s *tasks.Settle) (in extract.Input, progress extract.Progress, ok bool) {
 	if c.Context.Progress != "" {
 		if err := objects.Get(ctx, w.Objects, c.Context.Progress, &progress); err != nil {
