@@ -22,9 +22,11 @@ refused before it is pushed.
   `400 invalid_schema`, and so is one that applies more than 256
   subschemas to one value or applies itself without end: a validator
   keeps nothing of what it applied, so such a schema costs work that
-  doubles with every definition. A reply that would take more than
-  2,097,152 applications of its schema to check is not checked, and
-  fails the extraction with `schema_not_satisfied`. A document longer
+  doubles with every definition. So is one whose patterns compile to
+  more than 16,384 steps together: a pattern is matched in time that
+  is the text's length times those steps. A reply that would take more
+  work to check than 2,097,152 applications of its schema is not
+  checked, and fails the extraction with `schema_not_satisfied`. A document longer
   than the extractor's input is read in windows, at most 32, and the
   replies are merged. An
   extraction that has made a call stays with its extractor: it waits

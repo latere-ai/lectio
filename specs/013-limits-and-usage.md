@@ -67,9 +67,9 @@ claimed for, straight into the row of its hour.
 | deadline | the request, capped by `LECTIO_MAX_DEADLINE`; a parse that names none takes the cap, so nothing waits without bound | the deadline sweep ([[004-durable-tasks]]) |
 | attempts, expiries | server settings | [[004-durable-tasks]] |
 | extractions per parse | a constant, 64 | at the request: `409 conflict` ([[011-structured-extraction]]) |
-| size and nesting of a schema, subschemas a schema applies to one value | constants, 64 KiB, 16 levels and 256 | at the request: `400 invalid_schema` ([[011-structured-extraction]]) |
+| size and nesting of a schema, subschemas a schema applies to one value, steps its patterns compile to | constants, 64 KiB, 16 levels, 256 and 16,384 | at the request: `400 invalid_schema` ([[011-structured-extraction]]) |
 | windows per extraction, repairs per window | constants, 32 and 2 | in the extraction's task: `too_many_pages`, `schema_not_satisfied` |
-| applications of a schema in one check of a reply | a constant, 2,097,152 | in the extraction's task, counted before the check: `schema_not_satisfied` |
+| the work of one check of a reply, in applications of a schema | a constant, 2,097,152 | in the extraction's task, counted before the check: `schema_not_satisfied` |
 | figures per run | a constant, 1,000, of the figures the run would describe | at the request: `413 too_many_pages`, and the run is asked again over fewer pages ([[003-api]]) |
 | the time an extraction or a figure run has | `LECTIO_MAX_DEADLINE`, from when it is queued | the deadline sweep ([[004-durable-tasks]]) |
 | model tokens per parse | server setting, default off | the page task stops reading when the parse's recorded tokens pass it; `budget_exhausted` |

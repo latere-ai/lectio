@@ -588,11 +588,13 @@ paths:
         `anyOf`, `oneOf`, `not`, `if`, `then`, `else` and
         `dependentSchemas`, each counted as often as it is reached, one
         that applies a subschema to the value it is itself applied to
-        without end, and one that gives one `$dynamicAnchor` to 2
-        subschemas. A schema that recurs through its members or its
-        items is taken. An object that would take more than 2,097,152
-        applications of the schema to check fails the extraction with
-        `schema_not_satisfied`. A second request with a name the parse already
+        without end, one whose patterns compile to more than 16,384
+        steps together, where a repetition with a count is as many
+        copies of what it repeats, and one that gives one
+        `$dynamicAnchor` to 2 subschemas. A schema that recurs through
+        its members or its items is taken. An object that would take
+        more work to check than 2,097,152 applications of the schema
+        fails the extraction with `schema_not_satisfied`. A second request with a name the parse already
         has is `conflict`, and so is one for a parse that holds 64
         extractions. With no extractor configured, or one named that is
         not, it is `reader_not_found`.

@@ -39,9 +39,9 @@ const resource = "schema.json"
 // Schema is a caller's JSON Schema, compiled.
 type Schema struct {
 	compiled *jsonschema.Schema
-	// applied is what each schema inside the compiled one applies to one
-	// value, which is where the count of a check starts from.
-	applied map[*jsonschema.Schema]int
+	// measured is what each schema inside the compiled one costs to apply
+	// to one value, which is where the count of a check starts from.
+	measured
 
 	// Constrainable reports whether the schema uses nothing but what a
 	// decoder that enforces a schema takes, so it may be sent for
@@ -63,8 +63,9 @@ func (isolated) Load(string) (any, error) {
 // than MaxSchemaBytes, is not a JSON object, nests deeper than
 // MaxSchemaDepth, names another dialect than draft 2020-12, does not
 // describe an object at its root, refers to anything outside itself, does
-// not compile, applies more than MaxApplied schemas to one value, or gives
-// one dynamic anchor to 2 subschemas is refused with invalid_schema and the
+// not compile, applies more than MaxApplied schemas to one value, holds
+// patterns that compile to more than MaxPatternSize steps, or gives one
+// dynamic anchor to 2 subschemas is refused with invalid_schema and the
 // reason.
 func Compile(raw []byte) (*Schema, error) {
 	refuse := func(format string, args ...any) (*Schema, error) {
@@ -104,6 +105,7 @@ func Compile(raw []byte) (*Schema, error) {
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
 	c.UseLoader(isolated{})
+	c.UseRegexpEngine(patterns())
 	if err := c.AddResource(resource, doc); err != nil {
 		return refuse("the schema does not compile: %s", reason(err))
 	}
@@ -111,11 +113,11 @@ func Compile(raw []byte) (*Schema, error) {
 	if err != nil {
 		return refuse("the schema does not compile: %s", reason(err))
 	}
-	applied, err := measure(compiled)
+	measures, err := measure(compiled)
 	if err != nil {
 		return nil, err
 	}
-	return &Schema{compiled: compiled, applied: applied, Constrainable: constrainable(doc)}, nil
+	return &Schema{compiled: compiled, measured: measures, Constrainable: constrainable(doc)}, nil
 }
 
 // reason is a compile error as a caller reads it: without the name the
@@ -219,7 +221,7 @@ type Finding struct {
 	// the reply. It may quote the reply.
 	Message string
 	// Unchecked says the object was not held to the schema: checking it
-	// would take more than MaxCheckWork. No repair is asked for it.
+	// would take more work than MaxCheckWork. No repair is asked for it.
 	Unchecked bool
 }
 
@@ -232,9 +234,9 @@ var english = message.NewPrinter(language.English)
 // holds too few, may be in another window, so those rules are held to the
 // merged object and not to a part.
 //
-// An object the validator would apply the schema to more than MaxCheckWork
-// times is not held to it, and the one finding says so: the validation
-// could not be stopped once it began.
+// An object that would take the validator more work than MaxCheckWork is
+// not held to the schema, and the one finding says so: the validation could
+// not be stopped once it began.
 func (s *Schema) Check(data []byte, part bool) []Finding {
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
@@ -242,7 +244,7 @@ func (s *Schema) Check(data []byte, part bool) []Finding {
 	}
 	if s.costly(value) {
 		return []Finding{{Rule: "#", Unchecked: true, Message: fmt.Sprintf(
-			"at the root: holding the object to the schema would apply the schema more than %d times", MaxCheckWork)}}
+			"at the root: holding the object to the schema would take more than %d applications of the schema", MaxCheckWork)}}
 	}
 	err = s.compiled.Validate(value)
 	if err == nil {
@@ -311,7 +313,7 @@ const shown = 5
 // content of the document.
 func Broken(findings []Finding) string {
 	if unchecked(findings) {
-		return fmt.Sprintf("the object was not held to the schema: that would apply the schema more than %d times", MaxCheckWork)
+		return fmt.Sprintf("the object was not held to the schema: that would take more than %d applications of the schema", MaxCheckWork)
 	}
 	rules := make([]string, 0, shown)
 	for _, f := range findings {

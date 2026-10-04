@@ -73,6 +73,8 @@ for a schema that
   a file or fetch an address;
 - applies more than 256 subschemas to one value, or applies a subschema
   to the value it is itself applied to, without end;
+- holds patterns, in `pattern` and `patternProperties`, that compile to
+  more than 16,384 steps together;
 - gives one `$dynamicAnchor` to 2 subschemas.
 
 **What a check may cost.** A validator applies a schema to a value by
@@ -117,8 +119,26 @@ that many applications in under 1 second, and a reply of 4,000 objects
 held to a choice between 8 shapes each takes less than a quarter of
 them.
 
-A `pattern` is matched by an engine that runs in time linear in the
-text, with no backtracking, so no pattern needs a bound of its own.
+An application is not one unit of work whatever its schema holds, so
+the count weighs it. Each name a schema requires and each value it
+lists is looked up in the value: 16 of them count as 1 application.
+And a pattern costs its steps for every byte it is matched against,
+128 steps counting as 1 application, for a string and for the name of
+a member alike.
+
+**Patterns.** A `pattern` is matched by the regular expression engine
+of Go's standard library, an automaton that never backtracks: no
+pattern takes time that is exponential in the text. Its time is the
+length of the text times the steps the pattern compiled to, and that
+second factor is the caller's. A repetition with a count compiles to
+as many copies of what it repeats, so 64 times `.{0,1000}`, 579 bytes
+of schema, compiles to 128,005 steps in 49 MiB and took 12.9 seconds
+to match 30,000 bytes once. So the patterns of a schema are bounded by
+what they compile to: 16,384 steps together, each pattern counted once
+however often the schema uses it, read from the pattern's parse before
+anything is compiled. A class repeated 1,000 times is 2,000 steps, so
+the patterns of a schema that describes a document fit. The steps a
+pattern then takes on a reply are in the count above.
 
 **When it runs.** A request may arrive while the parse is still
 running. It then waits, with no task, until the parse ends, and its
@@ -399,7 +419,7 @@ a field can fail with is:
 
 | The field's error | When |
 |---|---|
-| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; the object would take more than 2,097,152 applications of the schema to check; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
+| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; the object would take more work to check than 2,097,152 applications of the schema; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
 | `too_many_pages` | the document's text takes more than 32 windows |
 | `reader_unavailable` | the extractor could not be reached within the task's attempts, or its endpoint rejects the request itself |
 | `budget_exhausted` | the key's budget is spent, at the gateway or at the key endpoint |
@@ -560,6 +580,7 @@ Remaining:
 | A schema of 40 definitions that each apply the next one 2 times is refused with `invalid_schema` in well under 1 second, and so is every schema that applies more than 256 subschemas to one value or applies itself without end; a schema that recurs through its members and items, and one that shares its definitions, are taken and held | `TestASchemaThatDoublesItsWorkIsRefusedWhenItArrives`, `TestASchemaThatAppliesItselfWithoutEndIsRefused`, `TestASchemaThatRecursThroughItsMembersIsTakenAndHeld`, `TestASchemaThatSharesItsDefinitionsIsTaken`, `TestADynamicAnchorNamesOneSubschema` and `TestASubschemaInAnotherDialectIsRefused` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
 | With 2 extractors in the chain, an extraction whose first call was answered by the first waits when that one is paused between 2 claims, while an extraction that has made no call is taken by the second; it is claimed for the first again when the pause ends, and moves to the second, once, only when the first declines it or its replies are not usable | `TestAnExtractionStaysWithTheExtractorThatBeganIt` at the store, with a virtual clock |
 | A reply that would take more than 2,097,152 applications of its schema to check is not held to it: the field fails `schema_not_satisfied` after 1 call, with no repair, and the claim returns its slot | `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema` and `TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
+| A schema whose patterns compile to more than 16,384 steps together is refused with `invalid_schema` before a pattern is compiled, a pattern used in many places counts once, and a long string held to a pattern of many steps, or a long list held to a long list of names, is not checked | `TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo` and `TestTheWorkOfACheckCountsWhatAnApplicationLooksUp` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
 | Two schemas requested against one succeeded parse, one after the other, produce two fields and no reader call | `TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain`, through the API over the durable backend, with a reader that counts its calls |
 | For a fixture invoice and a stub text model, the result validates against the schema and every citation resolves to a block whose text contains the value | the same test, reading each citation with `resolve=true` and the block it names |
 | A reply that violates the schema is repaired within two retries or the field is recorded `failed` with the validator's errors; tokens of all attempts are in usage | `TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails`, through the API; `TestAReplyThatFailsValidationIsRepairedInTheNextClaim` of `internal/worker`; `TestAReplyThatFailsIsRepairedTwiceAndThenTheFieldFails` of `internal/extract` |

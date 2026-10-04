@@ -6,6 +6,7 @@ package extract
 import (
 	"bytes"
 	"fmt"
+	"regexp/syntax"
 	"strings"
 	"testing"
 	"time"
@@ -262,11 +263,11 @@ func TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema(t *testing.T) {
 		began := time.Now()
 		findings := s.Check([]byte(costly), false)
 		within(t, began, name+": an object 40 levels deep")
-		if !unchecked(findings) || findings[0].Rule != "#" || !strings.Contains(findings[0].Message, "more than 2097152 times") {
+		if !unchecked(findings) || findings[0].Rule != "#" || !strings.Contains(findings[0].Message, "more than 2097152 applications") {
 			t.Errorf("%s: an object 40 levels deep: %+v", name, findings)
 			continue
 		}
-		if got := Broken(findings); got != "the object was not held to the schema: that would apply the schema more than 2097152 times" {
+		if got := Broken(findings); got != "the object was not held to the schema: that would take more than 2097152 applications of the schema" {
 			t.Errorf("%s: the field would say %q", name, got)
 		}
 
@@ -286,7 +287,7 @@ func applications(t *testing.T, s *Schema, data string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &meter{applied: s.applied, counted: map[node]int{}}
+	m := &meter{measured: s.measured, counted: map[node]int{}}
 	return m.cost(s.compiled, value)
 }
 
@@ -328,7 +329,7 @@ func TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &meter{applied: s.applied, counted: map[node]int{}, steps: MaxCheckWork - 2}
+	m := &meter{measured: s.measured, counted: map[node]int{}, looked: MaxCheckWork - 2}
 	if got := m.cost(s.compiled, value); got <= MaxCheckWork {
 		t.Fatalf("a count that looked at more than MaxCheckWork applications is %d", got)
 	}
@@ -352,4 +353,115 @@ func TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost(t *testing.T) {
 	if findings := long.Check([]byte(data), false); findings != nil {
 		t.Fatalf("a long reply that satisfies its schema: %d findings, first %+v", len(findings), findings[0])
 	}
+}
+
+// TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo: a pattern is
+// matched in time that is the text's length times the steps the pattern
+// compiled to, and a repetition with a count compiles to as many copies of
+// what it repeats. A pattern of 579 bytes that compiles to 128,005 steps is
+// refused before it is compiled, and so are patterns that pass the bound
+// together, whether they are held to a string or to the names of members. A
+// pattern a schema uses in many places counts once, and the patterns a
+// schema for a document holds are taken and held.
+func TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo(t *testing.T) {
+	heavy := strings.Repeat(`.{0,1000}`, 64)
+	var nine, same []string
+	for i := range 9 {
+		nine = append(nine, fmt.Sprintf(`"p%d":{"type":"string","pattern":"^%d[a-z]{1,1000}$"}`, i, i))
+		same = append(same, fmt.Sprintf(`"p%d":{"type":"string","pattern":"^[a-z]{1,1000}$"}`, i))
+	}
+	for name, schema := range map[string]string{
+		"one pattern of 128,005 steps":    `{"type":"object","properties":{"a":{"type":"string","pattern":"^` + heavy + `b$"}}}`,
+		"the same for the names":          `{"type":"object","patternProperties":{"^` + heavy + `b$":{"type":"string"}}}`,
+		"9 patterns of 2,000 steps each":  `{"type":"object","properties":{` + strings.Join(nine, ",") + `}}`,
+		"a pattern in a pattern's schema": `{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"pattern":"^` + heavy + `$"}}}`,
+	} {
+		began := time.Now()
+		_, err := Compile([]byte(schema))
+		within(t, began, "refusing "+name)
+		if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), "the patterns of the schema compile to more than 16384 steps") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := Compile([]byte(`{"type":"object","properties":{"a":{"pattern":"(a{1000}){1000}"}}}`)); fault.CodeOf(err) != fault.InvalidSchema {
+		t.Errorf("a repetition of a repetition: %v", err)
+	}
+
+	// 8 of them fit, and one pattern used 9 times is one pattern.
+	compiled(t, `{"type":"object","properties":{`+strings.Join(nine[:8], ",")+`}}`)
+	compiled(t, `{"type":"object","properties":{`+strings.Join(same, ",")+`}}`)
+	s := compiled(t, `{"type":"object","properties":{
+	  "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"},
+	  "iban":{"type":"string","pattern":"^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$"},
+	  "mail":{"type":"string","pattern":"^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}$"}},
+	  "patternProperties":{"^x-[a-z]+$":{"type":"string"}}}`)
+	if findings := s.Check([]byte(`{"date":"2031-03-01","iban":"DE89370400440532013000","mail":"a.b@example.com","x-note":"n"}`), false); findings != nil {
+		t.Fatalf("an object that matches its patterns: %+v", findings)
+	}
+	if findings := s.Check([]byte(`{"date":"1 March","x-note":7}`), false); len(findings) != 2 {
+		t.Fatalf("a date and a note that do not match: %+v", findings)
+	}
+
+	// The size read from a pattern's parse is what the pattern compiles
+	// to, to within a factor of 2 and a few steps.
+	for _, source := range []string{`^\d{4}-\d{2}-\d{2}$`, `.{0,1000}`, `[a-z]{1,1000}`, `(ab|cd)*e+f?`, `x{7,}`, `^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$`, `abcdef`, ``} {
+		parsed, err := syntax.Parse(source, syntax.Perl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prog, err := syntax.Compile(parsed.Simplify())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, real := weigh(parsed), len(prog.Inst); 2*got+4 < real || got > 2*real+4 {
+			t.Errorf("%q weighs %d and compiles to %d steps", source, got, real)
+		}
+	}
+}
+
+// TestTheWorkOfACheckCountsWhatAnApplicationLooksUp: an application is not
+// one unit of work whatever its schema holds. A pattern costs its steps for
+// every byte of the string or the name it is matched against, and the names
+// a schema requires and the values it lists are each looked up in the
+// value. Both are counted, so a long string held to a pattern of many
+// steps, and a long list of objects held to a long list of names, are not
+// checked.
+func TestTheWorkOfACheckCountsWhatAnApplicationLooksUp(t *testing.T) {
+	names := make([]string, 3200)
+	for i := range names {
+		names[i] = fmt.Sprintf(`"n%d"`, i)
+	}
+	for name, tc := range map[string]struct {
+		schema, data string
+		want         int
+	}{
+		"32 names required":           {`{"type":"object","required":[` + strings.Join(names[:32], ",") + `]}`, `{}`, 3},
+		"16 values listed":            {`{"type":"object","properties":{"a":{"enum":[` + strings.Join(names[:16], ",") + `]}}}`, `{"a":"x"}`, 3},
+		"16 names a member requires":  {`{"type":"object","dependentRequired":{"a":[` + strings.Join(names[:16], ",") + `]}}`, `{}`, 2},
+		"a pattern of 2,003 steps":    {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + strings.Repeat("a", 640) + `"}`, 2 + 640*2003/128},
+		"a name held to a pattern":    {`{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"type":"number"}}}`, `{"` + strings.Repeat("a", 640) + `":1}`, 2 + 640*2003/128},
+		"a name held to its schema":   {`{"type":"object","propertyNames":{"pattern":"^[a-z]{1,1000}$"}}`, `{"` + strings.Repeat("a", 640) + `":1}`, 2 + 640*2003/128},
+		"a pattern through a choice":  {`{"type":"object","properties":{"a":{"anyOf":[{"pattern":"^[a-z]{1,1000}$"},{"pattern":"^[a-z]{1,1000}$"}]}}}`, `{"a":"` + strings.Repeat("a", 640) + `"}`, 4 + 640*(2*2003)/128},
+		"a pattern held to no string": {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":640}`, 2},
+	} {
+		if got := applications(t, compiled(t, tc.schema), tc.data); got != tc.want {
+			t.Errorf("%s: counts %d, want %d", name, got, tc.want)
+		}
+	}
+
+	began := time.Now()
+	long := strings.Repeat("a", 200000)
+	for name, tc := range map[string]struct{ schema, data string }{
+		"a long string":         {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + long + `"}`},
+		"a long name":           {`{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"type":"number"}}}`, `{"` + long + `":1}`},
+		"a long name, by rule":  {`{"type":"object","propertyNames":{"pattern":"^[a-z]{1,1000}$"}}`, `{"` + long + `":1}`},
+		"a long list of names":  {`{"type":"object","properties":{"l":{"items":{"required":[` + strings.Join(names, ",") + `]}}}}`, `{"l":[` + strings.TrimSuffix(strings.Repeat(`{},`, 12000), ",") + `]}`},
+		"a long list in a list": {`{"type":"object","properties":{"l":{"prefixItems":[{"required":[` + strings.Join(names, ",") + `]}],"items":{"required":[` + strings.Join(names, ",") + `]},"contains":{"type":"object"}}}}`, `{"l":[` + strings.TrimSuffix(strings.Repeat(`{},`, 12000), ",") + `]}`},
+	} {
+		s := compiled(t, tc.schema)
+		if findings := s.Check([]byte(tc.data), false); !unchecked(findings) {
+			t.Errorf("%s: %d findings, want the object not to be checked", name, len(findings))
+		}
+	}
+	within(t, began, "not checking 5 objects")
 }

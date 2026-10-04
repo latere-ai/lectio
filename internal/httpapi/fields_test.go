@@ -226,6 +226,7 @@ func TestASchemaIsCheckedWhenAnExtractionIsAsked(t *testing.T) {
 		"a schema that doubles its work": {`{"name":"a","schema":` + doubling + `}`, 400, "invalid_schema", "schema", "applies more than 256 subschemas to one value"},
 		"a schema that never ends":       {`{"name":"a","schema":{"type":"object","allOf":[{"$ref":"#"}]}}`, 400, "invalid_schema", "schema", "without end"},
 		"an anchor with 2 subschemas":    {`{"name":"a","schema":{"type":"object","$dynamicAnchor":"n","properties":{"x":{"$dynamicAnchor":"n"}}}}`, 400, "invalid_schema", "schema", "dynamic anchor"},
+		"a pattern of 128,005 steps":     {`{"name":"a","schema":{"type":"object","properties":{"x":{"pattern":"` + strings.Repeat(".{0,1000}", 64) + `"}}}}`, 400, "invalid_schema", "schema", "more than 16384 steps"},
 		"no schema":                      {`{"name":"a"}`, 400, "invalid_request", "schema", "required"},
 		"no name":                        {`{"schema":{"type":"object"}}`, 400, "invalid_request", "name", "lower case"},
 		"a name in upper case":           {`{"name":"Invoice","schema":{"type":"object"}}`, 400, "invalid_request", "name", "lower case"},
