@@ -200,12 +200,11 @@ func TestAPageThatFailsAgainCanBeReadAgain(t *testing.T) {
 // retention has ended. A refused retry changes nothing.
 func TestWhatARetryIsRefusedFor(t *testing.T) {
 	logic(t, defaults(), func(t *testing.T, h *harness) {
-		ctx := context.Background()
 		w := h.worker()
 		refused := func(what, owner, id string, code fault.Code, reason string) {
 			t.Helper()
 			before := h.states(id)
-			err := h.store.Retry(ctx, owner, id)
+			err := h.store.Retry(context.Background(), owner, id)
 			if fault.CodeOf(err) != code || !strings.Contains(fault.DetailOf(err), reason) {
 				t.Errorf("%s: the retry answered %v, want %s that says %q", what, err, code, reason)
 			}
@@ -235,7 +234,7 @@ func TestWhatARetryIsRefusedFor(t *testing.T) {
 		claims := w.claim(2, 2)
 		w.settle(ended(claims[0], tasks.Permanent, "page_unreadable"))
 		refused("a page is still open", "alice", "prs_open", fault.NotTerminal, "has not ended")
-		if err := h.store.Cancel(ctx, "prs_open"); err != nil {
+		if err := h.store.Cancel(context.Background(), "prs_open"); err != nil {
 			t.Fatal(err)
 		}
 		w.exchange(0)
@@ -264,7 +263,7 @@ func TestWhatARetryIsRefusedFor(t *testing.T) {
 
 		h.failing(w, postgres.Submission{Parse: "prs_kept", Owner: "alice", Group: "acme", Retention: time.Hour}, 2, "page_unreadable", 1)
 		h.advance(59 * time.Minute)
-		if err := h.store.Retry(ctx, "alice", "prs_kept"); err != nil {
+		if err := h.store.Retry(context.Background(), "alice", "prs_kept"); err != nil {
 			t.Fatalf("a retry inside the retention: %v", err)
 		}
 		h.settling(w, "prs_kept", "page_unreadable", 1)
