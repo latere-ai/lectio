@@ -136,13 +136,13 @@ func TestAListOfValuesIsPricedByWhatAComparisonCosts(t *testing.T) {
 	}
 	schema := `{"type":"object","properties":{"l":{"type":"array","items":{"enum":[` + strings.Join(listed, ",") + `]}}}}`
 	findings, took, refused := held(schema, `{"l":[`+strings.Join(values, ",")+`]}`)
-	if refused != nil || !unchecked(findings) || took > time.Second {
+	if refused != nil || !unchecked(findings) || took > time.Second*slowdown {
 		t.Fatalf("2,000 values listed and 6,000 numbers: refused %v, %d findings, after %s", refused, len(findings), took)
 	}
 	// 60 numbers held to the same list are checked, and each one that is
 	// not listed is a finding.
 	findings, took, refused = held(schema, `{"l":[`+strings.Join(values[:60], ",")+`,4]}`)
-	if refused != nil || len(findings) != 60 || took > time.Second {
+	if refused != nil || len(findings) != 60 || took > time.Second*slowdown {
 		t.Fatalf("60 numbers: refused %v, %d findings, after %s", refused, len(findings), took)
 	}
 }

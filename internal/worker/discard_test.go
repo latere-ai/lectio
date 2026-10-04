@@ -11,7 +11,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"latere.ai/x/lectio/internal/blob"
 	"latere.ai/x/lectio/internal/tasks"
@@ -144,22 +146,30 @@ func TestWhatATaskTakenAwayMidCallWroteIsRemoved(t *testing.T) {
 		"the worker is given up": func(_ tasks.Request, reply *tasks.Reply) { reply.Gone = true },
 	} {
 		t.Run(name, func(t *testing.T) {
-			// The call waits until its task was taken away.
+			// The call waits until its task was taken away, and the task is
+			// taken away only once the call has begun: an exchange that
+			// holds the task may come first on a slow machine.
 			entered, gone := make(chan struct{}, 1), make(chan struct{})
+			var calling atomic.Bool
 			b, kept := long(t, &asking{answers: func(_ int, req reader.ExtractRequest) (reader.ExtractResult, error) {
+				calling.Store(true)
 				entered <- struct{}{}
 				<-gone
 				return honest(req.Text, false), nil
 			}})
 			once := sync.Once{}
 			b.store.script = func(_ int, req tasks.Request, reply *tasks.Reply) error {
-				if len(req.Held) == 1 {
+				if len(req.Held) == 1 && calling.Load() {
 					once.Do(func() { told(req, reply); close(gone) })
 				}
 				return nil
 			}
 			stop := b.run()
-			<-entered
+			select {
+			case <-entered:
+			case <-time.After(30 * time.Second):
+				t.Fatal("the extraction's call never began")
+			}
 			input := blob.FieldInputKey("prs_a", "invoice", 5)
 			eventually(t, "what the extraction wrote is removed", func() bool { return slices.Contains(kept.did(), "delete "+input) })
 			if err := stop(); err != nil {
