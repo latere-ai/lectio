@@ -260,9 +260,10 @@ Built:
   first reader with room, which sent a tenant's pages to a costlier
   reader under load, and that is reversed.
 
-Proven at the store, by the tests of `internal/store/postgres`, on a
-direct connection, in the query mode that prepares nothing, and through
-PgBouncer in transaction mode: 4 workers with 32 slots exchanging at
+Proven at the store, by the tests of `internal/store/postgres`, the
+first of them on a direct connection, in the query mode that prepares
+nothing, and through PgBouncer in transaction mode, and the others on a
+direct connection ([[004-durable-tasks]]): 4 workers with 32 slots exchanging at
 once never hold more than a pool's `max_in_flight` of 8; a first reader
 that is full is waited for while the second has room, one that is paused
 or open sends pages to the second, and a pinned parse waits for its

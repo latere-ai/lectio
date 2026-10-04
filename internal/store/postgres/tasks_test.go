@@ -101,7 +101,7 @@ func TestAParseRunsFromPrepareToItsEnd(t *testing.T) {
 // succeeds with the failed page counted, and a failed prepare or assemble
 // fails the parse with the task's own error.
 func TestAParseEndsByWhatItAllows(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_allowed", Group: "acme", AllowFailedPages: 1}, 2)
 		claims := w.claim(2, 2)
@@ -131,7 +131,7 @@ func TestAParseEndsByWhatItAllows(t *testing.T) {
 // structure wrote the pages itself, so its settle counts them done and
 // writes assemble, and a selection of no page does the same.
 func TestANativeParseWritesNoPageTask(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.submit(postgres.Submission{Parse: "prs_native", Group: "acme"})
 		settle := done(w.claim(1, 1)[0])
@@ -163,7 +163,7 @@ func TestANativeParseWritesNoPageTask(t *testing.T) {
 // settle is accepted only under the current one, from the worker that holds
 // the lease. A refused settle records nothing.
 func TestAStaleTokenCannotSettle(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w, other := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 1)
 
@@ -212,7 +212,7 @@ func TestAStaleTokenCannotSettle(t *testing.T) {
 // in the queue, every settle it sends is refused and records nothing, the
 // reply says the fleet gave it up, and it works again only under a new id.
 func TestAWorkerPastItsLeaseCannotSettle(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		paused, live := h.worker(), h.worker()
 		h.reading(paused, postgres.Submission{Parse: "prs_a", Group: "acme"}, 2)
 		claims := paused.claim(2, 2)
@@ -254,7 +254,7 @@ func TestAWorkerPastItsLeaseCannotSettle(t *testing.T) {
 // cleared, and the worker's row is removed. A worker reaps others only when
 // its own previous exchange was within the last third of a lease.
 func TestTheDeadWorkerSweep(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		dead, away := h.worker(), h.worker()
 		h.reading(dead, postgres.Submission{Parse: "prs_a", Group: "acme"}, 2)
 
@@ -305,7 +305,7 @@ func TestTheDeadWorkerSweep(t *testing.T) {
 // worker reaped another. Each renews at its first exchange and reaps no one,
 // so no task has its expiries raised and every settle is accepted.
 func TestAStallOfTheDatabaseExpiresNothing(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		one, two := h.worker(), h.worker()
 		h.reading(one, postgres.Submission{Parse: "prs_a", Group: "acme"}, 4)
 		a, b := one.claim(2, 2), two.claim(2, 2)
@@ -340,7 +340,7 @@ func TestAStallOfTheDatabaseExpiresNothing(t *testing.T) {
 // with page_unreadable after 3 workers, and the 7 that shared its first
 // worker succeed with expiries 1.
 func TestATaskThatKillsItsWorkerRunsAloneAndFails(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		// reap lets the live workers find a dead one: a lease passes while
 		// they keep exchanging.
 		reap := func(live ...*worker) {
@@ -425,7 +425,7 @@ func TestATaskThatKillsItsWorkerRunsAloneAndFails(t *testing.T) {
 func TestARetryableFailureBacksOffAndIsBounded(t *testing.T) {
 	settings := defaults()
 	settings.Attempts = 8
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme", AllowFailedPages: 1}, 1)
 		delays := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, tasks.DefaultBackoffCap}
@@ -466,7 +466,7 @@ func TestARetryableFailureBacksOffAndIsBounded(t *testing.T) {
 // wait. The task's attempts are unchanged, it is not looked at until the
 // pause ends, and neither is any other task of the scope, by any worker.
 func TestARateLimitSpendsNoAttempt(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w, other := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 3)
 		c := w.claim(1, 1)[0]
@@ -566,7 +566,7 @@ func TestCancelFences(t *testing.T) {
 // failed with deadline_exceeded when its deadline passes, and its tasks that
 // had not settled are canceled. Nothing waits without bound.
 func TestTheDeadlineSweep(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		// The parse names a reader that is not configured: its pages wait.
 		h.reading(w, postgres.Submission{Parse: "prs_pinned", Group: "acme", Pin: "gone", Deadline: 10 * time.Minute}, 3)
@@ -603,7 +603,7 @@ func TestTheDeadlineSweep(t *testing.T) {
 // returns the rest to the queue with no counter changed, and removes its
 // row, so a rolling restart costs neither an attempt nor a lease period.
 func TestAShutdownExchange(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w, next := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 3)
 
@@ -648,7 +648,7 @@ func TestAShutdownExchange(t *testing.T) {
 func TestIdlePollsWriteNoTaskRow(t *testing.T) {
 	settings := defaults()
 	settings.Pools[0].MaxInFlight = 8
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		holder := h.worker()
 		h.reading(holder, postgres.Submission{Parse: "prs_a", Group: "acme"}, 200)
 		holder.claim(8, 8)

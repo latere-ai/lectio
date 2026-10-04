@@ -408,10 +408,12 @@ Remaining:
 - In the release: the binaries for 4 platforms and the stubs' image.
   The release carries 2 images and the deploy archive.
 - The test tiers in part. The suite is unit tests; the tests of
-  `internal/store/postgres`, which run every store case 3 ways, on a
-  direct connection, in the query mode that prepares and describes
-  nothing, and through PgBouncer in transaction mode, and hold the
-  dispatch simulation; the conformance suite of `internal/blob` over
+  `internal/store/postgres`, which run every case about a statement's
+  shape or about many clients at once 3 ways, on a direct connection,
+  in the query mode that prepares and describes nothing, and through
+  PgBouncer in transaction mode, run every case about what the
+  functions decide on a direct connection, and hold the dispatch
+  simulation; the conformance suite of `internal/blob` over
   its 3 implementations; the contract's cases of `internal/httpapi`,
   run over the memory backend and over the durable one; and the
   end-to-end tests of `cmd/lectiod`, which run the server as processes

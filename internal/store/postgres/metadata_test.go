@@ -398,7 +398,7 @@ func read(c tasks.Claim, result string) tasks.Settle {
 // is not kept, and neither is anything of a parse whose readers promise
 // nothing about their results.
 func TestAPageReadWholeIsKeptAndTaken(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		reuse := postgres.ParseOptions{Reuse: true}
 		h.reading(w, postgres.Submission{Parse: "prs_a", Owner: "alice", ReadBase: "base", Options: reuse, AllowFailedPages: 1}, 4)
@@ -547,7 +547,7 @@ func TestEveryMigrationGoesDownAndUpAgain(t *testing.T) {
 // it does not name goes back to the queue with no counter changed, for any
 // worker to take under a new token.
 func TestAClaimItsWorkerNeverHeardOfReturnsToTheQueue(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w, other := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 3)
 		claims := w.claim(2, 2)

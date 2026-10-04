@@ -306,8 +306,10 @@ Built:
   counting against the breaker; and a failure of the file fails the
   page with the file's own code. The task store holds the page's
   position in the chain, and a pinned page never moves. Proven by a
-  table test of the worker and by store tests of each move, on a direct
-  connection, in exec mode and behind a pooler.
+  table test of the worker and by store tests: the 2 moves on a direct
+  connection, in exec mode and behind a pooler, and the pinned page,
+  the page a second reader read, and the lane a moved page waits in on
+  a direct connection.
 - Reuse by page in the durable server ([[002-object-model]]): the read
   key is kept per owner in the database and looked up in the claim.
 - Proven with processes ([[004-durable-tasks]]): the third, fourth and

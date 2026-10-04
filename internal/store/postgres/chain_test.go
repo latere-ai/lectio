@@ -133,7 +133,7 @@ func TestADeclinedPageMovesDownTheChainAsFarAsItGoes(t *testing.T) {
 // one. Its page stays with that reader through unusable replies, and fails
 // at once when the reader declines it.
 func TestAPinnedPageNeverMoves(t *testing.T) {
-	everywhere(t, chain(), func(t *testing.T, h *harness) {
+	logic(t, chain(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme", Pin: "first", AllowFailedPages: 1}, 1)
 
@@ -162,7 +162,7 @@ func TestAPinnedPageNeverMoves(t *testing.T) {
 // reader, because the first was paused, moves to the third when the second
 // declines it, and is not sent back to the first.
 func TestAPageMovesPastTheReaderThatReadIt(t *testing.T) {
-	everywhere(t, chain(), func(t *testing.T, h *harness) {
+	logic(t, chain(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 2)
 		first := w.claim(1, 1)[0]
@@ -189,7 +189,7 @@ func TestAPageMovesPastTheReaderThatReadIt(t *testing.T) {
 // equal a recount of its rows.
 func TestAPageThatMovedWaitsForTheReaderItMovedTo(t *testing.T) {
 	settings := readers(tasks.Pool{Reader: "first", MaxInFlight: 100}, tasks.Pool{Reader: "second", MaxInFlight: 1})
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 6)
 		claims := w.claim(2, 2)

@@ -56,6 +56,18 @@ func everywhere(t *testing.T, settings tasks.Settings, run func(t *testing.T, h 
 	}
 }
 
+// logic runs a case once, on a direct connection. It is for a case about
+// what the functions decide: the decision is made in the database, and the
+// mode a statement travels in does not change it. A case about the shape of
+// a statement, how its parameters are bound, or many clients at once behind
+// the pooler runs everywhere.
+func logic(t *testing.T, settings tasks.Settings, run func(t *testing.T, h *harness)) {
+	t.Helper()
+	srv := server(t)
+	t.Parallel()
+	run(t, open(t, srv, modes[0], settings))
+}
+
 // epoch is where every case's clock starts. It is far from the wall clock on
 // purpose: a statement that read now() where it should read the clock it was
 // given shows as a lease or a deadline that is years off.

@@ -430,7 +430,7 @@ func TestAProjectMovesNoOtherGroup(t *testing.T) {
 // the class, each by its own weight.
 func TestTheChargeFollowsCostAndUse(t *testing.T) {
 	settings := readers(tasks.Pool{Reader: "small", MaxInFlight: 100}, tasks.Pool{Reader: "large", MaxInFlight: 100, Cost: 5})
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
 		// The pages pinned to the small reader go first, by priority.
 		h.readingAll(w, 4,
@@ -496,7 +496,7 @@ func TestTheChargeFollowsCostAndUse(t *testing.T) {
 // tasks is skipped and others proceed, and it resumes when a task of its own
 // settles.
 func TestAGroupAtMaxRunningIsSkipped(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_capped", Group: "capped", MaxRunning: 2}, 10)
 		h.reading(w, postgres.Submission{Parse: "prs_open", Group: "open"}, 10)

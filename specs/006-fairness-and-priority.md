@@ -361,10 +361,10 @@ Built:
 
 Proven: every row of the table below that names the dispatch
 simulation, a store test or a concurrency test over Postgres, the 5
-rows about projects among them. The store and concurrency tests run on
-a direct connection, in the query mode that prepares nothing, and
-through PgBouncer in transaction mode; the simulation runs on a direct
-connection. Not proven: the recount of `queued` and `running` after a
+rows about projects among them. The concurrency tests run on a direct
+connection, in the query mode that prepares nothing, and through
+PgBouncer in transaction mode; the simulation and the store tests of
+the charge and of `max_running` run on a direct connection. Not proven: the recount of `queued` and `running` after a
 soak run with kills, which waits for the soak of [[004-durable-tasks]];
 every test of the store ends with that recount over its own rows.
 

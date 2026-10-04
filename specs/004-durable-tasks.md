@@ -495,9 +495,14 @@ Built:
   lets its tasks finish for `LECTIO_SHUTDOWN_GRACE`, and gives the rest
   back as returned in an exchange that removes its registration.
 
-Proven at the store, by the tests of `internal/store/postgres`, each
-on a direct connection, in the query mode that prepares nothing, and
-through PgBouncer in transaction mode, with the clock passed in: a
+Proven at the store, by the tests of `internal/store/postgres`, with
+the clock passed in. A case about the shape of a statement, how its
+parameters are bound, or many clients at once runs 3 ways: on a direct
+connection, in the query mode that prepares nothing, and through
+PgBouncer in transaction mode. Every statement the store makes is in
+such a case. A case about what the functions decide runs on a direct
+connection: the decision is made in the database, and the mode its
+statement travels in does not change it. Proven: a
 stale token cannot settle; a worker past its lease that the fleet
 reaped cannot settle and is answered as given up; the sweep returns a
 dead worker's tasks with `expiries + 1` and `attempt` unchanged, and

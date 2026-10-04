@@ -124,7 +124,7 @@ func TestAPoolAdmitsNoMoreThanItsBound(t *testing.T) {
 // waits for that reader either way: none of its pages is read by another.
 func TestAFullReaderIsWaitedForAndADownReaderIsPassedOver(t *testing.T) {
 	settings := readers(tasks.Pool{Reader: "first", MaxInFlight: 4}, tasks.Pool{Reader: "second", MaxInFlight: 100, Cost: 5})
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_free", Group: "acme"}, 40)
 		h.reading(w, postgres.Submission{Parse: "prs_pinned", Group: "acme", Pin: "first", Priority: 1}, 6)
@@ -210,7 +210,7 @@ func TestAFullReaderIsWaitedForAndADownReaderIsPassedOver(t *testing.T) {
 // all of it over the resume period, and each quiet recovery interval gives a
 // tenth of the pool back.
 func TestOnePauseHalvesTheCeilingOnce(t *testing.T) {
-	everywhere(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 40}), func(t *testing.T, h *harness) {
+	logic(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 40}), func(t *testing.T, h *harness) {
 		w, other := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 300)
 		claims := w.claim(100, 40)
@@ -277,7 +277,7 @@ func TestOnePauseHalvesTheCeilingOnce(t *testing.T) {
 // repeated pauses returns to a max_in_flight of 200 within 10 quiet recovery
 // intervals.
 func TestACeilingDrivenToOneRecovers(t *testing.T) {
-	everywhere(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 200}), func(t *testing.T, h *harness) {
+	logic(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 200}), func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 300)
 		// Each call is claimed after the last halving and refused: 200, 100,
@@ -305,7 +305,7 @@ func TestACeilingDrivenToOneRecovers(t *testing.T) {
 func TestARateLimitPausesItsKeyAndNoOther(t *testing.T) {
 	settings := readers(tasks.Pool{Reader: "only", MaxInFlight: 20})
 	settings.KeysPerGroup = true
-	everywhere(t, settings, func(t *testing.T, h *harness) {
+	logic(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 20)
 		h.reading(w, postgres.Submission{Parse: "prs_g", Group: "globex"}, 20)
@@ -336,7 +336,7 @@ func TestARateLimitPausesItsKeyAndNoOther(t *testing.T) {
 // failures resets the count, and a trial that ends without saying anything
 // about the reader leaves the next claim to be the trial.
 func TestTheBreaker(t *testing.T) {
-	everywhere(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 50}), func(t *testing.T, h *harness) {
+	logic(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 50}), func(t *testing.T, h *harness) {
 		w, other := h.worker(), h.worker()
 		h.reading(w, postgres.Submission{Parse: "prs_a", Group: "acme", AllowFailedPages: 100}, 60)
 		pool := func() (failures int, open bool) {
@@ -421,7 +421,7 @@ func TestTheBreaker(t *testing.T) {
 // because its worker died, leaves the breaker open with no trial in flight
 // once its task is back in the queue, and the next claim is the trial.
 func TestATrialWhoseWorkerDiesIsNotTheLastTrial(t *testing.T) {
-	everywhere(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 50}), func(t *testing.T, h *harness) {
+	logic(t, readers(tasks.Pool{Reader: "only", MaxInFlight: 50}), func(t *testing.T, h *harness) {
 		dying, live := h.worker(), h.worker()
 		h.reading(dying, postgres.Submission{Parse: "prs_a", Group: "acme"}, 10)
 		claims := dying.claim(3, 3)
