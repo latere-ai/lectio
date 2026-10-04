@@ -29,6 +29,9 @@
 //     being text: its share of letters and digits, the sequences a
 //     double decoding leaves, the share of words without a vowel;
 //   - a word is drawn at an angle;
+//   - a word does not show in the page's image where the file places it:
+//     it lies under a shape painted over it, or is drawn in the paper's
+//     color;
 //   - what the page paints beside its text takes up more of the page than
 //     a figure in a page of text does, or holds more text than a figure
 //     does;
@@ -54,10 +57,11 @@ type Config struct {
 	// Name is the reader's configured name.
 	Name string
 
-	// Image is how the page is rendered for the result. The reader does
-	// not look at the image: it is what a caller of the result sees the
-	// page as, and what a figure is cut from. Zero values take 160 dpi, a
-	// long edge of 2,048 pixels, and PNG.
+	// Image is how the page is rendered for the result: what a caller of
+	// the result sees the page as, and what a figure is cut from. The
+	// reader reads nothing off the image. It looks at it for one thing:
+	// that each word shows where the file places it. Zero values take 160
+	// dpi, a long edge of 2,048 pixels, and PNG.
 	Image reader.ImageSpec
 }
 
@@ -124,7 +128,7 @@ func (r *Reader) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 	if page.Text == nil {
 		return reader.Result{}, decline("the file carries no text of its own for the page")
 	}
-	raws, err := read(page.Text)
+	raws, err := read(page)
 	if err != nil {
 		return reader.Result{}, err
 	}

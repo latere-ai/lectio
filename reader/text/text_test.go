@@ -4,9 +4,15 @@
 package text
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/jpeg"
+	"image/png"
 	"math"
 	"strings"
 	"testing"
@@ -855,6 +861,92 @@ func TestAPageWhoseTextCannotBeReadIsDeclined(t *testing.T) {
 	}
 }
 
+// picture is the image of a sheet at one sample a point: white paper, and
+// every word that is drawn as bars of ink across its box. Each rectangle
+// of covers is then painted over it in black, as a bar over a name is.
+func (s *sheet) picture(t *testing.T, format string, covers ...reader.Rect) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, int(s.Width), int(s.Height)))
+	draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
+	for _, w := range s.Words {
+		if w.Hidden {
+			continue
+		}
+		for x := int(w.Box.X0); x < int(w.Box.X1); x += 2 {
+			for y := int(w.Box.Y0) + 1; y < int(w.Box.Y1); y++ {
+				img.Set(x, y, color.Black)
+			}
+		}
+	}
+	for _, c := range covers {
+		draw.Draw(img, image.Rect(int(c.X0), int(c.Y0), int(c.X1), int(c.Y1)), image.Black, image.Point{}, draw.Src)
+	}
+	var out bytes.Buffer
+	var err error
+	if format == "jpeg" {
+		err = jpeg.Encode(&out, img, &jpeg.Options{Quality: 90})
+	} else {
+		err = png.Encode(&out, img)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+// A word the file holds and the page does not show is not read: the page
+// is declined when a word lies under a shape painted over it, or is drawn
+// in the paper's color, which the page's image says and the positions do
+// not.
+func TestAWordThePageDoesNotShowDeclinesThePage(t *testing.T) {
+	const sentence = "The pilot named in the report boarded at the north mole."
+	build := func() *sheet {
+		s := letter()
+		s.prose(72, 100, sentence, "A second line of the page, with a . and a - in it.")
+		return s
+	}
+	for _, format := range []string{"png", "jpeg"} {
+		s := build()
+		res, err := mustNew(t).ReadPage(context.Background(), reader.Page{Text: &s.PageText, Data: s.picture(t, format), MediaType: "image/" + format})
+		if err != nil || len(res.Blocks) != 1 || !strings.HasPrefix(res.Blocks[0].Text, sentence) {
+			t.Fatalf("a page whose every word shows in its %s: %v, %s", format, err, show(res.Blocks))
+		}
+		// A bar of black over the letters of the name, which leaves the
+		// paper above and below them: the word is in the file and not on
+		// the page.
+		name := s.Words[1]
+		covered := reader.Page{Text: &s.PageText, Data: s.picture(t, format, reader.Rect{X0: name.Box.X0 - 2, Y0: name.Baseline - 6, X1: name.Box.X1 + 2, Y1: name.Baseline + 1})}
+		if _, err := mustNew(t).ReadPage(context.Background(), covered); reader.ClassOf(err) != reader.Refused || !strings.Contains(err.Error(), "not drawn where the file places it") {
+			t.Errorf("a word under a bar, in a %s: %v", format, err)
+		}
+	}
+
+	// A word in the paper's color leaves no mark.
+	pale := build()
+	shown := pale.picture(t, "png")
+	pale.line(72, 300, body, "unseen")
+	if _, err := mustNew(t).ReadPage(context.Background(), reader.Page{Text: &pale.PageText, Data: shown}); reader.ClassOf(err) != reader.Refused || !strings.Contains(err.Error(), "not drawn where the file places it") {
+		t.Errorf("a word in the paper's color: %v", err)
+	}
+	// A word of 1 or 2 letters and a line of underscores are not looked
+	// for, a word the image does not reach is not judged, and a page with
+	// no image is read as its text says.
+	short := build()
+	shown = short.picture(t, "png")
+	short.line(300, 300, body, "an ______")
+	short.Words = append(short.Words, reader.Word{Text: "margin", Size: 10, Baseline: 400, Box: reader.Rect{X0: 700, Y0: 392, X1: 730, Y1: 402}})
+	for name, data := range map[string][]byte{"with its image": shown, "with no image": nil} {
+		if _, err := mustNew(t).ReadPage(context.Background(), reader.Page{Text: &short.PageText, Data: data}); err != nil {
+			t.Errorf("2 letters with no mark, %s: %v", name, err)
+		}
+	}
+	// What is no image cannot be looked at.
+	s := build()
+	if _, err := mustNew(t).ReadPage(context.Background(), reader.Page{Text: &s.PageText, Data: []byte("no image")}); reader.ClassOf(err) != reader.Refused || !strings.Contains(err.Error(), "could not be looked at") {
+		t.Errorf("an image that is none: %v", err)
+	}
+}
+
 // The reader asks for the page's own text, describes the image a result
 // holds, and names in its version everything that changes what it
 // returns.
@@ -895,7 +987,7 @@ func TestTheReaderDescribesItself(t *testing.T) {
 		}
 	}
 	// Every bound a page is judged by is in the version.
-	if len(bounds) != 34 {
+	if len(bounds) != 37 {
 		t.Errorf("%d bounds are in the version; a bound added to the reader is added to them", len(bounds))
 	}
 }

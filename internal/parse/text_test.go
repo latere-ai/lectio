@@ -6,6 +6,7 @@ package parse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -170,5 +171,42 @@ func TestAPageReadFromItsOwnTextSaysSo(t *testing.T) {
 	blank, err := p.ReadPage(context.Background(), Manifest{MediaType: detect.MIMEPDF}, testfixtures.Read(t, testfixtures.TextPDF), 2, own, PageOptions{})
 	if err != nil || !blank.Image.Blank || blank.Page.Reader != "" || len(blank.Page.Blocks) != 0 || blank.Page.Source != document.SourceReader {
 		t.Errorf("a page with nothing on it: %+v, %v", blank.Page, err)
+	}
+}
+
+// A word the file holds and the page does not show is not read from the
+// file's text: a page with a bar painted over a name, or with a line set
+// in the paper's color, is declined, so that the reader that reads the
+// page reads what the page shows.
+func TestAWordThePageDoesNotShowIsNotReadFromTheFilesText(t *testing.T) {
+	own, err := text.New(text.Config{Name: "own", Image: reader.ImageSpec{DPI: 72}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Pipeline{Limits: pages.DefaultLimits(), Renderer: engines}
+	page := func(content string) []byte {
+		return pdfOf(
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+			"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		)
+	}
+	const line = "BT /F1 12 Tf 72 700 Td (The pilot Marlow boarded at the north mole.) Tj ET"
+	m := Manifest{MediaType: detect.MIMEPDF}
+
+	shown, err := p.ReadPage(context.Background(), m, page(line), 1, own, PageOptions{})
+	if err != nil || len(shown.Page.Blocks) != 1 || shown.Page.Blocks[0].Text != "The pilot Marlow boarded at the north mole." {
+		t.Fatalf("the page as it is: %+v, %v", shown.Page.Blocks, err)
+	}
+	for name, content := range map[string]string{
+		"a bar over the name":            line + "\n0 0 0 rg 118 695 46 16 re f",
+		"a second line in paper's color": line + "\n1 1 1 rg BT /F1 12 Tf 72 680 Td (Marlow holds no license.) Tj ET",
+	} {
+		_, err := p.ReadPage(context.Background(), m, page(content), 1, own, PageOptions{})
+		if reader.ClassOf(err) != reader.Refused || !strings.Contains(err.Error(), "not drawn where the file places it") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

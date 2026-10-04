@@ -111,12 +111,16 @@ type line struct {
 
 // read builds the regions of a page from its text, or says why the page
 // is declined.
-func read(t *reader.PageText) ([]reader.Raw, error) {
+func read(in reader.Page) ([]reader.Raw, error) {
+	t := in.Text
 	if t.Partial {
 		return nil, decline("the page holds more text or more drawing than is read of one page")
 	}
 	words, err := usable(t.Words)
 	if err != nil {
+		return nil, err
+	}
+	if err := seen(in, words); err != nil {
 		return nil, err
 	}
 	p := &page{t: t, words: words, taken: make([]bool, len(words)), bullet: make([]bool, len(words)), spent: make([]bool, len(t.Drawings))}

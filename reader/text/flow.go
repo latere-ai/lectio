@@ -79,7 +79,7 @@ const (
 
 // bounds is every bound the reader judges by, for its version.
 var bounds = [...]float64{
-	minLetters, mojibakePairs, maxVowelless, vowelSample,
+	minLetters, mojibakePairs, maxVowelless, vowelSample, flat, seenLength, seenBand,
 	maxRule, snap, edgeCover, maxRules, maxCells, maxShapes,
 	lineDrift, smallType, columnGap, bulletSize, bulletReach, clusterGap, minFigure, maxFigures, maxFigureText,
 	minGutter, sideBySide, minColumnLines, minFullLines, fullLine, minColumnWords, maxStray,
