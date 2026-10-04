@@ -733,6 +733,11 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 	if err != nil {
 		return err
 	}
+	// Only the pages the run takes are read: a run over 2 pages of a long
+	// document reads 2 objects.
+	at = slices.DeleteFunc(at, func(l located) bool {
+		return l.key == "" || (opt.Pages != nil && !slices.Contains(opt.Pages, l.n))
+	})
 	stored, err := b.read(ctx, at)
 	if err != nil {
 		return err
@@ -756,8 +761,8 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 	start := postgres.FigureStart{Parse: p.ID, Pin: opt.Describer, Redo: opt.Redo, Deadline: b.deadline()}
 	for i, page := range pages {
 		// A page that was not read from an image has nothing to cut a
-		// figure from, and one that failed or was skipped holds no block.
-		if at[i].key == "" || stored[i].Image == "" || (opt.Pages != nil && !slices.Contains(opt.Pages, page.Number)) {
+		// figure from.
+		if stored[i].Image == "" {
 			continue
 		}
 		for _, f := range figures.Of(page, opt.Redo) {

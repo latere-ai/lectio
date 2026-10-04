@@ -333,8 +333,13 @@ BEGIN
     done = 0, failed = 0, reused = 0, calls = 0, input_tokens = 0, output_tokens = 0,
     started_at = EXCLUDED.started_at, deadline_at = EXCLUDED.deadline_at, finished_at = EXCLUDED.finished_at;
 
-  -- A figure an earlier run described keeps that description until this
-  -- run has another for it.
+  -- What an earlier run lost is that run's to say and not this one's: a
+  -- figure it lost and nobody described has no row from here on, and one
+  -- that kept an earlier description is described and no more. A figure an
+  -- earlier run described keeps that description until this run has
+  -- another for it.
+  DELETE FROM figures WHERE parse_id = v_parse AND state = 'failed' AND output IS NULL;
+  UPDATE figures SET state = 'succeeded', error = NULL WHERE parse_id = v_parse AND state = 'failed';
   INSERT INTO figures AS g (parse_id, ref, page, page_key, figure_key, state)
   SELECT v_parse, e.fig->>'ref', (e.fig->>'page')::integer, e.fig->>'page_key', nullif(e.fig->>'figure_key', ''), 'pending'
     FROM jsonb_array_elements(v_figs) AS e(fig)

@@ -633,6 +633,20 @@ func TestAFigureRunIsOneTaskPerFigure(t *testing.T) {
 		if p := h.parse("prs_b"); p.Described != 1 {
 			t.Fatalf("the parse counts %d described figures", p.Described)
 		}
+
+		// A later run says what it lost itself, and not what a run before
+		// it lost: the figure the first run of the first parse could not
+		// describe has no row once a run that does not take it began, and
+		// the one that kept its description is described.
+		h.figures("prs_a", "", false, "1.9")
+		w.settle(described(w.claim(1, 1)[0]))
+		h.figures("prs_b", "", false)
+		if later := h.run("prs_a"); len(later.Figures) != 3 || later.Figures[2].Ref != "2.4" || later.Run.Failed != 0 {
+			t.Fatalf("after a later run the figures of the first parse are %+v", later)
+		}
+		if kept := h.run("prs_b").Figures; len(kept) != 1 || kept[0].State != postgres.FigureSucceeded || kept[0].Error != nil || kept[0].Output != taken.Output {
+			t.Fatalf("after a later run the figure that kept its description is %+v", kept)
+		}
 	})
 }
 
