@@ -216,8 +216,10 @@ type loop struct {
 
 	held map[tasks.Ref]*running
 	done chan finished
-	// settles are the tasks that finished since the last exchange.
+	// settles are the tasks that finished since the last exchange, and
+	// first when the earliest of them did.
 	settles []tasks.Settle
+	first   time.Time
 
 	// last is when the last exchange was sent, idle the poll interval of a
 	// worker with a free slot and nothing to claim, wake when the earliest
@@ -279,7 +281,12 @@ func (l *loop) due() time.Time {
 		}
 	}
 	if len(l.settles) > 0 {
-		at = l.last
+		// Tasks that were claimed together finish together, a few
+		// milliseconds apart. The exchange waits a tenth of a flush
+		// interval for the rest of them, so that one exchange settles them
+		// all and claims as many, and the next page of each starts without
+		// waiting a whole interval for the exchange after.
+		at = l.first.Add(l.w.Flush / 10)
 	}
 	if l.failures > 0 {
 		// The store did not answer: it is asked again after a pause that
@@ -322,6 +329,9 @@ func (l *loop) finish(f finished) {
 	delete(l.held, f.ref)
 	r.cancel()
 	if f.settle != nil && !r.lost {
+		if len(l.settles) == 0 {
+			l.first = time.Now()
+		}
 		l.settles = append(l.settles, *f.settle)
 		// A slot is free and may be filled at once.
 		l.idle = l.w.Poll

@@ -80,6 +80,20 @@ func frames(n int) []byte {
 	return out.Bytes()
 }
 
+// pool writes a Reader document for the stub reader with a bound of calls
+// in flight, and returns the file to name in LECTIO_CONFIG. With no
+// document the stub's pool admits 8 calls across the fleet, which is what a
+// run of many workers would then measure.
+func pool(t *testing.T, inFlight int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "reader.yaml")
+	doc := "apiVersion: lectio.latere.ai/v1\nkind: Reader\nmetadata: { name: stub }\nspec: { adapter: stub, maxInFlight: " + strconv.Itoa(inFlight) + " }\n"
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // parses submits n parses of a file, several at once, and returns their ids.
 func (p *plane) parses(base, name string, data []byte, n int) []string {
 	p.t.Helper()
@@ -120,10 +134,11 @@ func TestSoak(t *testing.T) {
 	// A page whose worker is killed runs alone afterwards, and one that is
 	// unlucky 3 times would be failed as the cause: the bound is raised so
 	// that random kills fail no page.
+	readers := pool(t, fleet*8)
 	worker := func() *process {
-		return p.spawn("worker", delayEnv, "40ms", callsEnv, calls, "LECTIO_WORKERS", "8", "LECTIO_TASK_EXPIRIES", "50")
+		return p.spawn("worker", delayEnv, "250ms", callsEnv, calls, "LECTIO_WORKERS", "8", "LECTIO_TASK_EXPIRIES", "50", "LECTIO_CONFIG", readers)
 	}
-	api := p.spawn("api", "LECTIO_TASK_EXPIRIES", "50")
+	api := p.spawn("api", "LECTIO_TASK_EXPIRIES", "50", "LECTIO_CONFIG", readers)
 	workers := make([]*process, fleet)
 	for i := range workers {
 		workers[i] = worker()
@@ -137,7 +152,7 @@ func TestSoak(t *testing.T) {
 
 	open := `SELECT count(*) FROM parses WHERE state IN ('queued', 'running')`
 	kills := 0
-	for next := time.Now().Add(time.Second); value[int](t, conn, open) > 0; time.Sleep(50 * time.Millisecond) {
+	for next := time.Now().Add(500 * time.Millisecond); value[int](t, conn, open) > 0; time.Sleep(50 * time.Millisecond) {
 		if time.Since(began) > 20*time.Minute {
 			t.Fatalf("%d parses have not ended after 20 minutes", value[int](t, conn, open))
 		}
@@ -151,7 +166,7 @@ func TestSoak(t *testing.T) {
 		<-workers[i].exited
 		workers[i] = worker()
 		kills++
-		next = time.Now().Add(time.Duration(500+rand.IntN(1000)) * time.Millisecond)
+		next = time.Now().Add(time.Duration(300+rand.IntN(600)) * time.Millisecond)
 	}
 	took := time.Since(began)
 
@@ -218,6 +233,7 @@ func TestThroughput(t *testing.T) {
 	settings := []string{
 		"LECTIO_DATABASE_POOL_URL", pooled, "LECTIO_TASK_LEASE", "60s", "LECTIO_SWEEP_INTERVAL", "30s",
 		"LECTIO_WORKER_FLUSH", "200ms", "LECTIO_WORKER_POLL", "1s", "LECTIO_WORKERS", strconv.Itoa(slots),
+		"LECTIO_CONFIG", pool(t, fleet*slots),
 	}
 	api := p.spawn("api", settings...)
 	workers := make([]*process, fleet)

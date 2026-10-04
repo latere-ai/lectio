@@ -485,7 +485,9 @@ Built:
 
 - `internal/worker`: the worker process. It registers, makes one
   exchange at most once per `LECTIO_WORKER_FLUSH` and at least once per
-  quarter of its lease, runs each claim on a goroutine of its own, ends
+  quarter of its lease, waits a tenth of a flush interval after a task
+  finishes for the tasks that were claimed with it, so that one exchange
+  settles them all, runs each claim on a goroutine of its own, ends
   the call of a task the reply names as lost, abandons everything and
   registers again when the reply says the fleet gave it up, runs a task
   that must run alone with nothing else, and keeps its settles when the
@@ -537,10 +539,32 @@ worker sent `SIGTERM` gives its tasks back within the grace period with
 no attempt and no expiry counted and removes its registration; and an
 API process that is killed and replaced serves the same parse.
 
-Not proven: the soak, the throughput row, the row that blocks the
-database connection, which is proven at the store with a virtual clock
-and not with a connection that is cut, and the orphan sweep of the
-third row, which is not built.
+Proven by 2 runs that take a fleet and minutes, so each is a test of
+`cmd/lectiod` behind a variable and outside every workflow. Each was run
+once, on a laptop with 18 cores, with Postgres 16 and PgBouncer in
+containers and the bucket in the test's process:
+
+- The soak, `LECTIO_SOAK=1`: 1,000 parses of 3 pages run by 8 worker
+  processes with 64 slots, of which 29 were killed with `SIGKILL` at
+  random and replaced, in 22 seconds. Every parse ended `succeeded`
+  with each of its pages settled once, every page its index names was
+  in the bucket, no task row was left, and `queued` and `running` of
+  every group, project and lane equaled a recount. The reader was
+  called 3,132 times: 132 calls were for pages in flight at a kill and
+  read again.
+- The throughput run, `LECTIO_THROUGHPUT=1`: 25 worker processes with
+  200 slots and a stub reader of one-second pages, the API and every
+  worker behind PgBouncer in transaction mode with a pool of one
+  connection, sustained 191.5 pages a second with 48.7 statements a
+  second over 50 seconds, and no lease was lost. A worker waits a tenth
+  of its flush interval for the tasks that finish together before it
+  exchanges; without that wait the same run measured 185.8 pages and
+  125.6 statements a second, each page waiting part of a flush interval
+  for the exchange after it.
+
+Not proven: the row that blocks the database connection, which is
+proven at the store with a virtual clock and not with a connection that
+is cut, and the orphan sweep of the third row, which is not built.
 
 Remaining: the sweeps for settled tasks past their retention and for
 orphaned outputs, retry, and step 5 of the exchange. The store has no
