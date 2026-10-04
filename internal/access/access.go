@@ -31,7 +31,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
+	"time"
 
 	"latere.ai/x/pkg/authz"
 
@@ -141,12 +143,41 @@ func (d Decision) Or(refused error) error {
 type asker struct {
 	inner    authz.Authorizer
 	defaults authorizer.Limits
+
+	// fileRetention is the Retention of the defaults for an upload, when
+	// it is set: a file and a parse are kept for different times.
+	fileRetention time.Duration
+	// unenforced are the wire names of the limits this server cannot hold.
+	unenforced []string
+}
+
+// Option says what the server behind an authorizer holds a request to.
+type Option func(*asker)
+
+// FileRetention sets how long a file is kept when its allow names no
+// shorter time. The Retention of the defaults is a parse's.
+func FileRetention(d time.Duration) Option {
+	return func(a *asker) { a.fileRetention = d }
+}
+
+// Unenforced names members of the limits object, by their wire names, that
+// the server cannot hold a request to. An allow in which one of them would
+// change the limits in force is refused with capability_unsupported: a
+// limit the server is handed and cannot enforce is never passed in
+// silence. A member that changes nothing, such as a cap of zero or a
+// ceiling above the server's own, is no limit and is not refused.
+func Unenforced(members ...string) Option {
+	return func(a *asker) { a.unenforced = append(a.unenforced, members...) }
 }
 
 // NewAuthorizer wraps whichever authorizer a server runs. defaults are
 // the server's configured limits, which an allow lays its own over.
-func NewAuthorizer(inner authz.Authorizer, defaults authorizer.Limits) Authorizer {
-	return &asker{inner: inner, defaults: defaults}
+func NewAuthorizer(inner authz.Authorizer, defaults authorizer.Limits, opts ...Option) Authorizer {
+	a := &asker{inner: inner, defaults: defaults}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 func (a *asker) Authorize(ctx context.Context, caller Caller, q Question) (Decision, error) {
@@ -181,6 +212,9 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 	if defaults.Owner == "" {
 		defaults.Owner = caller.Subject
 	}
+	if q.Action == authorizer.ActionFileCreate && a.fileRetention > 0 {
+		defaults.Retention = a.fileRetention
+	}
 
 	var named authorizer.WireLimits
 	if q.Action == authorizer.ActionParseCreate || q.Action == authorizer.ActionFileCreate {
@@ -210,10 +244,45 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 		}
 	}
 	limits := named.Over(defaults)
+	var lost []string
+	for _, member := range a.unenforced {
+		if sets(limits, without(named, member).Over(defaults)) {
+			lost = append(lost, member)
+		}
+	}
+	if len(lost) > 0 {
+		return authorizer.Limits{}, fault.New(fault.CapabilityUnsupported,
+			"the allow of %s carries a limit this server does not enforce: %s", q.Action, strings.Join(lost, ", "))
+	}
 	if limits.Group == "" {
 		limits.Group = limits.Owner
 	}
 	return limits, nil
+}
+
+// sets reports whether a holds a limit that b does not: a member that is
+// set in a and differs in b. A member that is zero in a holds nothing, so
+// an allow that lifts a cap sets none.
+func sets(a, b authorizer.Limits) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	for i := range va.NumField() {
+		if !va.Field(i).IsZero() && !reflect.DeepEqual(va.Field(i).Interface(), vb.Field(i).Interface()) {
+			return true
+		}
+	}
+	return false
+}
+
+// without is the limits object with one member not named. A name the
+// object does not have changes nothing.
+func without(w authorizer.WireLimits, member string) authorizer.WireLimits {
+	v := reflect.ValueOf(&w).Elem()
+	for i := range v.NumField() {
+		if name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ","); name == member {
+			v.Field(i).SetZero()
+		}
+	}
+	return w
 }
 
 // envelope is what one call carries: the caller's subject and its claims

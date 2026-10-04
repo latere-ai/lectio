@@ -87,8 +87,21 @@ func New(s config.Settings) (*Access, error) {
 	} else {
 		a.decider, a.Authorization = &OwnerPolicy{Admins: s.AdminSubjects}, AuthorizationOwnerPolicy
 	}
-	a.Authorizer = NewAuthorizer(a.decider, Defaults(s))
+	a.Authorizer = NewAuthorizer(a.decider, Defaults(s), Unenforced(unenforced(s)...))
 	return a, nil
+}
+
+// unenforced are the limits the server these settings start cannot hold a
+// request to, by their wire names. An allow that sets one is refused with
+// capability_unsupported. The durable server holds every bound of the
+// fair queue. A development server has one queue for every caller and no
+// group, so it holds no bound of a group either.
+func unenforced(s config.Settings) []string {
+	out := []string{"max_pages", "pages_per_day", "retention_seconds"}
+	if s.Dev {
+		out = append(out, "max_running", "max_queued")
+	}
+	return out
 }
 
 // Defaults are the limits a server is configured with, which an allow

@@ -361,6 +361,75 @@ func TestLimitsTheServerCannotHold(t *testing.T) {
 	}
 }
 
+// A server that cannot hold a limit refuses the allow that hands it one,
+// and names the member. A member that changes nothing in force is no limit:
+// a cap of zero, a ceiling above the server's own, and a member the action
+// does not read.
+func TestALimitTheServerDoesNotEnforceIsRefused(t *testing.T) {
+	unenforced := access.Unenforced("max_queued", "pages_per_day", "max_pages")
+	cases := []struct {
+		name, action, raw string
+		lost              string
+	}{
+		{"a cap on the queue", authorizer.ActionParseCreate, `{"max_queued": 5}`, "max_queued"},
+		{"a budget of pages", authorizer.ActionParseCreate, `{"group": "acme", "pages_per_day": 500}`, "pages_per_day"},
+		{"a lower ceiling on pages", authorizer.ActionParseCreate, `{"max_pages": 10}`, "max_pages"},
+		{"two of them", authorizer.ActionParseCreate, `{"max_pages": 10, "max_queued": 1}`, "max_queued, max_pages"},
+		{"a cap of zero is no cap", authorizer.ActionParseCreate, `{"max_queued": 0, "pages_per_day": 0}`, ""},
+		{"a ceiling above the server's", authorizer.ActionParseCreate, `{"max_pages": 5000}`, ""},
+		{"members the server holds", authorizer.ActionParseCreate, `{"group": "acme", "weight": 4, "max_file_bytes": 1024}`, ""},
+		{"an upload reads none of them", authorizer.ActionFileCreate, `{"max_queued": 5, "pages_per_day": 500, "max_pages": 10}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			az := access.NewAuthorizer(allowing(c.raw), configured(), unenforced)
+			q := submit("")
+			if c.action == authorizer.ActionFileCreate {
+				q = access.Question{Action: c.action, Resource: access.File{}.Resource()}
+			}
+			d, err := az.Authorize(t.Context(), caller(alice), q)
+			if c.lost == "" {
+				if err != nil || !d.Allow {
+					t.Fatalf("got %+v, %v, want an allow", d, err)
+				}
+				return
+			}
+			if fault.CodeOf(err) != fault.CapabilityUnsupported || d.Allow {
+				t.Fatalf("got %+v, %v, want capability_unsupported", d, err)
+			}
+			if !strings.HasSuffix(fault.DetailOf(err), ": "+c.lost) {
+				t.Errorf("the detail %q does not name %q", fault.DetailOf(err), c.lost)
+			}
+		})
+	}
+}
+
+// A file and a parse are kept for different times: the allow of an upload
+// lowers the file's, and the allow of a submit the parse's.
+func TestAFileAndAParseAreKeptForTheirOwnTimes(t *testing.T) {
+	defaults := configured()
+	defaults.Retention = 30 * 24 * time.Hour
+	upload := access.Question{Action: authorizer.ActionFileCreate, Resource: access.File{}.Resource()}
+	for _, c := range []struct {
+		raw          string
+		file, parsed time.Duration
+	}{
+		{``, 24 * time.Hour, 30 * 24 * time.Hour},
+		{`{"retention_seconds": 3600}`, time.Hour, time.Hour},
+		{`{"retention_seconds": 172800}`, 24 * time.Hour, 48 * time.Hour},
+	} {
+		az := access.NewAuthorizer(allowing(c.raw), defaults, access.FileRetention(24*time.Hour))
+		f, err := az.Authorize(t.Context(), caller(alice), upload)
+		if err != nil || f.Limits.Retention != c.file {
+			t.Errorf("limits %s: a file is kept for %s, %v, want %s", c.raw, f.Limits.Retention, err, c.file)
+		}
+		p, err := az.Authorize(t.Context(), caller(alice), submit(""))
+		if err != nil || p.Limits.Retention != c.parsed {
+			t.Errorf("limits %s: a parse is kept for %s, %v, want %s", c.raw, p.Limits.Retention, err, c.parsed)
+		}
+	}
+}
+
 // A question outside the vocabulary, or about another kind than its
 // action acts on, is a mistake in a handler: it is refused and never
 // sent, so it cannot be answered with an allow.

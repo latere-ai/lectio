@@ -115,7 +115,7 @@ func TestTheDefaultsAreTheServersLimits(t *testing.T) {
 func TestAVerifierAndAnAuthorizerEndToEnd(t *testing.T) {
 	iss := issuertest.New(t)
 	s := endpoint(t)
-	s.Allow(stub.Rule{Action: authorizer.ActionParseCreate, Limits: map[string]any{"owner": "org:acme", "group": "acme", "max_pages": 100}})
+	s.Allow(stub.Rule{Action: authorizer.ActionParseCreate, Limits: map[string]any{"owner": "org:acme", "group": "acme", "max_file_bytes": 1024}})
 	configured := settings(t,
 		"LECTIO_OIDC_ISSUERS", iss.URL(), "LECTIO_AUTHORIZER_URL", s.URL(), "LECTIO_AUTHORIZER_TOKEN", s.Token(),
 		"LECTIO_MAX_PAGES", "500",
@@ -142,7 +142,7 @@ func TestAVerifierAndAnAuthorizerEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !d.Allow || d.Limits.Owner != "org:acme" || d.Limits.Group != "acme" || d.Limits.MaxPages != 100 || d.Limits.MaxFileBytes != 256<<20 {
+	if !d.Allow || d.Limits.Owner != "org:acme" || d.Limits.Group != "acme" || d.Limits.MaxFileBytes != 1024 || d.Limits.MaxPages != 500 {
 		t.Errorf("the decision is %+v", d)
 	}
 	seen := s.Requests()
