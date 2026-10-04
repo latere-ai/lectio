@@ -163,36 +163,48 @@ type server struct {
 	done  chan error
 }
 
+// lectiod returns a lectiod binary to run: the one LECTIO_LIVE_LECTIOD
+// names, or one built from the tree this test is in.
+func lectiod(t *testing.T) string {
+	t.Helper()
+	if bin := os.Getenv("LECTIO_LIVE_LECTIOD"); bin != "" {
+		return bin
+	}
+	bin := filepath.Join(t.TempDir(), "lectiod")
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "../../cmd/lectiod")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building lectiod: %v\n%s", err, output)
+	}
+	return bin
+}
+
+// caller stands up an issuer for a run and mints the token of its one
+// caller. A server that verifies its callers is given the issuer and
+// verifies the token; a server that takes one static token is given the
+// same token as that one. So a run reaches either with the same bearer.
+func caller(t *testing.T) (issuer, token string) {
+	t.Helper()
+	provider := issuertest.New(t, issuertest.WithDefaultAudience(lectioconfig.DefaultOIDCAudience))
+	return provider.URL(), provider.Mint(issuertest.Claims{Sub: "quality", Exp: time.Now().Add(12 * time.Hour).Unix()})
+}
+
 // startServer builds lectiod and starts it with the reader configuration
 // of the run. Its log goes to server.log in the output directory.
 func startServer(t *testing.T, out, config, key, converterURL string) *server {
 	t.Helper()
-	bin := os.Getenv("LECTIO_LIVE_LECTIOD")
-	if bin == "" {
-		bin = filepath.Join(t.TempDir(), "lectiod")
-		build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "../../cmd/lectiod")
-		if output, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("building lectiod: %v\n%s", err, output)
-		}
-	}
-
-	// The run's one caller holds a token of an issuer this test stands up.
-	// A server that verifies its callers is given the issuer and verifies
-	// the token; a server that takes one static token is given the same
-	// token as that one. So the run reaches either with the same bearer.
-	issuer := issuertest.New(t, issuertest.WithDefaultAudience(lectioconfig.DefaultOIDCAudience))
-	srv := &server{done: make(chan error, 1)}
-	srv.token = issuer.Mint(issuertest.Claims{Sub: "quality", Exp: time.Now().Add(12 * time.Hour).Unix()})
+	bin := lectiod(t)
+	issuer, token := caller(t)
 	env := map[string]string{
 		"LECTIO_ADDR": "127.0.0.1:0", "LECTIO_CONFIG": config, "LECTIO_MODEL_KEY": key,
-		"LECTIO_CONVERTER_URL": converterURL, "LECTIO_OIDC_ISSUERS": issuer.URL(), "LECTIO_DEV_TOKEN": srv.token,
+		"LECTIO_CONVERTER_URL": converterURL, "LECTIO_OIDC_ISSUERS": issuer, "LECTIO_DEV_TOKEN": token,
 		// 2 pages are read at once: enough to show that pages are read side
 		// by side, and few enough for an engine that reads one at a time.
 		"LECTIO_WORKERS": "2",
 	}
+	kind := ""
 	switch mode := os.Getenv("LECTIO_LIVE_SERVER"); mode {
 	case "", "durable":
-		srv.kind = "durable, role all, Postgres and an S3 object store in containers"
+		kind = "durable, role all, Postgres and an S3 object store in containers"
 		db, err := testservers.StartPostgres()
 		if err != nil {
 			t.Fatalf("no container runtime answered for Postgres; LECTIO_LIVE_SERVER=dev runs without one: %v", err)
@@ -207,13 +219,22 @@ func startServer(t *testing.T, out, config, key, converterURL string) *server {
 			"LECTIO_S3_ACCESS_KEY": objects.AccessKey, "LECTIO_S3_SECRET_KEY": objects.SecretKey, "LECTIO_S3_PATH_STYLE": "true",
 		})
 	case "dev":
-		srv.kind = "development, in memory"
+		kind = "development, in memory"
 		env["LECTIO_DEV"] = "true"
 	default:
 		t.Fatalf("LECTIO_LIVE_SERVER is %q, and it is durable or dev", mode)
 	}
+	srv := launch(t, bin, filepath.Join(out, "server.log"), token, env)
+	srv.kind = kind
+	return srv
+}
 
-	logPath := filepath.Join(out, "server.log")
+// launch starts a lectiod binary with an environment and returns once it
+// listens. Its log goes to the file named, and token is the bearer its one
+// caller holds.
+func launch(t *testing.T, bin, logPath, token string, env map[string]string) *server {
+	t.Helper()
+	srv := &server{token: token, done: make(chan error, 1)}
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
