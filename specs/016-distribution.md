@@ -302,15 +302,15 @@ Built:
   sidecar and its image, which holds the suite and the one binary and
   runs as a user that is not root. `lectio-convert version` prints the
   build's version, which the image's build stamps as `make build` does.
-  The image is built by hand; no workflow builds or publishes it.
+  The release workflow builds and publishes it; no job of the verify
+  workflow builds it.
 - `Dockerfile`: the server's image, `lectiod` alone on a distroless
   base, with no shell and no office suite, run as the numeric user
   65532. The build stage cross-compiles, so one file builds the image
   for each platform. Built for one platform it is 37 MiB, and it starts
   and reads a PDF with a read-only root file system and every
-  capability dropped. It is built by hand; no workflow builds or
-  publishes it.
-
+  capability dropped. The verify workflow builds it on every push and
+  the release workflow publishes it.
 - `deploy/base`, `deploy/bootstrap` and `deploy/examples/generic`: the
   manifests of both roles, written against the listeners, the probes
   and the settings of the durable server, which no build has yet, so no
@@ -326,7 +326,6 @@ Built:
   declaration of the gate skips the sidecar's Deployment: the sidecar is
   a command of this repository, which the deployment rules hold to
   naming the audience it verifies, and it verifies no token.
-
 - `deploy/examples/compose.yaml` and `docs/running.md`: Postgres, an
   object store with its bucket, `lectiod` in the role `all` with the
   stub reader, and the sidecar on a socket with no network. It is
@@ -337,7 +336,6 @@ Built:
   and no identity provider: the command stops unless
   `LECTIO_OIDC_ISSUERS` names one, and a caller brings a token that
   issuer wrote.
-
 - `deploy_test.go`, the tests of the deploy tree, and 2 jobs of the
   verify workflow. From the files as written, on every run of the gate:
   every container's security context, probes and resources; the
@@ -351,7 +349,6 @@ Built:
   in the `deploy` job, which fails on a skip. The `image` job builds
   the server's image and holds it under 60 MiB, with no shell, starting
   and answering with a read-only root file system.
-
 - `.github/workflows/release.yml`, `tools/release/deploy-archive.sh`
   and `release_test.go`: the release workflow. On a `v*` tag it waits
   for the verify run of the tagged commit, builds `lectiod` and
