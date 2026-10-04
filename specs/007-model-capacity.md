@@ -144,6 +144,9 @@ worker with free slots and no eligible task sleeps until the earliest
 `paused_until` among the scopes it was refused by, or its poll
 interval. `waits` no longer exists as a counter: what waited and why is
 answered by reading the pools, not by a column written on every poll.
+`GET /queue` is that read ([[006-fairness-and-priority]]): each
+reader's bound and calls in flight, its breaker, and each scope a rate
+limit reached, with its ceiling as it stands and the end of its pause.
 
 ### Rate limits
 
@@ -234,9 +237,13 @@ was not the first choice, why ([[015-observability]]).
 
 When the model credential belongs to the tenant
 ([[013-limits-and-usage]]) and the endpoint refuses a call because that
-tenant's budget is spent, the failure is permanent for the parse, with
+tenant's budget is spent, the failure is permanent for the page, with
 code `budget_exhausted`. It is not retried and does not count against
-the breaker: the reader is healthy and the tenant is out of funds.
+the breaker: the reader is healthy and the tenant is out of funds. The
+parse says the same: a parse whose failed pages all carry one code
+fails with that code, so one that was refused for budget fails with
+`budget_exhausted` and not with `page_unreadable`
+([[005-parse-graph]]).
 
 ### A reader's cost
 
@@ -291,7 +298,12 @@ stopped. The third row's first half is proven through the durable
 server, with `LECTIO_KEYS=endpoint`, a stub key endpoint and a stub
 gateway that limits one group's key: the other group is read while the
 first is paused, and the limited pages spend no attempt
-([[013-limits-and-usage]]). The other criteria that need a stub
+([[013-limits-and-usage]]). The last row is proven through the durable
+server too, with a stub gateway that refuses one group's key for
+budget: the page fails after one call, the parse fails with
+`budget_exhausted`, the breaker stays closed, and another group reads
+beside it. The pools are read by `GET /queue`
+([[006-fairness-and-priority]]). The other criteria that need a stub
 endpoint that counts or limits, or an extraction, are not proven: the
 rows of the table below that name a stub endpoint, a counting stub or
 an end-to-end test.
@@ -322,4 +334,5 @@ applied ([[008-readers]]).
 | Three consecutive failures open the breaker for all replicas; exactly one trial call is made after the open period | a concurrency test |
 | An extraction over six windows never holds more than one slot, and holds none between its calls | a test with a counting stub |
 | With a chain of two readers and the first open, pages are read by the second and their results say so; with the reader pinned, pages wait and none is read by the second | an end-to-end test |
-| A budget refusal fails the parse with `budget_exhausted` after one call and leaves the breaker closed | an end-to-end test |
+| A budget refusal fails the parse with `budget_exhausted` after one call and leaves the breaker closed | `TestABudgetRefusalFailsTheParseWithBudgetExhausted` of `cmd/lectiod`, through the durable server with a stub gateway that answers one group's key with `402`; `TestAFailedParseSaysWhatItsPagesFailedWith` at the store, for a parse whose failed pages carry one code and for one whose pages carry several |
+| A read of the queue holds each pool's calls in flight against its bound, its breaker as `closed`, `open` or `trial`, and each scope a rate limit reached with its ceiling and its pause; a read of some groups counts their calls alone and lists their scopes and the shared one | `TestTheQueueIsReadAsItStands` and `TestAGroupsOwnKeyIsItsOwnScope`, at the store |

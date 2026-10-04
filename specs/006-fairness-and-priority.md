@@ -319,10 +319,47 @@ its reader, which is known when the task is chosen.
 
 ### Visibility
 
-`GET /queue` returns, per group the caller may see: weight, queued
-and running tasks per class, queued parses, and the share of service it
-received in the last interval, and the same for each project of the
-group. Like a group, a project is never a metric label: their number is
+`GET /queue` returns the queue as it stands, from one statement and so
+of one instant ([[003-api]]).
+
+| Per | The answer holds |
+|---|---|
+| group | its `weight`, its `max_running` and `max_queued`, its parses that have not ended, and its queued and running tasks per class |
+| project of the group | its `weight`, its parses that have not ended, and its queued and running tasks per class |
+| reader | its pool ([[007-model-capacity]]): `max_in_flight`, the calls in flight, whether the breaker is `closed`, `open` or admits its one `trial`, and each key scope that was limited, with its ceiling as it stands, its calls in flight, and when its pause ends |
+
+The numbers are the counters the claim keeps, so the read is of a few
+rows per group and of no queued task, whatever the backlog.
+
+Which groups are in the answer follows from the question, `queue.read`
+([[012-identity-and-authorization]]):
+
+- A request that names a `group` asks about that group. An allow
+  answers it with that group, whether it holds work or not.
+- A request that names none is answered by the allow's filter. No
+  filter is every group that holds a parse that has not ended: a group
+  with nothing queued and nothing running is left out, so the answer
+  grows with the work and not with every group there ever was. A filter
+  lists the groups the caller may see as its owners, and those are in
+  the answer whether they hold work or not. Under the owner policy the
+  group of a parse is its owner, so the filter is the caller's own
+  group. An authorizer that puts several owners in one group lists the
+  group's id, or is asked with the group named. A filter that lists
+  nobody, or that narrows by labels, which a queue does not carry, is
+  answered with no group and no pool.
+
+A read that is narrowed to some groups tells the pools as those groups
+see them: the calls in flight that are theirs, their own key scopes,
+and the scope of the key every group shares. A reader's bound and its
+breaker are the server's configuration and its health, and are told to
+every caller.
+
+The answer holds no share of service. The fair queue keeps virtual
+time, which orders the next claim and is not a count of what a group
+was served, and what each group read in an hour is in the meters
+([[013-limits-and-usage]]).
+
+Like a group, a project is never a metric label: their number is
 unbounded ([[015-observability]]). A parse's `progress.waiting` is
 computed when it is read: `turn` when the parse has queued tasks that
 could run and none leased, `capacity` when its queued tasks have no
@@ -369,6 +406,12 @@ Built:
   served as one group, 2 groups are served by weight, and 2 projects
   divide their group and no other.
 
+- `GET /queue`, in the durable server: `lectio_queue` of the fifth
+  migration, one function that reads the groups, their projects and
+  the pools, `Queue` of the store, and the route, which asks
+  `queue.read` with the group its request names and narrows its answer
+  by the allow's filter.
+
 Proven: every row of the table below that names the dispatch
 simulation, a store test or a concurrency test over Postgres, the 5
 rows about projects among them. The concurrency tests run on a direct
@@ -378,9 +421,11 @@ the charge and of `max_running` run on a direct connection. Not proven: the reco
 soak run with kills, which waits for the soak of [[004-durable-tasks]];
 every test of the store ends with that recount over its own rows.
 
-Remaining: `GET /queue` and `progress.waiting`. `internal/run`, the
-in-process runner, still stands in for this spec in a development
-server: every parse's pages wait in one queue ordered by
+Remaining: `progress.waiting`. A share of service per interval, which
+the first draft put in `GET /queue`, is not in its answer. A
+development server answers `GET /queue` with `501`. `internal/run`, the
+in-process runner, still stands in for this spec there: every parse's
+pages wait in one queue ordered by
 class, then priority, then position in their parse, then age, so
 interactive work goes first and two parses of the same standing
 advance together. It knows no group, no project and no weight: nothing
@@ -414,3 +459,4 @@ its group's empty project.
 | A project raising its weight from 1 to 1000, raising its priorities, or queuing 100,000 tasks changes no other group's dispatch count | the dispatch simulation, run with and without the change; 20,000 tasks on every run and the 100,000 with `LECTIO_SIMULATION=full` |
 | `queued` and `running`, of every group and every project, equal a recount from `tasks` after a soak run with kills | a consistency check in the soak test of [[004-durable-tasks]] |
 | 50 concurrent submits of one group at `max_queued` minus 10 admit exactly 10 | a concurrency test over Postgres |
+| With a known set of parses of 2 groups queued, `GET /queue` holds each group's weight, bounds, parses that have not ended and queued and running tasks per class, the same per project, and each pool's calls in flight, breaker and limited scopes; the numbers equal a recount of the task rows; a caller is answered its own group and its own calls, and another group by name only when its authorizer allows | `TestTheQueueIsReadAsItStands`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode, and `TestAGroupsOwnKeyIsItsOwnScope`, at the store; `TestTheQueueIsViewedPerGroupAndProject` through the API over the durable backend, under an authorizer that names groups and projects; `TestTheQueueOfTwoGroupsIsViewed` of `cmd/lectiod`, with processes, under the owner policy |
