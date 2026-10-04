@@ -288,8 +288,10 @@ Built, as a library the server does not call yet:
   turns a request's bearer into a caller and one that answers a
   question with a decision; the resources a question is about; the
   verifier; the authorizer client; the owner policy with its admin
-  subjects; and the development identity, one static token for the
-  subject `dev`, behind the same interface as the verifier.
+  subjects; the development identity, one static token for the
+  subject `dev`, behind the same interface as the verifier; and the
+  table of routes, each with the action it asks and the fields it
+  sends, held equal to the contract and to the table of [[003-api]].
 
 A stand-in, in the server:
 
@@ -304,8 +306,8 @@ A stand-in, in the server:
   That is the owner policy's rule for one subject, without admin
   subjects.
 
-Remaining: the action asked by each route, and service callers naming
-an owner.
+Remaining: the handlers asking. No route asks its action yet, a submit
+and an upload take no `owner`, and no limit of an allow is enforced.
 
 ## Acceptance criteria
 
@@ -314,6 +316,7 @@ an owner.
 | The verifier passes the shared conformance suite | `TestVerifierConformance`, which runs `authkit/conformance` |
 | A verified token becomes a caller whose subject is `<iss>\|<sub>` and whose claims are the token's, verbatim; two issuers that agree on a `sub` are two subjects | `TestAVerifiedTokenBecomesACaller`, `TestTwoIssuersAreTwoSubjects` |
 | A token for another audience, of an issuer that is not listed, expired or not yet valid past the skew, or with a signature that does not check out is `invalid_token` with the reason, and the error never repeats the token | `TestWhatTheVerifierRefuses`, `TestTheSkewOnExpAndNbf` |
+| The table of routes kept as data has one row for every route of the contract, in the contract's order, each asking an action of the vocabulary with fields the vocabulary publishes for it, and equals the table of [[003-api]] | `TestEveryRouteOfTheContractHasARow`, `TestEveryRowAsksAnActionOfTheVocabulary`, `TestTheRowsAreTheSpecs` |
 | Every route asks exactly the action in the table of [[003-api]], with the resource fields above | a test that records the authorizer's requests for each route |
 | The endpoint `lectiod` asks answers the contract for every row of the vocabulary | `TestAuthorizerConformance`, which runs `authz/conformance` against the stub authorizer |
 | The client holds an allow for its `ttl`, a deny briefly and an outage never, asks a create every time, retries once on a connection failure, and fails closed with `authorizer_unavailable` on anything that is not a well-formed answer | `TestWhatTheClientRemembers`, `TestACreateIsAlwaysAsked`, `TestOneRetryOnAConnectionFailure`, `TestTheClientFailsClosed` |
