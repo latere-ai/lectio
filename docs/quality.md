@@ -147,16 +147,20 @@ LECTIO_LIVE_OUT=out/quality \
 | `LECTIO_LIVE_OUT` | the directory the results are written to. `out/quality` when it is not set |
 | `LECTIO_LIVE_FILES` | file names of the corpus, separated by commas, to run only those |
 | `LECTIO_LIVE_SERVER` | `durable`, the default, or `dev` for the development server, which needs no container runtime and keeps everything in memory |
+| `LECTIO_LIVE_LECTIOD` | a `lectiod` binary to run in place of the one built from the tree |
 
-The run needs a container runtime for the durable server. The model
-reads 14 pages: the 2 blank pages of the 2 PDFs and the blank frame of
+The run needs a container runtime for the durable server. It stands up
+an issuer of its own and calls the server with a token of it, so it
+needs no account anywhere. The model reads 14 pages: the 2 blank pages of the 2 PDFs and the blank frame of
 the TIFF cost no call, and the files read from themselves cost none.
 
 It writes, under the output directory:
 
 - `report.md`: one row per file with its pages, blocks, the 5 measures,
   seconds per page and tokens, then the bars, then what each file missed
-  and a note for every block that was not right.
+  and a note for every block that was not right. Seconds per page is the
+  time of the parse over the pages a reader was called for, with 2 pages
+  read at once.
 - `report.json`: the same numbers.
 - one directory per file with each page as the API returned it, the
   image the reader was given of it, and the document as Markdown, so a

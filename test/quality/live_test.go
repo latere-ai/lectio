@@ -6,7 +6,6 @@ package quality_test
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"latere.ai/x/pkg/authkit/issuertest"
+
 	"latere.ai/x/lectio/document"
+	lectioconfig "latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/quality"
 	"latere.ai/x/lectio/internal/testfixtures"
 	"latere.ai/x/lectio/internal/testservers"
@@ -53,6 +55,8 @@ func TestMain(m *testing.M) { testservers.Main(m) }
 // The server is the durable one, in the role all, against a Postgres and
 // an object store this test starts in containers. LECTIO_LIVE_SERVER=dev
 // runs the development server instead, which needs no container runtime.
+// LECTIO_LIVE_LECTIOD names a lectiod binary to run in place of the one
+// this test builds from the tree it is in.
 //
 // The test fails when a file misses a bar of its class or its parse does
 // not succeed. Nothing it writes holds the key.
@@ -163,16 +167,25 @@ type server struct {
 // of the run. Its log goes to server.log in the output directory.
 func startServer(t *testing.T, out, config, key, converterURL string) *server {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "lectiod")
-	build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "../../cmd/lectiod")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building lectiod: %v\n%s", err, output)
+	bin := os.Getenv("LECTIO_LIVE_LECTIOD")
+	if bin == "" {
+		bin = filepath.Join(t.TempDir(), "lectiod")
+		build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "../../cmd/lectiod")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("building lectiod: %v\n%s", err, output)
+		}
 	}
 
-	srv := &server{token: rand.Text(), done: make(chan error, 1)}
+	// The run's one caller holds a token of an issuer this test stands up.
+	// A server that verifies its callers is given the issuer and verifies
+	// the token; a server that takes one static token is given the same
+	// token as that one. So the run reaches either with the same bearer.
+	issuer := issuertest.New(t, issuertest.WithDefaultAudience(lectioconfig.DefaultOIDCAudience))
+	srv := &server{done: make(chan error, 1)}
+	srv.token = issuer.Mint(issuertest.Claims{Sub: "quality", Exp: time.Now().Add(12 * time.Hour).Unix()})
 	env := map[string]string{
 		"LECTIO_ADDR": "127.0.0.1:0", "LECTIO_CONFIG": config, "LECTIO_MODEL_KEY": key,
-		"LECTIO_CONVERTER_URL": converterURL, "LECTIO_DEV_TOKEN": srv.token,
+		"LECTIO_CONVERTER_URL": converterURL, "LECTIO_OIDC_ISSUERS": issuer.URL(), "LECTIO_DEV_TOKEN": srv.token,
 		// 2 pages are read at once: enough to show that pages are read side
 		// by side, and few enough for an engine that reads one at a time.
 		"LECTIO_WORKERS": "2",
@@ -387,6 +400,9 @@ func (s *server) run(t *testing.T, f file, dir string) quality.Result {
 		}
 		if res.Model == "" {
 			res.Model = page.Model
+		}
+		if page.Reader != "" {
+			res.ReadPages++
 		}
 		pages = append(pages, page)
 		// A page a reader read has the image the reader was given.
