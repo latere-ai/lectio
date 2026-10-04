@@ -33,6 +33,13 @@ func TestFiles(t *testing.T) {
 	if _, err := m.File("alice", "fil_1"); err != nil {
 		t.Fatal(err)
 	}
+	// By its id alone a file is found whoever owns it, with its owner.
+	if f, err := m.FileByID("fil_3"); err != nil || f.Owner != "bob" {
+		t.Fatalf("FileByID(fil_3) = %+v, %v", f, err)
+	}
+	if _, err := m.FileByID("fil_9"); fault.CodeOf(err) != fault.FileNotFound {
+		t.Fatalf("FileByID of nothing: %v", err)
+	}
 	for _, id := range []string{"fil_3", "fil_9"} {
 		if _, err := m.File("alice", id); fault.CodeOf(err) != fault.FileNotFound {
 			t.Errorf("File(alice, %s) = %v", id, err)
@@ -115,6 +122,12 @@ func TestParses(t *testing.T) {
 	if _, err := m.Parse("alice", "prs_5"); fault.CodeOf(err) != fault.ParseNotFound {
 		t.Fatalf("another owner's parse is not found: %v", err)
 	}
+	if p, err := m.ParseByID("prs_5"); err != nil || p.Owner != "bob" {
+		t.Fatalf("ParseByID(prs_5) = %+v, %v", p, err)
+	}
+	if _, err := m.ParseByID("prs_9"); fault.CodeOf(err) != fault.ParseNotFound {
+		t.Fatalf("ParseByID of nothing: %v", err)
+	}
 	if _, err := m.UpdateParse("prs_9", func(*Parse) {}); fault.CodeOf(err) != fault.ParseNotFound {
 		t.Fatalf("UpdateParse of nothing: %v", err)
 	}
@@ -143,9 +156,23 @@ func TestParses(t *testing.T) {
 		"by two labels":       {Filter{Labels: map[string]string{"batch": "oct", "kind": "invoice"}}, "", 10, "1", false},
 		"nothing matches":     {Filter{State: StateCanceled}, "", 10, "", false},
 	} {
-		got, more := m.ListParses("alice", tc.filter, tc.after, tc.limit)
+		got, more := m.ListParses([]string{"alice"}, tc.filter, tc.after, tc.limit)
 		if ids(got) != tc.want || more != tc.more {
 			t.Errorf("%s: %q more=%v, want %q more=%v", name, ids(got), more, tc.want, tc.more)
+		}
+	}
+	// The owners a list ranges over: several, every one, and nobody.
+	for name, tc := range map[string]struct {
+		owners []string
+		want   string
+	}{
+		"two owners":  {[]string{"alice", "bob"}, "54321"},
+		"every owner": {nil, "54321"},
+		"one owner":   {[]string{"bob"}, "5"},
+		"nobody":      {[]string{}, ""},
+	} {
+		if got, _ := m.ListParses(tc.owners, Filter{}, "", 10); ids(got) != tc.want {
+			t.Errorf("%s: %q, want %q", name, ids(got), tc.want)
 		}
 	}
 

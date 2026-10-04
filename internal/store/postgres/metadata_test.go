@@ -63,11 +63,16 @@ func TestTheSameBytesAreOneFilePerOwner(t *testing.T) {
 		if other := h.stored(file("bob", "fil_3", "aa")); other.ID != "fil_3" {
 			t.Fatalf("another owner's upload of the same bytes is %+v", other)
 		}
-		if got, err := h.store.File(ctx, "alice", "fil_1"); err != nil || got.SHA256 != "aa" || got.MediaType != "application/pdf" {
+		// A file is read by its id alone and says whose it is: the API asks
+		// whether its caller may act on that owner's file.
+		if got, err := h.store.File(ctx, "fil_1"); err != nil || got.SHA256 != "aa" || got.MediaType != "application/pdf" || got.Owner != "alice" {
 			t.Fatalf("reading a file: %+v, %v", got, err)
 		}
-		if _, err := h.store.File(ctx, "bob", "fil_1"); fault.CodeOf(err) != fault.FileNotFound {
-			t.Fatalf("another owner read the file: %v", err)
+		if got, err := h.store.File(ctx, "fil_3"); err != nil || got.Owner != "bob" {
+			t.Fatalf("reading another owner's file: %+v, %v", got, err)
+		}
+		if _, err := h.store.File(ctx, "fil_9"); fault.CodeOf(err) != fault.FileNotFound {
+			t.Fatalf("a file that is not there was read: %v", err)
 		}
 		if got, ok, err := h.store.FileByContent(ctx, "alice", "aa"); err != nil || !ok || got.ID != "fil_1" {
 			t.Fatalf("a file by its content: %+v, %t, %v", got, ok, err)
@@ -122,7 +127,7 @@ func TestAFileAParseReadsIsNotDeleted(t *testing.T) {
 		if err != nil || key != "sources/alice/aa/fil_1" {
 			t.Fatalf("deleting the file: %q, %v", key, err)
 		}
-		if _, err := h.store.File(ctx, "alice", "fil_1"); fault.CodeOf(err) != fault.FileNotFound {
+		if _, err := h.store.File(ctx, "fil_1"); fault.CodeOf(err) != fault.FileNotFound {
 			t.Fatalf("a file whose delete began was read: %v", err)
 		}
 		if _, err := h.store.DeleteFile(ctx, "alice", "fil_1"); fault.CodeOf(err) != fault.FileNotFound {
@@ -266,7 +271,7 @@ func TestParsesAreListedForTheirOwner(t *testing.T) {
 		}
 		listed := func(f postgres.Filter, after string, limit int) (string, bool) {
 			t.Helper()
-			got, more, err := h.store.Parses(ctx, "alice", f, after, limit)
+			got, more, err := h.store.Parses(ctx, []string{"alice"}, f, after, limit)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -299,8 +304,24 @@ func TestParsesAreListedForTheirOwner(t *testing.T) {
 				t.Errorf("%s: %q, more %t, want %q, more %t", name, got, more, tc.want, tc.more)
 			}
 		}
-		if got, _, err := h.store.Parses(ctx, "carol", postgres.Filter{}, "", 50); err != nil || len(got) != 0 {
+		if got, _, err := h.store.Parses(ctx, []string{"carol"}, postgres.Filter{}, "", 50); err != nil || len(got) != 0 {
 			t.Fatalf("an owner with no parse lists %d, %v", len(got), err)
+		}
+		// The owners a list ranges over: several, every one, and nobody. An
+		// owner's name is bound as data, whatever is in it.
+		for name, tc := range map[string]struct {
+			owners []string
+			want   int
+		}{
+			"two owners":         {[]string{"alice", "bob"}, 4},
+			"every owner":        {nil, 4},
+			"one owner":          {[]string{"bob"}, 1},
+			"nobody":             {[]string{}, 0},
+			"a name with quotes": {[]string{`a"l'ice`, `https://issuer.example|alice`}, 0},
+		} {
+			if got, _, err := h.store.Parses(ctx, tc.owners, postgres.Filter{}, "", 50); err != nil || len(got) != tc.want {
+				t.Errorf("%s: listed %d, %v, want %d", name, len(got), err, tc.want)
+			}
 		}
 	})
 }

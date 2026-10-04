@@ -16,6 +16,7 @@ import (
 	"latere.ai/x/pkg/otel"
 	"latere.ai/x/pkg/retry"
 
+	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/blob"
 	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/durable"
@@ -52,6 +53,15 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 	}
 	for _, what := range readers.Unapplied {
 		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
+	}
+	// Who is calling is the API's question. A worker acts on tasks and for
+	// no caller, verifies no token and asks nobody.
+	var who *access.Access
+	if serves {
+		var err error
+		if who, err = identity(ctx, s, log); err != nil {
+			return err
+		}
 	}
 
 	objects, err := blob.NewS3(blob.S3Config{
@@ -122,19 +132,19 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 
 	var api *http.Server
 	if serves {
-		// The verifier and the authorizer are not built: until they are,
-		// one static token stands in for both, as in a development server.
-		log.WarnContext(ctx, "no issuer is configured: the one caller is the holder of LECTIO_DEV_TOKEN")
 		limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
 		handlers := &httpapi.Server{
 			Backend: &durable.Backend{
 				Store: st, Objects: objects, Readers: readers.Readers, Chain: readers.Chain,
 				MaxDeadline: s.MaxDeadline, Log: log,
 			},
-			Auth:    httpapi.Tokens{s.DevToken: "dev"},
+			Auth: who.Authenticator, Authz: who.Authorizer,
 			Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
 			Fetcher:  &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
 			BasePath: s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
+		}
+		if err := checked(ctx, who, log); err != nil {
+			return errors.Join(err, probes.Close())
 		}
 		public, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.Addr)
 		if err != nil {

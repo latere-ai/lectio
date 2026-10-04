@@ -202,10 +202,21 @@ func (m *Memory) PutFile(f File) (stored File, created bool) {
 
 // File returns an owner's file.
 func (m *Memory) File(owner, id string) (File, error) {
+	f, err := m.FileByID(id)
+	if err != nil || f.Owner != owner {
+		return File{}, fault.New(fault.FileNotFound, "no file %s", id)
+	}
+	return f, nil
+}
+
+// FileByID returns a file whoever owns it. It is what a handler reads
+// before it asks whether its caller may: the file's owner is part of the
+// question.
+func (m *Memory) FileByID(id string) (File, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	f, ok := m.files[id]
-	if !ok || f.Owner != owner {
+	if !ok {
 		return File{}, fault.New(fault.FileNotFound, "no file %s", id)
 	}
 	return f, nil
@@ -252,10 +263,19 @@ func (m *Memory) CreateParse(p Parse, key, body string) (stored Parse, created b
 
 // Parse returns an owner's parse.
 func (m *Memory) Parse(owner, id string) (Parse, error) {
+	p, err := m.ParseByID(id)
+	if err != nil || p.Owner != owner {
+		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", id)
+	}
+	return p, nil
+}
+
+// ParseByID returns a parse whoever owns it, for a handler to ask about.
+func (m *Memory) ParseByID(id string) (Parse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.parses[id]
-	if !ok || p.Owner != owner {
+	if !ok {
 		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", id)
 	}
 	return p, nil
@@ -301,14 +321,15 @@ func (f Filter) matches(p Parse) bool {
 	return true
 }
 
-// ListParses returns an owner's parses that match, newest first: at most
-// limit of them, starting after the parse whose id is after. more reports
+// ListParses returns the parses of the owners that match, newest first: at
+// most limit of them, starting after the parse whose id is after. Nil
+// owners is every owner's, and an empty list is nobody's. more reports
 // whether others follow.
-func (m *Memory) ListParses(owner string, f Filter, after string, limit int) (out []Parse, more bool) {
+func (m *Memory) ListParses(owners []string, f Filter, after string, limit int) (out []Parse, more bool) {
 	m.mu.RLock()
 	all := make([]Parse, 0, len(m.parses))
 	for _, p := range m.parses {
-		if p.Owner == owner && f.matches(p) {
+		if (owners == nil || slices.Contains(owners, p.Owner)) && f.matches(p) {
 			all = append(all, p)
 		}
 	}

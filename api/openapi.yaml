@@ -25,8 +25,8 @@ info:
 
     Every error has the same shape: one `code` to branch on, one `message`
     for a person, and `details` for a developer. Any operation may answer
-    `401`, `403`, `429` and `500` in that shape; an operation lists the
-    other statuses it answers. An address that is not routed is `404
+    `401`, `403`, `429`, `500` and `503` in that shape; an operation lists
+    the other statuses it answers. An address that is not routed is `404
     not_found`, and one that is routed under another method is `405
     method_not_allowed`.
 
@@ -94,6 +94,7 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "413": { $ref: "#/components/responses/Error" }
         "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
 
   /files/{file}:
     parameters:
@@ -678,6 +679,8 @@ components:
                 - not_implemented
                 - not_found
                 - method_not_allowed
+                - authorizer_unavailable
+                - capability_unsupported
                 - internal
             message: { type: string, description: One fixed sentence for a person. }
             details:

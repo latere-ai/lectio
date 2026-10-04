@@ -106,9 +106,9 @@ func viewFile(f postgres.File) store.File {
 	return store.File{ID: f.ID, Owner: f.Owner, Name: f.Name, MediaType: f.MediaType, SHA256: f.SHA256, Size: f.Size, CreatedAt: f.CreatedAt}
 }
 
-// File returns an owner's file.
-func (b *Backend) File(ctx context.Context, owner, id string) (store.File, error) {
-	f, err := b.Store.File(ctx, owner, id)
+// File returns a file whoever owns it.
+func (b *Backend) File(ctx context.Context, id string) (store.File, error) {
+	f, err := b.Store.File(ctx, id)
 	if err != nil {
 		return store.File{}, err
 	}
@@ -160,7 +160,7 @@ func (b *Backend) Submit(ctx context.Context, p store.Parse, a store.Admission, 
 	if err != nil {
 		return store.Parse{}, false, err
 	}
-	stored, err := b.Parse(ctx, p.Owner, id)
+	stored, err := b.Parse(ctx, id)
 	return stored, created, err
 }
 
@@ -194,9 +194,9 @@ func (b *Backend) readBase(p store.Parse) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Parse returns an owner's parse as its row stands.
-func (b *Backend) Parse(ctx context.Context, owner, id string) (store.Parse, error) {
-	row, err := b.Store.ParseOf(ctx, owner, id)
+// Parse returns a parse as its row stands, whoever owns it.
+func (b *Backend) Parse(ctx context.Context, id string) (store.Parse, error) {
+	row, err := b.Store.Parse(ctx, id)
 	if err != nil {
 		return store.Parse{}, err
 	}
@@ -244,9 +244,9 @@ func view(row postgres.Parse) store.Parse {
 	return p
 }
 
-// Parses lists an owner's parses.
-func (b *Backend) Parses(ctx context.Context, owner string, f store.Filter, after string, limit int) ([]store.Parse, bool, error) {
-	rows, more, err := b.Store.Parses(ctx, owner, postgres.Filter{State: f.State, File: f.File, OriginPath: f.OriginPath, Labels: f.Labels}, after, limit)
+// Parses lists the parses of the owners.
+func (b *Backend) Parses(ctx context.Context, owners []string, f store.Filter, after string, limit int) ([]store.Parse, bool, error) {
+	rows, more, err := b.Store.Parses(ctx, owners, postgres.Filter{State: f.State, File: f.File, OriginPath: f.OriginPath, Labels: f.Labels}, after, limit)
 	if err != nil {
 		return nil, false, err
 	}
@@ -266,7 +266,7 @@ func (b *Backend) Cancel(ctx context.Context, owner, id string) (store.Parse, er
 	if err := b.Store.Cancel(ctx, id); err != nil {
 		return store.Parse{}, err
 	}
-	return b.Parse(ctx, owner, id)
+	return b.Parse(ctx, id)
 }
 
 // DeleteParse removes an owner's parse that has ended: every object under

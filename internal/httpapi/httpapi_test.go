@@ -90,7 +90,7 @@ func serve(t *testing.T, change func(*Server, *run.Runner)) *env {
 		Backoff: func(int) time.Duration { return 0 },
 	}
 	s := &Server{
-		Backend: &Memory{Store: st, Runner: runner}, Auth: Tokens{"alice-token": "alice", "bob-token": "bob"},
+		Backend: &Memory{Store: st, Runner: runner}, Auth: callers, Authz: ownerPolicy(),
 		Readers: runner.Readers, Chain: runner.Chain, Limits: pages.DefaultLimits(),
 		Log: slog.New(slog.DiscardHandler),
 	}
@@ -866,9 +866,9 @@ func TestACallerIsKnownAndSeesOnlyItsOwn(t *testing.T) {
 			if got := e.do(rt.Method, path, nil); got.status != http.StatusNotImplemented || got.code(t) != "not_implemented" {
 				t.Errorf("%s %s: %d %s", rt.Method, rt.Path, got.status, got.body)
 			}
-			continue
 		}
-		// Another caller's file or parse is not found, whatever is asked of it.
+		// Another caller's file or parse is not found, whatever is asked of
+		// it, by an operation that is built and by one that is planned.
 		if strings.Contains(rt.Path, "{") {
 			if got := e.as("bob-token").do(rt.Method, path, nil); got.status != http.StatusNotFound {
 				t.Errorf("%s %s as another caller: %d %s", rt.Method, rt.Path, got.status, got.body)
@@ -927,7 +927,7 @@ func TestWhatIsNotRoutedAnswersInTheSameShape(t *testing.T) {
 	}
 
 	// Mounted elsewhere, the same routes are there and not under /v1.
-	s := &Server{Backend: &Memory{Store: store.NewMemory()}, Auth: Tokens{"t": "alice"}, BasePath: "/api/parsing/"}
+	s := &Server{Backend: &Memory{Store: store.NewMemory()}, Auth: tokens{"t": "alice"}, Authz: ownerPolicy(), BasePath: "/api/parsing/"}
 	h := s.Handler()
 	for path, want := range map[string]int{"/api/parsing/readers": http.StatusOK, "/v1/readers": http.StatusNotFound} {
 		rec := httptest.NewRecorder()

@@ -5,7 +5,6 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"latere.ai/x/pkg/httpjson"
 
 	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/intake/pages"
@@ -43,8 +43,8 @@ func oneOf(r *http.Request, name string, values ...string) (string, error) {
 
 // assembled returns a parse, its document, and its pages, once the parse
 // has assembled them.
-func (s *Server) assembled(r *http.Request, owner string) (store.Parse, document.Document, []document.Page, error) {
-	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+func (s *Server) assembled(r *http.Request, c call) (store.Parse, document.Document, []document.Page, error) {
+	p, _, err := s.parse(r, c)
 	if err != nil {
 		return p, document.Document{}, nil, err
 	}
@@ -62,7 +62,7 @@ func (s *Server) assembled(r *http.Request, owner string) (store.Parse, document
 // getDocument serves the document: its index as JSON, or its content as
 // Markdown or text. The rendering is made now, from the stored blocks, by
 // the view the caller asked for.
-func (s *Server) getDocument(w http.ResponseWriter, r *http.Request, owner string) error {
+func (s *Server) getDocument(w http.ResponseWriter, r *http.Request, c call) error {
 	format, err := oneOf(r, "format", "json", "markdown", "text")
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (s *Server) getDocument(w http.ResponseWriter, r *http.Request, owner strin
 		}
 	}
 
-	p, doc, read, err := s.assembled(r, owner)
+	p, doc, read, err := s.assembled(r, c)
 	if err != nil {
 		return err
 	}
@@ -114,8 +114,8 @@ func (s *Server) getDocument(w http.ResponseWriter, r *http.Request, owner strin
 
 // listPages lists the pages the parse reads, each with its state. A page
 // that was not read yet is pending.
-func (s *Server) listPages(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+func (s *Server) listPages(w http.ResponseWriter, r *http.Request, c call) error {
+	p, _, err := s.parse(r, c)
 	if err != nil {
 		return err
 	}
@@ -143,11 +143,12 @@ func (s *Server) listPages(w http.ResponseWriter, r *http.Request, owner string)
 	return nil
 }
 
-// page returns one page of a parse the caller owns, and the parse. A page
-// the parse does not read is not found; one it has not read yet is not
-// ready.
-func (s *Server) page(ctx context.Context, owner, parseID string, n int) (store.Parse, document.Page, error) {
-	p, err := s.Backend.Parse(ctx, owner, parseID)
+// page returns one page of the parse the request names, and the parse,
+// once the caller may read it. A page the parse does not read is not
+// found; one it has not read yet is not ready.
+func (s *Server) page(r *http.Request, c call, n int) (store.Parse, document.Page, error) {
+	ctx := r.Context()
+	p, _, err := s.parse(r, c)
 	if err != nil {
 		return p, document.Page{}, err
 	}
@@ -176,12 +177,12 @@ func pageNumber(r *http.Request) (int, error) {
 	return n, nil
 }
 
-func (s *Server) getPage(w http.ResponseWriter, r *http.Request, owner string) error {
+func (s *Server) getPage(w http.ResponseWriter, r *http.Request, c call) error {
 	n, err := pageNumber(r)
 	if err != nil {
 		return err
 	}
-	_, page, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
+	_, page, err := s.page(r, c, n)
 	if err != nil {
 		return err
 	}
@@ -189,12 +190,12 @@ func (s *Server) getPage(w http.ResponseWriter, r *http.Request, owner string) e
 	return nil
 }
 
-func (s *Server) getPageImage(w http.ResponseWriter, r *http.Request, owner string) error {
+func (s *Server) getPageImage(w http.ResponseWriter, r *http.Request, c call) error {
 	n, err := pageNumber(r)
 	if err != nil {
 		return err
 	}
-	p, _, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
+	p, _, err := s.page(r, c, n)
 	if err != nil {
 		return err
 	}
@@ -210,13 +211,13 @@ func (s *Server) getPageImage(w http.ResponseWriter, r *http.Request, owner stri
 	return nil
 }
 
-func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, owner string) error {
+func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, c call) error {
 	ref := r.PathValue("ref")
 	n, _, err := document.ParseRef(ref)
 	if err != nil {
 		return invalid("ref", "a block's ref is <page>.<order>")
 	}
-	_, page, err := s.page(r.Context(), owner, r.PathValue("parse"), n)
+	_, page, err := s.page(r, c, n)
 	if err != nil {
 		return err
 	}
@@ -232,8 +233,8 @@ func (s *Server) getBlock(w http.ResponseWriter, r *http.Request, owner string) 
 // per line, in page and reading order. It is the bulk read: a caller that
 // wants all of a long document asks once and not once per page. It answers
 // while the parse runs, with what has been read.
-func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, c call) error {
+	p, _, err := s.parse(r, c)
 	if err != nil {
 		return err
 	}
@@ -270,7 +271,7 @@ func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, owner string
 
 // listChunks serves the document cut into chunks, one JSON object per
 // line. The cut is made now, so another strategy or size is another read.
-func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, owner string) error {
+func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, c call) error {
 	by, err := oneOf(r, "by", assemble.BySection, assemble.ByPage)
 	if err != nil {
 		return err
@@ -281,7 +282,7 @@ func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, owner string
 			return invalid("max_chars", "max_chars is from %d to %d", minChunk, maxChunk)
 		}
 	}
-	_, _, read, err := s.assembled(r, owner)
+	_, _, read, err := s.assembled(r, c)
 	if err != nil {
 		return err
 	}
@@ -319,7 +320,10 @@ type imageView struct {
 
 // listReaders lists the configured readers under their configured names,
 // the one the routing policy tries first ahead of the others.
-func (s *Server) listReaders(w http.ResponseWriter, _ *http.Request, _ string) error {
+func (s *Server) listReaders(w http.ResponseWriter, r *http.Request, c call) error {
+	if _, err := s.allowed(r, c, access.Readers()); err != nil {
+		return err
+	}
 	out := struct {
 		Readers []readerView `json:"readers"`
 	}{Readers: []readerView{}}

@@ -98,7 +98,7 @@ func pool(t *testing.T, inFlight int) string {
 func (p *plane) parses(base, name string, data []byte, n int) []string {
 	p.t.Helper()
 	first := submitted(p.t, base, name, data)
-	_, parse, _ := call(p.t, "GET", base+"/v1/parses/"+first, "dev", nil)
+	_, parse, _ := call(p.t, "GET", base+"/v1/parses/"+first, token(), nil)
 	body := []byte(`{"source":{"file":"` + parse["file"].(string) + `"},"reuse":false}`)
 	ids := make([]string, n)
 	ids[0] = first
@@ -106,7 +106,7 @@ func (p *plane) parses(base, name string, data []byte, n int) []string {
 	for w := range 8 {
 		wg.Go(func() {
 			for i := 1 + w; i < n; i += 8 {
-				status, got, raw := call(p.t, "POST", base+"/v1/parses", "dev", body)
+				status, got, raw := call(p.t, "POST", base+"/v1/parses", token(), body)
 				if status != 202 && status != 200 {
 					p.t.Errorf("submit %d: %d %s", i, status, raw)
 					return

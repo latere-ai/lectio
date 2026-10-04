@@ -20,15 +20,18 @@ import (
 // over every backend. Two exist: Memory, the development server's, and
 // internal/durable, over Postgres and an object store.
 //
-// Every method that takes an owner serves that owner alone: another owner's
-// file or parse is not found.
+// A backend decides nothing about who may do what. A handler reads a file
+// or a parse by its id alone, asks whether its caller may act on it, and
+// then acts in the name of the stored owner: every method that takes an
+// owner is given the owner the object is recorded under, and serves that
+// owner alone.
 type Backend interface {
 	// PutFile stores a file whose bytes are in f.Data. The same bytes are
 	// one file per owner: when the owner already has them, that file is
 	// returned and created is false.
 	PutFile(ctx context.Context, f store.File) (stored store.File, created bool, err error)
-	// File returns an owner's file, without its bytes.
-	File(ctx context.Context, owner, id string) (store.File, error)
+	// File returns a file, without its bytes, whoever owns it.
+	File(ctx context.Context, id string) (store.File, error)
 	// DeleteFile removes an owner's file. One that a parse which has not
 	// ended reads is refused with not_terminal.
 	DeleteFile(ctx context.Context, owner, id string) error
@@ -38,11 +41,12 @@ type Backend interface {
 	// parse the first call made, and with another it is refused with
 	// idempotency_conflict. a is what the parse is admitted with.
 	Submit(ctx context.Context, p store.Parse, a store.Admission, key, digest string) (stored store.Parse, created bool, err error)
-	// Parse returns an owner's parse as it stands.
-	Parse(ctx context.Context, owner, id string) (store.Parse, error)
-	// Parses returns an owner's parses that match, newest first: at most
-	// limit, after the parse whose id is after. more says others follow.
-	Parses(ctx context.Context, owner string, f store.Filter, after string, limit int) (out []store.Parse, more bool, err error)
+	// Parse returns a parse as it stands, whoever owns it.
+	Parse(ctx context.Context, id string) (store.Parse, error)
+	// Parses returns the parses of the owners that match, newest first: at
+	// most limit, after the parse whose id is after. Nil owners is every
+	// owner's, and an empty list is nobody's. more says others follow.
+	Parses(ctx context.Context, owners []string, f store.Filter, after string, limit int) (out []store.Parse, more bool, err error)
 	// Cancel stops an owner's parse and returns it. One that has ended is
 	// refused with already_terminal.
 	Cancel(ctx context.Context, owner, id string) (store.Parse, error)
@@ -93,9 +97,9 @@ func (m *Memory) PutFile(_ context.Context, f store.File) (store.File, bool, err
 	return stored, created, nil
 }
 
-// File returns an owner's file.
-func (m *Memory) File(_ context.Context, owner, id string) (store.File, error) {
-	return m.Store.File(owner, id)
+// File returns a file whoever owns it.
+func (m *Memory) File(_ context.Context, id string) (store.File, error) {
+	return m.Store.FileByID(id)
 }
 
 // DeleteFile removes an owner's file.
@@ -116,14 +120,14 @@ func (m *Memory) Submit(_ context.Context, p store.Parse, _ store.Admission, key
 	return stored, created, nil
 }
 
-// Parse returns an owner's parse.
-func (m *Memory) Parse(_ context.Context, owner, id string) (store.Parse, error) {
-	return m.Store.Parse(owner, id)
+// Parse returns a parse whoever owns it.
+func (m *Memory) Parse(_ context.Context, id string) (store.Parse, error) {
+	return m.Store.ParseByID(id)
 }
 
-// Parses lists an owner's parses.
-func (m *Memory) Parses(_ context.Context, owner string, f store.Filter, after string, limit int) ([]store.Parse, bool, error) {
-	out, more := m.Store.ListParses(owner, f, after, limit)
+// Parses lists the parses of the owners.
+func (m *Memory) Parses(_ context.Context, owners []string, f store.Filter, after string, limit int) ([]store.Parse, bool, error) {
+	out, more := m.Store.ListParses(owners, f, after, limit)
 	return out, more, nil
 }
 

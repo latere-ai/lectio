@@ -25,8 +25,10 @@ import (
 	"syscall"
 	"time"
 
+	"latere.ai/x/pkg/authz"
 	"latere.ai/x/pkg/otel"
 
+	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/convert"
 	"latere.ai/x/lectio/internal/fetch"
@@ -97,6 +99,10 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	if !s.Dev {
 		return serveDurable(ctx, s, readers, pipeline, log, ready)
 	}
+	who, err := identity(ctx, s, log)
+	if err != nil {
+		return err
+	}
 	for _, what := range append(readers.RunnerUnapplied, readers.Unapplied...) {
 		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
 	}
@@ -109,12 +115,15 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 		Credential: func(string) reader.Credential { return s.ModelKey },
 	}
 	api := &httpapi.Server{
-		Backend: &httpapi.Memory{Store: st, Runner: runner}, Auth: httpapi.Tokens{s.DevToken: "dev"},
+		Backend: &httpapi.Memory{Store: st, Runner: runner}, Auth: who.Authenticator, Authz: who.Authorizer,
 		Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
 		Fetcher:  &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
 		BasePath: s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
 	}
 
+	if err := checked(ctx, who, log); err != nil {
+		return err
+	}
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", s.Addr)
 	if err != nil {
 		return err
@@ -146,4 +155,47 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	}
 	log.InfoContext(ctx, "stopped")
 	return err
+}
+
+// startCheck bounds what a server asks of its issuers and its authorizer
+// before it listens.
+const startCheck = 15 * time.Second
+
+// identity builds who is calling and who decides from the settings, and
+// logs which of the modes is in force. A server that is not a development
+// one and lists no issuer is refused here, before anything is opened.
+func identity(ctx context.Context, s config.Settings, log *slog.Logger) (*access.Access, error) {
+	who, err := access.New(s)
+	if err != nil {
+		return nil, err
+	}
+	log.InfoContext(ctx, "identity", "callers", who.Identity, "decisions", who.Authorization)
+	if who.Identity == access.IdentityDevelopment {
+		log.WarnContext(ctx, "no issuer is configured: the one caller is the holder of LECTIO_DEV_TOKEN")
+	}
+	return who, nil
+}
+
+// checked asks the issuers and the authorizer what a server wants known
+// before it listens. An issuer that does not answer is named and the
+// server starts: its keys are read when its first token arrives. An
+// authorizer that does not answer is named and the server starts, since
+// every request then fails closed. One that allows the probe does not read
+// what it is asked, and the server is refused.
+func checked(ctx context.Context, who *access.Access, log *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(ctx, startCheck)
+	defer cancel()
+	if err := who.Warm(ctx); err != nil {
+		log.WarnContext(ctx, "an issuer's keys could not be read at start; they are read when its first token arrives", "error", err)
+	}
+	if who.Authorization != access.AuthorizationEndpoint {
+		return nil
+	}
+	switch err := who.Check(ctx); {
+	case errors.Is(err, authz.ErrProbeAllowed):
+		return errors.New("LECTIO_AUTHORIZER_URL names an endpoint that allowed the probe every authorizer denies: it does not read what it is asked")
+	case err != nil:
+		log.WarnContext(ctx, "the authorizer did not answer the probe at start; requests fail closed until it does", "error", err)
+	}
+	return nil
 }

@@ -11,11 +11,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"latere.ai/x/pkg/authkit/issuertest"
 	"latere.ai/x/pkg/s3/s3test"
 
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/testfixtures"
 	"latere.ai/x/lectio/internal/testservers"
@@ -34,6 +37,33 @@ func TestMain(m *testing.M) {
 // bucket is the bucket of the object store a durable server of the tests
 // writes to.
 const bucket = "lectio"
+
+// provider is the stub issuer every durable server of the tests verifies
+// its callers against. It is one for the test binary, started when a test
+// first needs it, and it listens on loopback, so a server a test runs as a
+// process of its own reads its keys as one in the test's process does.
+var provider = sync.OnceValue(func() *issuertest.Server {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	s := issuertest.NewHandler(
+		issuertest.WithIssuer("http://"+ln.Addr().String()),
+		issuertest.WithDefaultAudience(config.DefaultOIDCAudience),
+	)
+	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	return s
+})
+
+// tokenOf mints a token of the provider for a subject, good for longer
+// than any test runs.
+func tokenOf(sub string) string {
+	return provider().Mint(issuertest.Claims{Sub: sub, Exp: time.Now().Add(12 * time.Hour).Unix()})
+}
+
+// token is the bearer of the tests' one caller.
+var token = sync.OnceValue(func() string { return tokenOf("dev") })
 
 // plane is what a durable server runs against in a test: a database of its
 // own on the suite's Postgres, and an S3 server in the test's process, which
@@ -60,7 +90,7 @@ func newPlane(t *testing.T) *plane {
 // second here, and listeners on ports the system picks. more overrides.
 func (p *plane) env(role string, more ...string) []string {
 	return append([]string{
-		"LECTIO_ROLE", role, "LECTIO_DATABASE_URL", p.dsn,
+		"LECTIO_ROLE", role, "LECTIO_DATABASE_URL", p.dsn, "LECTIO_OIDC_ISSUERS", provider().URL(),
 		"LECTIO_ADDR", "127.0.0.1:0", "LECTIO_INTERNAL_ADDR", "127.0.0.1:0",
 		"LECTIO_BUCKET", bucket, "LECTIO_S3_ENDPOINT", p.objects.URL(), "LECTIO_S3_REGION", s3test.Region,
 		"LECTIO_S3_ACCESS_KEY", s3test.Key, "LECTIO_S3_SECRET_KEY", s3test.Secret, "LECTIO_S3_PATH_STYLE", "true",
@@ -104,11 +134,11 @@ func get(t *testing.T, url string) (int, string) {
 // it has ended.
 func parsedFile(t *testing.T, base, name string, data []byte, options string) map[string]any {
 	t.Helper()
-	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, "dev", data, "Content-Type", "application/octet-stream")
+	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, token(), data, "Content-Type", "application/octet-stream")
 	if status != http.StatusCreated && status != http.StatusOK {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}`+options+`}`))
+	status, parse, raw := call(t, "POST", base+"/v1/parses", token(), []byte(`{"source":{"file":"`+file["id"].(string)+`"}`+options+`}`))
 	if status != http.StatusAccepted && status != http.StatusOK {
 		t.Fatalf("submit: %d %s", status, raw)
 	}
@@ -119,7 +149,7 @@ func parsedFile(t *testing.T, base, name string, data []byte, options string) ma
 func ended(t *testing.T, base, id string) map[string]any {
 	t.Helper()
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		status, parse, raw := call(t, "GET", base+"/v1/parses/"+id, "dev", nil)
+		status, parse, raw := call(t, "GET", base+"/v1/parses/"+id, token(), nil)
 		if status != http.StatusOK {
 			t.Fatalf("reading the parse: %d %s", status, raw)
 		}
@@ -162,11 +192,11 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 		t.Fatalf("the parse of a PDF ended %v", pdf)
 	}
 	at := base + "/v1/parses/" + pdf["id"].(string)
-	status, _, md := call(t, "GET", at+"/document?format=markdown", "dev", nil)
+	status, _, md := call(t, "GET", at+"/document?format=markdown", token(), nil)
 	if status != http.StatusOK || strings.Count(string(md), "# Page ") != 3 {
 		t.Fatalf("its document: %d %q", status, md)
 	}
-	if status, _, img := call(t, "GET", at+"/pages/2/image", "dev", nil); status != http.StatusOK || !strings.HasPrefix(string(img), "\x89PNG") {
+	if status, _, img := call(t, "GET", at+"/pages/2/image", token(), nil); status != http.StatusOK || !strings.HasPrefix(string(img), "\x89PNG") {
 		t.Fatalf("the image of its second page: %d, %d bytes", status, len(img))
 	}
 	var stored int
@@ -188,7 +218,7 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 	// The planned routes, and describing figures, answer 501.
 	for _, route := range []string{"POST /parses/" + scan["id"].(string) + "/figures", "GET /usage", "GET /queue"} {
 		method, path, _ := strings.Cut(route, " ")
-		if status, body, _ := call(t, method, base+"/v1"+path, "dev", nil); status != http.StatusNotImplemented || body["error"].(map[string]any)["code"] != "not_implemented" {
+		if status, body, _ := call(t, method, base+"/v1"+path, token(), nil); status != http.StatusNotImplemented || body["error"].(map[string]any)["code"] != "not_implemented" {
 			t.Fatalf("%s: %d %v", route, status, body)
 		}
 	}
@@ -197,7 +227,7 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 		t.Fatalf("a stop that was asked for is not a failure: %v", err)
 	}
 	log := logs.String()
-	for _, want := range []string{`"msg":"listening"`, `"role":"all"`, "the worker is registered", "the worker stopped", `"msg":"stopped"`, "LECTIO_DEV_TOKEN"} {
+	for _, want := range []string{`"msg":"listening"`, `"role":"all"`, "the worker is registered", "the worker stopped", `"msg":"stopped"`, `"callers":"oidc"`, `"decisions":"owner policy"`} {
 		if !strings.Contains(log, want) {
 			t.Errorf("the log does not say %q:\n%s", want, log)
 		}
@@ -221,7 +251,7 @@ func TestTheRolesRunAsTwoServers(t *testing.T) {
 	t.Parallel()
 	p := newPlane(t)
 	base, apiLogs, _ := started(t, env(p.env("api")...))
-	status, _, raw := call(t, "POST", base+"/v1/files?name=sample.csv", "dev", testfixtures.Read(t, testfixtures.CSV), "Content-Type", "text/csv")
+	status, _, raw := call(t, "POST", base+"/v1/files?name=sample.csv", token(), testfixtures.Read(t, testfixtures.CSV), "Content-Type", "text/csv")
 	if status != http.StatusCreated {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
@@ -229,7 +259,7 @@ func TestTheRolesRunAsTwoServers(t *testing.T) {
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=1")
+	status, parse, raw := call(t, "POST", base+"/v1/parses", token(), []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=1")
 	if status != http.StatusAccepted || parse["state"] != "queued" {
 		t.Fatalf("with no worker a submit answers %d %s", status, raw)
 	}
@@ -250,7 +280,7 @@ func TestTheRolesRunAsTwoServers(t *testing.T) {
 	if done := ended(t, base, parse["id"].(string)); done["state"] != "succeeded" {
 		t.Fatalf("the parse the worker ran ended %v", done)
 	}
-	if status, _, md := call(t, "GET", base+"/v1/parses/"+parse["id"].(string)+"/document?format=markdown", "dev", nil); status != http.StatusOK || !strings.Contains(string(md), "| Invoice A | 100.50 | EUR |") {
+	if status, _, md := call(t, "GET", base+"/v1/parses/"+parse["id"].(string)+"/document?format=markdown", token(), nil); status != http.StatusOK || !strings.Contains(string(md), "| Invoice A | 100.50 | EUR |") {
 		t.Fatalf("its document: %d %q", status, md)
 	}
 	if err := stop(); err != nil {

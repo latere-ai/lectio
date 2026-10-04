@@ -30,7 +30,7 @@ var contract = func() map[string]any {
 
 // anywhere are the statuses any operation may answer, which the contract
 // states once and does not repeat on each.
-var anywhere = []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError}
+var anywhere = []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable}
 
 func at(v any, keys ...string) any {
 	for _, k := range keys {

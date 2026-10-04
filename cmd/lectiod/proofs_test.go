@@ -30,12 +30,12 @@ func TestAParseCompletesOnASeparateWorkerProcess(t *testing.T) {
 		t.Fatalf("the parse of a PDF ended %v", pdf)
 	}
 	at := api.base + "/v1/parses/" + pdf["id"].(string)
-	status, page, raw := call(t, "GET", at+"/pages/3", "dev", nil)
+	status, page, raw := call(t, "GET", at+"/pages/3", token(), nil)
 	if status != http.StatusOK || page["reader"] != "stub" || len(page["blocks"].([]any)) != 3 ||
 		!strings.Contains(string(raw), "read by "+strconv.Itoa(worker.cmd.Process.Pid)) {
 		t.Fatalf("its third page: %d %s", status, raw)
 	}
-	if status, _, md := call(t, "GET", at+"/document?format=markdown", "dev", nil); status != http.StatusOK || strings.Count(string(md), "# Page ") != 3 {
+	if status, _, md := call(t, "GET", at+"/document?format=markdown", token(), nil); status != http.StatusOK || strings.Count(string(md), "# Page ") != 3 {
 		t.Fatalf("its document: %d %q", status, md)
 	}
 
@@ -43,7 +43,7 @@ func TestAParseCompletesOnASeparateWorkerProcess(t *testing.T) {
 	if scan["state"] != "succeeded" || scan["usage"].(map[string]any)["pages"] != 1.0 {
 		t.Fatalf("the parse of an image ended %v", scan)
 	}
-	if status, _, img := call(t, "GET", api.base+"/v1/parses/"+scan["id"].(string)+"/pages/1/image", "dev", nil); status != http.StatusOK || !strings.HasPrefix(string(img), "\x89PNG") {
+	if status, _, img := call(t, "GET", api.base+"/v1/parses/"+scan["id"].(string)+"/pages/1/image", token(), nil); status != http.StatusOK || !strings.HasPrefix(string(img), "\x89PNG") {
 		t.Fatalf("the image of its page: %d, %d bytes", status, len(img))
 	}
 	if _, registered := api.logged("the worker is registered"); registered {
@@ -111,7 +111,7 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 			t.Fatalf("after the kill a parse ended %v", done)
 		}
 		for n := 1; n <= pages; n++ {
-			if status, page, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/"+strconv.Itoa(n), "dev", nil); status != http.StatusOK || page["state"] != "succeeded" {
+			if status, page, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/"+strconv.Itoa(n), token(), nil); status != http.StatusOK || page["state"] != "succeeded" {
 				t.Fatalf("page %d of a parse that survived the kill: %d %s", n, status, raw)
 			}
 		}
@@ -160,7 +160,7 @@ func TestASuspendedWorkerCannotSettleAndRegistersAgain(t *testing.T) {
 	if _, wrote := p.objects.Get(winner); !wrote {
 		t.Fatalf("the second worker's result is not under %s: %v", winner, p.objects.Keys())
 	}
-	_, _, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/1", "dev", nil)
+	_, _, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/1", token(), nil)
 	if !strings.Contains(string(raw), "read by "+strconv.Itoa(live.cmd.Process.Pid)) || strings.Contains(string(raw), "read by "+strconv.Itoa(paused.cmd.Process.Pid)) {
 		t.Fatalf("the page the parse serves is not the one whose settle was accepted: %s", raw)
 	}
@@ -205,7 +205,7 @@ func TestAPageThatReturnsAfterACancelRecordsNothing(t *testing.T) {
 	id := submitted(t, api.base, "scan.png", striped(t))
 	until(t, "the page is being read", 30*time.Second, func() bool { return exists(filepath.Join(gate, "reached")) })
 
-	status, canceled, raw := call(t, "POST", api.base+"/v1/parses/"+id+"/cancel", "dev", nil)
+	status, canceled, raw := call(t, "POST", api.base+"/v1/parses/"+id+"/cancel", token(), nil)
 	if status != http.StatusOK || canceled["state"] != "canceled" {
 		t.Fatalf("the cancel answered %d %s", status, raw)
 	}
@@ -234,7 +234,7 @@ func TestAPageThatReturnsAfterACancelRecordsNothing(t *testing.T) {
 	if _, wrote := p.objects.Get("parses/" + id + "/pages/1.1.json"); !wrote {
 		t.Fatalf("the late call wrote no object: %v", p.objects.Keys())
 	}
-	if status, page, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/1", "dev", nil); status != http.StatusOK || page["state"] != "skipped" {
+	if status, page, raw := call(t, "GET", api.base+"/v1/parses/"+id+"/pages/1", token(), nil); status != http.StatusOK || page["state"] != "skipped" {
 		t.Fatalf("the page of the canceled parse: %d %s", status, raw)
 	}
 }
@@ -295,12 +295,12 @@ func TestRestartingTheAPIChangesNothing(t *testing.T) {
 	first := p.spawn("api")
 	p.spawn("worker", delayEnv, "400ms", "LECTIO_WORKERS", "1")
 
-	status, file, raw := call(t, "POST", first.base+"/v1/files?name=scan.tiff", "dev", frames(3), "Content-Type", "image/tiff")
+	status, file, raw := call(t, "POST", first.base+"/v1/files?name=scan.tiff", token(), frames(3), "Content-Type", "image/tiff")
 	if status != http.StatusCreated {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
 	body := []byte(`{"source":{"file":"` + file["id"].(string) + `"},"labels":{"batch":"oct"}}`)
-	status, parse, raw := call(t, "POST", first.base+"/v1/parses", "dev", body, "Idempotency-Key", "k1")
+	status, parse, raw := call(t, "POST", first.base+"/v1/parses", token(), body, "Idempotency-Key", "k1")
 	if status != http.StatusAccepted {
 		t.Fatalf("submit: %d %s", status, raw)
 	}
@@ -309,7 +309,7 @@ func TestRestartingTheAPIChangesNothing(t *testing.T) {
 	<-first.exited
 
 	second := p.spawn("api")
-	status, again, raw := call(t, "POST", second.base+"/v1/parses", "dev", body, "Idempotency-Key", "k1")
+	status, again, raw := call(t, "POST", second.base+"/v1/parses", token(), body, "Idempotency-Key", "k1")
 	if (status != http.StatusAccepted && status != http.StatusOK) || again["id"] != id {
 		t.Fatalf("the submit repeated at the new process: %d %s", status, raw)
 	}
@@ -317,10 +317,10 @@ func TestRestartingTheAPIChangesNothing(t *testing.T) {
 	if done["state"] != "succeeded" || done["labels"].(map[string]any)["batch"] != "oct" || done["progress"].(map[string]any)["pages_done"] != 3.0 {
 		t.Fatalf("at the new process the parse ended %v", done)
 	}
-	if status, doc, raw := call(t, "GET", second.base+"/v1/parses/"+id+"/document", "dev", nil); status != http.StatusOK || len(doc["pages"].([]any)) != 3 {
+	if status, doc, raw := call(t, "GET", second.base+"/v1/parses/"+id+"/document", token(), nil); status != http.StatusOK || len(doc["pages"].([]any)) != 3 {
 		t.Fatalf("its document at the new process: %d %s", status, raw)
 	}
-	if status, listed, raw := call(t, "GET", second.base+"/v1/parses?file="+file["id"].(string), "dev", nil); status != http.StatusOK || len(listed["parses"].([]any)) != 1 {
+	if status, listed, raw := call(t, "GET", second.base+"/v1/parses?file="+file["id"].(string), token(), nil); status != http.StatusOK || len(listed["parses"].([]any)) != 1 {
 		t.Fatalf("the parses of the file at the new process: %d %s", status, raw)
 	}
 }

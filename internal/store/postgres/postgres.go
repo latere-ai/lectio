@@ -105,14 +105,17 @@ const (
 	parseOfSQL     = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1 AND p.owner = $2`
 	parseDeleteSQL = `SELECT lectio_parse_delete($1, $2)`
 
-	// parsesSQL reads one page of an owner's parses, newest first. Ids sort
-	// by creation time, so the page after an id is the ids below it. An
-	// empty filter member matches everything, and the labels are matched by
-	// containment: every one named must be on the parse.
+	// parsesSQL reads one page of the parses of some owners, newest first.
+	// The owners are a JSON array bound as text, or the JSON null for every
+	// owner's. Ids sort by creation time, so the page after an id is the
+	// ids below it. An empty filter member matches everything, and the
+	// labels are matched by containment: every one named must be on the
+	// parse.
 	parsesSQL = `
 SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.parse_id DESC), '[]'::jsonb)::text
   FROM (SELECT * FROM parses
-         WHERE owner = $1
+         WHERE ($1::jsonb = 'null'::jsonb
+                OR owner = ANY (ARRAY(SELECT jsonb_array_elements_text(nullif($1::jsonb, 'null'::jsonb)))))
            AND ($2 = '' OR state = $2)
            AND ($3 = '' OR file_id = $3)
            AND ($4 = '' OR origin->>'path' = $4)
@@ -120,7 +123,7 @@ SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.parse_id DESC), '[]'::jsonb)::t
            AND ($6 = '' OR parse_id < $6)
          ORDER BY parse_id DESC LIMIT $7) p`
 
-	fileSQL          = `SELECT to_jsonb(f)::text FROM files f WHERE f.file_id = $1 AND f.owner = $2 AND f.deleted_at IS NULL`
+	fileSQL          = `SELECT to_jsonb(f)::text FROM files f WHERE f.file_id = $1 AND f.deleted_at IS NULL`
 	fileByContentSQL = `SELECT to_jsonb(f)::text FROM files f WHERE f.owner = $1 AND f.sha256 = $2 AND f.deleted_at IS NULL`
 	fileDeleteSQL    = `SELECT lectio_file_delete($1, $2)`
 	fileForgetSQL    = `DELETE FROM files WHERE file_id = $1 AND deleted_at IS NOT NULL`
@@ -752,17 +755,24 @@ type Filter struct {
 	Labels map[string]string
 }
 
-// Parses returns an owner's parses that match, newest first: at most limit
-// of them, starting after the parse whose id is after. more reports whether
-// others follow.
-func (s *Store) Parses(ctx context.Context, owner string, f Filter, after string, limit int) (out []Parse, more bool, err error) {
+// Parses returns the parses of the owners that match, newest first: at most
+// limit of them, starting after the parse whose id is after. Nil owners is
+// every owner's, and an empty list is nobody's. more reports whether others
+// follow.
+func (s *Store) Parses(ctx context.Context, owners []string, f Filter, after string, limit int) (out []Parse, more bool, err error) {
 	labels, err := json.Marshal(f.Labels)
 	if err != nil || f.Labels == nil {
 		labels = []byte("{}")
 	}
+	// A nil list encodes as the JSON null, which the statement reads as
+	// every owner's.
+	scope, err := json.Marshal(owners)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: encoding the owners of a list: %w", err)
+	}
 	// One row past the limit says whether a next page exists.
-	if err := s.decode(ctx, &out, parsesSQL, "", owner, f.State, f.File, f.OriginPath, string(labels), after, limit+1); err != nil {
-		return nil, false, fmt.Errorf("store: listing the parses of an owner: %w", err)
+	if err := s.decode(ctx, &out, parsesSQL, "", string(scope), f.State, f.File, f.OriginPath, string(labels), after, limit+1); err != nil {
+		return nil, false, fmt.Errorf("store: listing parses: %w", err)
 	}
 	if len(out) > limit {
 		return out[:limit], true, nil
@@ -800,10 +810,12 @@ type File struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// File returns an owner's file.
-func (s *Store) File(ctx context.Context, owner, fileID string) (File, error) {
+// File returns a file whoever owns it. The API reads it before it asks
+// whether its caller may act on it: the file's owner is part of the
+// question.
+func (s *Store) File(ctx context.Context, fileID string) (File, error) {
 	var f File
-	err := s.decode(ctx, &f, fileSQL, "", fileID, owner)
+	err := s.decode(ctx, &f, fileSQL, "", fileID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return File{}, fault.New(fault.FileNotFound, "no file %s", fileID)

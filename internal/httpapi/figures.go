@@ -6,6 +6,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,13 +24,13 @@ import (
 // getBlockImage serves a block as it looks on its page: the page's image
 // cut to the block's box. The image is the one a reader saw, so the cut is
 // exactly the region the block's box names.
-func (s *Server) getBlockImage(w http.ResponseWriter, r *http.Request, owner string) error {
-	ref, parseID := r.PathValue("ref"), r.PathValue("parse")
+func (s *Server) getBlockImage(w http.ResponseWriter, r *http.Request, c call) error {
+	ref := r.PathValue("ref")
 	n, _, err := document.ParseRef(ref)
 	if err != nil {
 		return invalid("ref", "a block's ref is <page>.<order>")
 	}
-	p, page, err := s.page(r.Context(), owner, parseID, n)
+	p, page, err := s.page(r, c, n)
 	if err != nil {
 		return err
 	}
@@ -131,14 +132,19 @@ func (s *Server) figures(ctx context.Context, p store.Parse) (figuresView, error
 // It is a request against a parse, as an extraction is: figures can be
 // described after the fact, for some pages, without a page being read
 // again.
-func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, c call) error {
+	p, d, err := s.parse(r, c)
 	if err != nil {
 		return err
 	}
 	var req figuresRequest
 	if _, err := decodeBody(w, r, &req, true); err != nil {
 		return err
+	}
+	// The run is model work on the parse, held to the readers its allow
+	// lets the caller pin.
+	if l := d.Limits.Readers; req.Describer != "" && len(l) > 0 && !slices.Contains(l, req.Describer) {
+		return fault.Wrap(fault.ReaderNotPermitted, field("describer"), "the describer %s is not among the readers the caller may pin", req.Describer)
 	}
 	opt := run.FigureOptions{Describer: req.Describer, Redo: req.Redo}
 	if selection := strings.TrimSpace(req.Pages); selection != "" {
@@ -174,8 +180,8 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, owner str
 
 // listFigures lists a parse's figures, described or not, and the run that
 // describes them when one was started.
-func (s *Server) listFigures(w http.ResponseWriter, r *http.Request, owner string) error {
-	p, err := s.Backend.Parse(r.Context(), owner, r.PathValue("parse"))
+func (s *Server) listFigures(w http.ResponseWriter, r *http.Request, c call) error {
+	p, _, err := s.parse(r, c)
 	if err != nil {
 		return err
 	}

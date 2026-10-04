@@ -314,7 +314,8 @@ func TestTheServerDoesNotStartOnWhatItCannotRun(t *testing.T) {
 		want   string
 	}{
 		"no dev mode and no database":       {nil, env(), "LECTIO_DATABASE_URL is not set"},
-		"no dev mode and no bucket":         {nil, env("LECTIO_DATABASE_URL", "postgres://db.example/lectio"), "LECTIO_S3_ENDPOINT is not set"},
+		"no dev mode and no issuer":         {nil, env("LECTIO_DATABASE_URL", "postgres://db.example/lectio"), "LECTIO_OIDC_ISSUERS is not set"},
+		"no dev mode and no bucket":         {nil, env("LECTIO_DATABASE_URL", "postgres://db.example/lectio", "LECTIO_OIDC_ISSUERS", "https://issuer.example"), "LECTIO_S3_ENDPOINT is not set"},
 		"a setting that does not parse":     {nil, env("LECTIO_DEV", "true", "LECTIO_WORKERS", "many"), "LECTIO_WORKERS"},
 		"a configuration that is not there": {nil, env("LECTIO_DEV", "true", "LECTIO_CONFIG", "/nonexistent/lectio"), "config:"},
 		"an address that is taken":          {nil, env("LECTIO_DEV", "true", "LECTIO_ADDR", taken.Addr().String()), "address already in use"},

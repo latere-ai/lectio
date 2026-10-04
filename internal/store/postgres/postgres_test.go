@@ -394,12 +394,15 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 		t.Error("Queue on a closed store succeeded")
 	}
 	for name, call := range map[string]func() error{
-		"Ping":          func() error { return h.store.Ping(ctx) },
-		"Task":          func() error { _, _, err := h.store.Task(ctx, "prs_a", "prepare"); return err },
-		"ParseOf":       func() error { _, err := h.store.ParseOf(ctx, "acme", "prs_a"); return err },
-		"Parses":        func() error { _, _, err := h.store.Parses(ctx, "acme", postgres.Filter{}, "", 10); return err },
+		"Ping":    func() error { return h.store.Ping(ctx) },
+		"Task":    func() error { _, _, err := h.store.Task(ctx, "prs_a", "prepare"); return err },
+		"ParseOf": func() error { _, err := h.store.ParseOf(ctx, "acme", "prs_a"); return err },
+		"Parses": func() error {
+			_, _, err := h.store.Parses(ctx, []string{"acme"}, postgres.Filter{}, "", 10)
+			return err
+		},
 		"DeleteParse":   func() error { return h.store.DeleteParse(ctx, "acme", "prs_a") },
-		"File":          func() error { _, err := h.store.File(ctx, "acme", "fil_1"); return err },
+		"File":          func() error { _, err := h.store.File(ctx, "fil_1"); return err },
 		"FileByContent": func() error { _, _, err := h.store.FileByContent(ctx, "acme", "aa"); return err },
 		"InsertFile":    func() error { _, _, err := h.store.InsertFile(ctx, file("acme", "fil_1", "aa")); return err },
 		"DeleteFile":    func() error { _, err := h.store.DeleteFile(ctx, "acme", "fil_1"); return err },

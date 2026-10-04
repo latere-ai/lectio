@@ -133,6 +133,9 @@ func TestTheContractHoldsOverTheDurableBackend(t *testing.T) {
 		{"a caller is known and sees only its own", TestACallerIsKnownAndSeesOnlyItsOwn},
 		{"readers are listed with the default first", TestReadersAreListedWithTheDefaultFirst},
 		{"what is not routed answers in the same shape", TestWhatIsNotRoutedAnswersInTheSameShape},
+		{"every route asks its action", TestEveryRouteAsksItsAction},
+		{"what a question carries", TestWhatAQuestionCarries},
+		{"a deny and an outage answer before anything is done", TestADenyAndAnOutageAnswerBeforeAnythingIsDone},
 	} {
 		t.Run(tc.name, tc.run)
 	}
@@ -312,7 +315,7 @@ func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	held = []tasks.Held{{Parse: claims[2].Parse, Task: claims[2].Task, Token: claims[2].Token}}
 	exchange(0, read, lost)
 	held = nil
-	running, err = b.Parse(ctx, "alice", running.ID)
+	running, err = b.Parse(ctx, running.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +389,7 @@ func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	if _, err := b.Cancel(ctx, "alice", running.ID); err != nil {
 		t.Fatal(err)
 	}
-	ended, err := b.Parse(ctx, "alice", running.ID)
+	ended, err := b.Parse(ctx, running.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +404,7 @@ func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	st.Close()
 	_, _, err = b.PutFile(ctx, store.File{ID: "fil_3", Owner: "alice", SHA256: "dd", Data: []byte("x")})
 	failed("storing a file with the task store down", err)
-	_, _, err = b.Parses(ctx, "alice", store.Filter{}, "", 10)
+	_, _, err = b.Parses(ctx, []string{"alice"}, store.Filter{}, "", 10)
 	failed("listing parses with the task store down", err)
 	_, err = b.Summaries(ctx, running)
 	failed("a page list with the task store down", err)

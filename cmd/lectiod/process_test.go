@@ -261,11 +261,11 @@ func striped(t *testing.T) []byte {
 // read, and returns the parse's id without waiting for it.
 func submitted(t *testing.T, base, name string, data []byte) string {
 	t.Helper()
-	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, "dev", data, "Content-Type", "application/octet-stream")
+	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, token(), data, "Content-Type", "application/octet-stream")
 	if status != 201 && status != 200 {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"},"reuse":false}`))
+	status, parse, raw := call(t, "POST", base+"/v1/parses", token(), []byte(`{"source":{"file":"`+file["id"].(string)+`"},"reuse":false}`))
 	if status != 202 && status != 200 {
 		t.Fatalf("submit: %d %s", status, raw)
 	}
