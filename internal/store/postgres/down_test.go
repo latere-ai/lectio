@@ -10,7 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
 
 	"latere.ai/x/lectio/internal/store/postgres"
@@ -161,5 +164,94 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 	}
 	if _, err := after.Exec(ctx, migration(t, last+".up.sql")); err != nil {
 		t.Fatalf("the up file, applied again: %v", err)
+	}
+}
+
+// TestAMigrationThatCannotHaveALockFailsAndAppliesNothing: the newest
+// migration changes tables that are in use while it runs. A transaction
+// that holds one of them makes it wait, and everything that reads the table
+// waits behind it. It waits 5 seconds and no longer: the migrator fails,
+// nothing of the migration is applied, and the lock timeout it set is gone
+// with its transaction. The schema is then marked as left halfway, which an
+// operator clears, and the migration applies once the table is free.
+func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
+	srv := server(t)
+	t.Parallel()
+	ctx := context.Background()
+	dsn := database(t, srv)
+	if err := postgres.Migrate(ctx, dsn); err != nil {
+		t.Fatal(err)
+	}
+	url, err := postgres.MigrationURL(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := iofs.New(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := migrate.NewWithSourceInstance("iofs", src, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			t.Errorf("closing the migrator: %v, %v", srcErr, dbErr)
+		}
+	}()
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("the newest migration did not go down: %v", err)
+	}
+	highest, err := migrations.Highest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A transaction that has read the parses holds the table.
+	holder, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Close(ctx) }()
+	tx, err := holder.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT count(*) FROM parses`); err != nil {
+		t.Fatal(err)
+	}
+
+	began := time.Now()
+	err = m.Steps(1)
+	if took := time.Since(began); err == nil || !strings.Contains(err.Error(), "lock timeout") || took < 5*time.Second || took > 30*time.Second {
+		t.Fatalf("the migration ended after %s with %v, want a lock timeout after 5 seconds", took, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var columns, timeout string
+	if err := holder.QueryRow(ctx, `SELECT count(*)::text FROM information_schema.columns
+	      WHERE table_schema = current_schema() AND column_name IN ('describe_chain', 'stuck')`).Scan(&columns); err != nil {
+		t.Fatal(err)
+	}
+	if columns != "0" {
+		t.Fatalf("the migration that failed left %s of its columns", columns)
+	}
+	if version, dirty, err := m.Version(); err != nil || version != highest || !dirty {
+		t.Fatalf("after the failure the schema is at version %d, dirty %t, %v", version, dirty, err)
+	}
+
+	// The operator's repair, and the migration with the table free.
+	if err := m.Force(int(highest) - 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil {
+		t.Fatalf("the migration with the table free: %v", err)
+	}
+	if err := holder.QueryRow(ctx, `SHOW lock_timeout`).Scan(&timeout); err != nil || timeout != "0" {
+		t.Fatalf("a new connection's lock timeout is %q, %v", timeout, err)
+	}
+	if version, dirty, err := m.Version(); err != nil || version != highest || dirty {
+		t.Fatalf("the schema is at version %d, dirty %t, %v", version, dirty, err)
 	}
 }

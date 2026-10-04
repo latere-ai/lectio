@@ -15,6 +15,14 @@
 -- own. A task of either kind exists only while it can run, and its row is
 -- removed when it ends.
 
+-- A statement below that changes a table takes the table's exclusive lock,
+-- and while it waits for that lock every statement that reads the table
+-- waits behind it. So none of them waits longer than 5 seconds: a migration
+-- that cannot have a lock fails, and applies nothing, since the migrator
+-- sends this file as one statement and so as one transaction. The setting
+-- ends with that transaction.
+SET LOCAL lock_timeout = '5s';
+
 -- The policy's order of describers for a figure, beside its orders for a
 -- page and for an extraction.
 ALTER TABLE settings ADD COLUMN describe_chain text[] NOT NULL DEFAULT '{}';

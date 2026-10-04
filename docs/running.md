@@ -425,6 +425,18 @@ release. A worker of the new release that starts before the API has
 applied the schema stops with what it needs, and starts when the schema
 is there.
 
+A migration that changes a table waits at most 5 seconds for the
+table's lock, so a transaction that holds a table for long cannot make
+every request wait behind the migration. When it cannot have the lock
+the migration fails with nothing applied, and the API stops and says
+the schema is dirty at the version it was going to. Nothing was
+written, so the repair is to set the recorded version back and start
+the API again when the table is free:
+
+```sql
+UPDATE schema_migrations SET version = version - 1, dirty = false WHERE dirty;
+```
+
 ## Converting office documents
 
 The sidecar that converts presentations, rich text and legacy

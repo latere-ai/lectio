@@ -693,7 +693,10 @@ Built:
   `continue`, `lectio_field_create` and `lectio_figures_start`, the
   release of the extractions that waited when a parse ends, the
   deadline of an extraction and of a run, and the delete that drops
-  their tasks. The sweeps for settled tasks past their retention and
+  their tasks. It waits at most 5 seconds for the lock of a table it
+  changes: the migrator sends a file as one statement, so the file is
+  one transaction, and a file that cannot have a lock fails whole and
+  applies nothing. The sweeps for settled tasks past their retention and
   for orphaned outputs are not built, so the rows of a parse that ended
   with a failed page or was stopped stay until the parse is deleted.
 

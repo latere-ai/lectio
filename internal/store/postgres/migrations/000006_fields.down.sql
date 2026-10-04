@@ -9,6 +9,10 @@
 -- replaced is the one an earlier migration wrote again, and what the meter
 -- recorded of extractions and figures stays in it.
 
+-- No statement below waits longer than 5 seconds for a table's lock, as in
+-- the up file: this file too is one transaction, and fails whole.
+SET LOCAL lock_timeout = '5s';
+
 SELECT lectio_drop(t.parse_id, t.kind, NULL)
   FROM (SELECT DISTINCT parse_id, kind FROM tasks WHERE kind IN ('extract', 'figure')) t;
 
