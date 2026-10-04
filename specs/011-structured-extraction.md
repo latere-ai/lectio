@@ -179,10 +179,10 @@ applying a schema that asks nothing is 2:
 | looks up a name a schema requires | 1 for 2 names |
 | counts the characters of a text for `minLength` or `maxLength` | 1 for 32 bytes |
 | matches a pattern against a text or a member's name | 1, and 1 for every 64 steps of the pattern times bytes of the text |
-| finds whether a list holds a value 2 times | 2 times what the list weighs as a listed value, or up to 20 times for a list of up to 20 items, which is compared each with each |
+| finds whether a list holds a value 2 times | for a list of up to 20 items, which is compared each with each, what it weighs as a listed value times its length; for a longer list of scalars, 2 times its weight; for a longer list that holds a list or an object, its weight times half its length, since the validator hashes a text with no length and items whose texts are cut at other places meet and are compared in full |
 
 The prices are held above what the validator takes by a test that
-builds 33 cases, each made to be as costly as its keywords allow for
+builds 34 cases, each made to be as costly as its keywords allow for
 what it counts, sizes each to a fixed count and times the check, and by
 300 schemas written from the list with no plan from a fixed seed. The
 costliest took the validator 100 nanoseconds a unit, a chain of 200
@@ -545,6 +545,8 @@ a field can fail with is:
 ```json
 {
   "name": "invoice", "state": "succeeded",
+  "schema": { "type": "object", "properties": { "number": { "type": "string" }, "total": { "type": "number" } } },
+  "instructions": "The total is the amount due.",
   "data": { "number": "INV-0042", "total": 1280.5 },
   "citations": { "/number": ["1.3"], "/total": ["2.7"] },
   "model": "...", "constrained": true, "attempts": 1, "windows": 1,
@@ -554,6 +556,13 @@ a field can fail with is:
 
 `GET /parses/{parse}/fields/{name}?resolve=true` returns each citation
 as `{ref, page, box}`.
+
+A field says what it was asked with, from its request on, whatever its
+state: `schema` as the caller sent it, its members in the caller's order,
+and `instructions` when there were any. The request is kept as text in the
+field's row, so nothing is read from the object store to say it. A client
+shows from it which fields an extraction holds before any value is filled,
+and sends it again to ask the same of another parse.
 
 A field is `pending` from its request until its task ends, whether it
 waits for its parse to end, for its turn, or for a model, and a read of
@@ -694,7 +703,7 @@ Remaining:
 | A keyword that is not listed is refused by its name, among them `dependencies`, `$recursiveRef`, `$dynamicRef`, `$id`, `unevaluatedProperties` and a caller's own; a reference that does not point at a schema of the document is refused, a pointer into an example or a listed value included; and a compiled schema with a field set that has no price is refused | `TestAKeywordTheCountDoesNotModelIsRefused`, `TestAReferencePointsAtASchemaOfTheSchema` and `TestACompiledSchemaHoldsNothingTheCountHasNoPriceFor` of `internal/extract`, the last of which fails when a listed keyword has no case |
 | A number of 4,000,000 digits in a reply is a finding at its place in under 1 second, a number past 32 characters or a machine number's range in a schema is refused, and `0.3` is a multiple of `0.1` | `TestANumberCostsNoMoreThanAMachineNumber` |
 | The count of a check is the sum of its keywords' prices, an object that counts past 1,048,576 is not held to its schema, and 2,000 numbers listed against 6,000 that are none of them are not checked | `TestTheWorkOfACheckIsCountedKeywordByKeyword`, `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema`, `TestWorkPastTheBoundIsNotChecked` and `TestAListOfValuesIsPricedByWhatAComparisonCosts` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
-| Counted work bounds the validator's time: for 33 cases built to be costly and 300 schemas generated from the listed keywords with a fixed seed, a check takes no longer than its count allows at 2,500 nanoseconds a unit, 25 times the costliest measured, and an object past the bound is answered without validating | `TestCountedWorkBoundsTheValidatorsTime`, `TestGeneratedSchemasAreHeldWithinTheirCount` and `TestTheLongestCheckIsWithinWhatAModelCallTakes` of `internal/extract`, 2.2 seconds together and 7 under the race detector |
+| Counted work bounds the validator's time: for 34 cases built to be costly and 300 schemas generated from the listed keywords with a fixed seed, a check takes no longer than its count allows at 2,500 nanoseconds a unit, 25 times the costliest measured, and an object past the bound is answered without validating | `TestCountedWorkBoundsTheValidatorsTime`, `TestGeneratedSchemasAreHeldWithinTheirCount` and `TestTheLongestCheckIsWithinWhatAModelCallTakes` of `internal/extract`, 2.2 seconds together and 7 under the race detector |
 | A schema whose patterns compile to more than 16,384 steps together is refused before a pattern is compiled, and a pattern used in many places counts once | `TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo` |
 | A check answers 64 findings at most, each bounded in what it says | `TestWhatAFindingSaysIsBounded` |
 | With a validator that never returns, 2 extractions fail their fields with `schema_not_satisfied` after the deadline and give their slots back, a third is returned with no attempt spent, a page is read beside them, and the worker names no extraction until a check ends | `TestACheckThatDoesNotEndGivesItsTaskBack` of `internal/extract`; `TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker` of `internal/worker` |
