@@ -190,6 +190,21 @@ func TestWhoseACreateIs(t *testing.T) {
 	}
 }
 
+// A retry, a figure run and an extraction ask parse.create about a parse
+// that exists. The allow's limits hold for the work, and its owner is not
+// read: no answer moves a stored parse to another owner.
+func TestAStoredParseKeepsItsOwner(t *testing.T) {
+	az := access.NewAuthorizer(allowing(`{"owner": "org:acme", "group": "acme", "max_running": 2}`), configured())
+	q := access.Question{Action: authorizer.ActionParseCreate, Resource: access.Parse{ID: "prs_1", Owner: bob}.Resource()}
+	d, err := az.Authorize(t.Context(), caller(alice), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Limits.Owner != bob || d.Limits.Group != "acme" || d.Limits.MaxRunning != 2 {
+		t.Errorf("held to owner %q, group %q, %d running, want the stored owner and the allow's limits", d.Limits.Owner, d.Limits.Group, d.Limits.MaxRunning)
+	}
+}
+
 // Each member of the limits, through the question a submit asks: an allow
 // that carries it changes what the request is held to, and one that does
 // not leaves the server's default.

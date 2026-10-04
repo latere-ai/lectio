@@ -94,7 +94,8 @@ one.
 `parse.create` is asked by a submit, which sends no `id`, and by every
 request that queues model work on a stored parse: a retry, a figure
 run, an extraction ([[003-api]]). Those send the stored parse's `id`
-and its fields, and the work stays the parse's owner's.
+and its fields, and the work stays the parse's owner's: the limits of
+such an allow hold, and its `owner` is not read.
 
 On a create, `owner` is the owner the request names. A request may
 name an owner other than the caller's subject (a service submitting
@@ -342,10 +343,11 @@ and an upload take no `owner`, and no limit of an allow is enforced.
 | The endpoint `lectiod` asks answers the contract for every row of the vocabulary | `TestAuthorizerConformance`, which runs `authz/conformance` against the stub authorizer |
 | The client holds an allow for its `ttl`, a deny briefly and an outage never, asks a create every time, retries once on a connection failure, and fails closed with `authorizer_unavailable` on anything that is not a well-formed answer | `TestWhatTheClientRemembers`, `TestACreateIsAlwaysAsked`, `TestOneRetryOnAConnectionFailure`, `TestTheClientFailsClosed` |
 | The authorizer receives the subject, every claim verbatim, the action and the resource; a deny is a decision with its reason, limits that cannot be read are no decision, and a limit this version does not know is `capability_unsupported` | `TestTheEnvelopeCarriesTheCallerAndTheQuestion`, `TestOneQuestionEndToEnd`, `TestADenyIsADecision`, `TestLimitsTheServerCannotHold` |
-| A create is recorded under the owner its allow names, else the owner the request named, else the caller's subject, and its group is that owner unless the allow names one | `TestWhoseACreateIs` |
+| A create is recorded under the owner its allow names, else the owner the request named, else the caller's subject, and its group is that owner unless the allow names one; an allow about a stored parse does not move it to another owner | `TestWhoseACreateIs`, `TestAStoredParseKeepsItsOwner` |
 | The constants of `authorizer` are the vocabulary table above: the same actions in the same order, each on its kind with its fields | `TestTheVocabularyIsTheSpecs` |
 | The limits object carries exactly the 14 keys of the table above, and `DecodeLimits` reads back what `WireLimits` renders | `TestTheWireNamesEveryMemberAndNoOther`, `TestDecodeReadsWhatAnAuthorizerRenders` |
-| Each member of `Limits`: an allow carrying it changes the limits in force, and the absent member leaves the default | `TestEachMemberOverTheDefaults` |
+| Each member of `Limits`: an allow carrying it changes the limits in force, and the absent member leaves the default | `TestEachMemberOverTheDefaults`, and through the question a submit asks, `TestEachLimitOfASubmit` |
+| The allow of `file.create` is read for 4 members, and the limits of any other action's allow are not read | `TestAnUploadIsHeldToFourMembers`, `TestTheLimitsOfAReadAreNotRead` |
 | A limits object with a figure out of range is read as no decision, and one that names a member this version does not know is told apart from it | `TestDecodeRefusesWhatItCannotHold`, `TestDecodeNamesAMemberItDoesNotKnow` |
 | Each member of `Limits` has a test in which an allow carrying it changes the outcome of a request | a table test over the API |
 | Two subjects whose allows name one `Group` share `MaxQueued` and are served as one group; two with different groups are served by weight | a dispatch test |
@@ -355,4 +357,4 @@ and an upload take no `owner`, and no limit of an allow is enforced.
 | The owner policy answers the contract's conformance suite, and narrows an allow by the grants of a token | `TestOwnerPolicyConformance`, `TestOwnerPolicyNarrowsByTheGrants`, `TestTheGrantsOfATokenNarrowTheOwnersReach` |
 | The settings select who is calling and who decides, apart; a server that is not a development one and lists no issuer is refused, naming the variable | `TestTheSettingsSelectTheMode`, `TestAServerWithNoIssuerIsRefused`, and the 3 tests named `EndToEnd` in `internal/access` |
 | A probe id is denied for every subject and action by the stub authorizer and by the owner policy | `TestTheProbeIsDeniedForEverySubjectAndAction` |
-| The development token stands for one subject, is compared in constant time, and is never printed; under the owner policy its caller owns what it creates and nothing else | `TestTheDevelopmentTokenStandsForOneSubject`, `TestWhatTheDevelopmentTokenRefuses`, `TestTheDevelopmentCallerUnderTheOwnerPolicy` |
+| The development token stands for one subject and is never printed; under the owner policy its caller owns what it creates and nothing else | `TestTheDevelopmentTokenStandsForOneSubject`, `TestWhatTheDevelopmentTokenRefuses`, `TestTheDevelopmentCallerUnderTheOwnerPolicy` |

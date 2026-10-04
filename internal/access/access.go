@@ -108,7 +108,8 @@ type Decision struct {
 	// Limits are what the request is held to: the server's defaults with
 	// what the allow named laid over them. Owner and Group are always
 	// set. They are read from the allow of parse.create and of
-	// file.create, and are the defaults for every other action.
+	// file.create, and are the defaults for every other action. On a
+	// question about a stored object, Owner is that object's owner.
 	Limits authorizer.Limits
 	// Filter narrows a list to the owners and labels the caller may see.
 	// Nil narrows nothing. It is set on parse.list, and on a usage or
@@ -193,6 +194,12 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 			// the answer is no decision at all.
 			return authorizer.Limits{}, fault.Wrap(fault.AuthorizerUnavailable, err, "the allow of %s carries limits that cannot be read", q.Action)
 		}
+	}
+	if q.Resource.ID != "" {
+		// A question about a stored parse moves it to nobody: a retry, a
+		// figure run and an extraction stay its owner's, whatever owner
+		// the allow names.
+		named.Owner = nil
 	}
 	if q.Action == authorizer.ActionFileCreate {
 		// A file joins no queue and reads no page, so an upload is held
