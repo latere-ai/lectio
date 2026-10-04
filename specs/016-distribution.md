@@ -131,9 +131,10 @@ whether the binary reads the variable today.
 | `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes, only to say what is missing |
 | `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes: read, and opened by no command yet |
 | `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] | no |
-| `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE` | none | [[012-identity-and-authorization]] | no |
-| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | no |
-| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | no |
+| `LECTIO_OIDC_ISSUERS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
+| `LECTIO_OIDC_AUDIENCE` | `lectio` | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
+| `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
+| `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
 | `LECTIO_CONFIG` | none: the stub reader | [[008-readers]] | yes |
 | `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes |
 | `LECTIO_KEYS`, `LECTIO_KEYS_URL` | `static` | [[013-limits-and-usage]] | no |
@@ -168,6 +169,16 @@ server. The `LECTIO_CONVERT_*` variables are the sidecar's own, and it
 also reads `LECTIO_MAX_FILE_BYTES`, for the largest file it takes and
 the largest conversion it returns. `LECTIO_CONVERT_ADDR` is `host:port`
 or `unix:/path/to/socket`.
+
+`LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE` and
+`LECTIO_ADMIN_SUBJECTS` are comma-separated lists. An issuer is an
+absolute `http` or `https` URL and is listed once, its trailing slash
+aside. An admin subject is written as a verified subject is rendered,
+`<issuer>|<sub>`. `LECTIO_AUTHORIZER_URL` is an absolute `http` or
+`https` URL, and setting it without `LECTIO_AUTHORIZER_TOKEN` is an
+error: the endpoint requires a bearer. A certificate authority of the
+operator's own, for an issuer or an authorizer, is trusted the way the
+process trusts any: through the system's roots or `SSL_CERT_FILE`.
 
 `LECTIO_DEV=true` runs one process with the memory store, the owner
 scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the

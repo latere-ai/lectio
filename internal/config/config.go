@@ -68,6 +68,20 @@ type Settings struct {
 	// ConverterURL is where the conversion sidecar listens. Empty runs
 	// without one, and the formats that need conversion are refused.
 	ConverterURL string // LECTIO_CONVERTER_URL
+
+	// OIDCIssuers are the issuers whose tokens are accepted, each without
+	// a trailing slash. OIDCAudiences are the audiences a token may be
+	// addressed to, the first the primary one.
+	OIDCIssuers   []string // LECTIO_OIDC_ISSUERS
+	OIDCAudiences []string // LECTIO_OIDC_AUDIENCE
+
+	// AuthorizerURL is the endpoint that is asked what a caller may do,
+	// and AuthorizerToken the bearer it requires. With no URL the owner
+	// policy decides, and AdminSubjects are the subjects it lets read
+	// every owner's parses and files.
+	AuthorizerURL   string            // LECTIO_AUTHORIZER_URL
+	AuthorizerToken reader.Credential // LECTIO_AUTHORIZER_TOKEN
+	AdminSubjects   []string          // LECTIO_ADMIN_SUBJECTS
 }
 
 // FromEnv reads the settings. getenv is os.Getenv, or a test's own. A
@@ -139,6 +153,7 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 			s.FetchAllow = append(s.FetchAllow, host)
 		}
 	}
+	errs = append(errs, s.readIdentity(getenv)...)
 	return s, errors.Join(errs...)
 }
 

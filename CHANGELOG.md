@@ -6,6 +6,11 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: `lectiod` reads `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE`
+  (default `lectio`), `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN`
+  and `LECTIO_ADMIN_SUBJECTS`, and refuses to start when one is not
+  well formed, naming the variable. Nothing uses them yet: the
+  development server still takes its one static token.
 - Added: the package `authorizer`, what an authorization endpoint for
   Lectio is written against: the 11 actions `lectiod` asks, the resource
   kind and the fields of each, and the limits an allow may carry, with
