@@ -103,9 +103,30 @@ comes back as one page: its headings with their levels, its lists, its
 tables with merged cells and header rows, its footnotes, and a figure
 where a picture is. A workbook comes back as one page per sheet, each a
 table, with dates in ISO 8601 and each formula as the value the workbook
-stored for it. Every PDF
-page is rendered and sent to the reader; reading the text a PDF already
-carries is designed and not built.
+stored for it.
+
+A PDF that carries its text need not be read by a model. A reader of
+the `text` adapter reads a page from the words the file holds and where
+it draws them, and declines a page it would have to guess at, a scan or
+a table set without ruling, so that the next reader in the chain reads
+it:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: own }
+spec: { adapter: text }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: default }
+spec:
+  read: { chain: [own, default] }
+```
+
+A page read that way says `"source": "text_layer"` and costs no call.
+[`docs/running.md`](docs/running.md#reading-a-pdfs-own-text) says what
+it reads and what it declines.
 
 Presentations (`.pptx`, `.ppt`, `.odp`, `.key`), rich text (`.rtf`),
 open document text (`.odt`) and legacy Word files (`.doc`) are converted
