@@ -569,7 +569,7 @@ func TestAnEndpointSourcePrintsNothingItHolds(t *testing.T) {
 	}
 	var source Source = e
 	for _, shown := range []string{
-		fmt.Sprint(source), fmt.Sprintf("%+v", source), fmt.Sprintf("%#v", source), fmt.Sprintf("%s", e),
+		fmt.Sprint(source), fmt.Sprintf("%+v", source), fmt.Sprintf("%#v", source), e.String(),
 		fmt.Sprintf("%+v", options), fmt.Sprintf("%#v", options), fmt.Sprintf("%v %+v", key, key),
 	} {
 		if strings.Contains(shown, bearer) || strings.Contains(shown, "sk-issued") {
