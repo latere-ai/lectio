@@ -531,7 +531,7 @@ func TestAFailedPageFailsTheParseUnlessAllowed(t *testing.T) {
 		if at(doc["pages"].([]any)[1], "error", "code") != "page_unreadable" {
 			t.Fatalf("the document: %v", doc)
 		}
-		if md := e.do("GET", "/parses/"+pid+"/document?format=markdown&page_breaks=true&repeated=keep", nil); !strings.Contains(string(md.body), "<!-- page 3 -->\n\n# Page 3") || strings.Contains(string(md.body), "Page 2") {
+		if md := e.do("GET", "/parses/"+pid+"/document?format=markdown&page_breaks=true&repeated=keep", nil); !strings.Contains(string(md.body), "<!-- page 3 -->\n\n## Page 3") || strings.Contains(string(md.body), "Page 2") {
 			t.Fatalf("markdown: %q", md.body)
 		}
 	}

@@ -144,6 +144,73 @@ func TestDocumentJoinsTablesAcrossPages(t *testing.T) {
 	}
 }
 
+// TestADocumentKeepsTheTitleOfItsFirstTitledPage: a reader sees one page
+// and calls the line each slide of a deck opens with a title. The document
+// has the title of its first page that holds one, both lines of it when the
+// reader split it in 2, and a title on a later page is a heading: it keeps
+// its text and its place, and the outline puts it below the title. A page
+// before the title that has none changes nothing, and a title that runs
+// from page to page is furniture before this rule looks.
+func TestADocumentKeepsTheTitleOfItsFirstTitledPage(t *testing.T) {
+	pages := []document.Page{
+		page(1, text(document.KindText, "Cover note")),
+		page(2, text(document.KindTitle, "Harbor works"), text(document.KindTitle, "Autumn plan"), text(document.KindText, "body")),
+		page(3, document.Block{Kind: document.KindTitle, Text: "Work packages", Level: 1}, text(document.KindText, "body")),
+		page(4, text(document.KindTitle, "Budget by quarter"), document.Block{Kind: document.KindHeading, Text: "Detail", Level: 3}),
+	}
+	doc := Document("p", pages)
+	var kinds []document.Kind
+	for _, p := range pages {
+		for _, b := range p.Blocks {
+			if b.Kind == document.KindTitle || b.Kind == document.KindHeading {
+				kinds = append(kinds, b.Kind)
+			}
+		}
+	}
+	want := []document.Kind{document.KindTitle, document.KindTitle, document.KindHeading, document.KindHeading, document.KindHeading}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("the titles and headings are %v, want %v", kinds, want)
+	}
+	if pages[2].Blocks[0].Text != "Work packages" || pages[2].Blocks[0].Ref != "3.1" {
+		t.Errorf("the block that became a heading is %+v; it keeps its text and its place", pages[2].Blocks[0])
+	}
+	levels := map[string]int{}
+	for _, h := range doc.Outline {
+		levels[h.Text] = h.Level
+	}
+	if levels["Harbor works"] != 1 || levels["Work packages"] != 2 || levels["Budget by quarter"] != 2 || levels["Detail"] != 3 {
+		t.Errorf("the outline is %+v; a later page's title is a section under the document's", doc.Outline)
+	}
+
+	// A format that carries its own structure names its own titles: each
+	// sheet of a workbook keeps the title its sheet gave it.
+	sheets := []document.Page{
+		page(1, text(document.KindTitle, "Rainfall")),
+		page(2, text(document.KindTitle, "Stations")),
+	}
+	for i := range sheets {
+		sheets[i].Source = document.SourceNative
+	}
+	Document("p", sheets)
+	if sheets[1].Blocks[0].Kind != document.KindTitle {
+		t.Errorf("a native page's title became a %s; nothing was guessed there", sheets[1].Blocks[0].Kind)
+	}
+
+	// A document whose every page opens with the same line: the line is a
+	// running header on each, and none of them is left a title or a heading.
+	deck := []document.Page{
+		page(1, text(document.KindTitle, "Quarterly review"), text(document.KindText, "one")),
+		page(2, text(document.KindTitle, "Quarterly review"), text(document.KindText, "two")),
+		page(3, text(document.KindTitle, "Quarterly review"), text(document.KindText, "three")),
+	}
+	Document("p", deck)
+	for _, p := range deck {
+		if k := p.Blocks[0].Kind; k != document.KindPageHeader && k != document.KindTitle {
+			t.Errorf("page %d opens with a %s; a line that runs from page to page is furniture or the title, never a heading", p.Number, k)
+		}
+	}
+}
+
 func TestOutlineBringsLevelsOntoOneScale(t *testing.T) {
 	pages := []document.Page{
 		page(1, document.Block{Kind: document.KindHeading, Text: "A", Level: 2}, document.Block{Kind: document.KindHeading, Text: "B", Level: 4}),

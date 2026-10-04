@@ -39,9 +39,9 @@ const (
 )
 
 // Document assembles pages into a document. It marks the running headers,
-// footers and page numbers on the pages it is given, in place, and returns
-// the index: the pages without their blocks, the spans, the outline, and
-// usage.
+// footers and page numbers on the pages it is given and leaves the document
+// one title, in place, and returns the index: the pages without their
+// blocks, the spans, the outline, and usage.
 //
 // pages must be in page order. A page that did not succeed is listed and
 // takes part in no pass, and a table is not joined across one.
@@ -53,6 +53,7 @@ func Document(parse string, pages []document.Page) document.Document {
 		}
 	}
 	running(pages)
+	oneTitle(pages)
 	doc.Spans = spans(pages)
 	doc.Outline = outline(pages)
 	for _, p := range pages {
@@ -359,6 +360,43 @@ func continued(b *document.Block) bool {
 	}
 	text := strings.ToLower(b.Text)
 	return strings.Contains(text, "continued") || strings.Contains(text, "cont.")
+}
+
+// oneTitle leaves a document the title of its first page that has one. A
+// reader sees one page, so on a page that opens with a large line it cannot
+// know whether the document already has a title: the first slide of a deck
+// and each slide after it look alike, and so do the first page of a report
+// and the first page of each of its parts. The titles of the first page that
+// holds one are the document's. A block a reader called a title on a later
+// page becomes a heading and keeps its text, its place and its level, which
+// the outline then puts on the document's scale below the title. A title
+// that running already made furniture is no longer a title and is not
+// counted.
+//
+// The rule is for pages a reader read. A format that carries its own
+// structure says which of its parts are titles, a workbook's sheets for
+// one, and nothing was guessed there, so such a page keeps its titles and
+// stands for no title of a read page either.
+func oneTitle(pages []document.Page) {
+	titled := false
+	for i := range pages {
+		if pages[i].Source == document.SourceNative {
+			continue
+		}
+		found := false
+		for j := range pages[i].Blocks {
+			b := &pages[i].Blocks[j]
+			if b.Kind != document.KindTitle {
+				continue
+			}
+			if titled {
+				b.Kind = document.KindHeading
+				continue
+			}
+			found = true
+		}
+		titled = titled || found
+	}
 }
 
 // outline lists the headings in page order with their levels on one scale

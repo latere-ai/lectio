@@ -163,9 +163,14 @@ func TestAParseIsReadPageByPage(t *testing.T) {
 			t.Fatalf("page %d has no image", n)
 		}
 		// Assembly ran over the stored pages. The stub's first line differs
-		// from page to page by its number, so it is content and stays a
-		// title; its last line is the page's number.
-		if first, last := page.Blocks[0], page.Blocks[2]; first.Kind != document.KindTitle || first.Repeated || last.Kind != document.KindPageNumber {
+		// from page to page by its number, so it is content and not a
+		// running line: the title on the first page and a heading under it
+		// on each later one; its last line is the page's number.
+		kind := document.KindHeading
+		if n == 1 {
+			kind = document.KindTitle
+		}
+		if first, last := page.Blocks[0], page.Blocks[2]; first.Kind != kind || first.Repeated || last.Kind != document.KindPageNumber {
 			t.Fatalf("page %d holds %+v and %+v", n, first, last)
 		}
 	}

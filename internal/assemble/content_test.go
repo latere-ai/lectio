@@ -70,12 +70,19 @@ func TestContentThatDiffersByItsNumbersIsNotARunningLine(t *testing.T) {
 		t.Errorf("the outline holds %d of 6 invoices: %+v", len(doc.Outline), doc.Outline)
 	}
 
+	// A deck's pages each open with a line a reader called a title. None
+	// is furniture: the first is the document's title, and each later one
+	// is a heading under it, printed in full.
 	out = markdown(t, deck, View{})
 	for n, p := range deck {
-		if first := p.Blocks[0]; first.Kind != document.KindTitle || first.Repeated {
-			t.Errorf("deck page %d: the title became %+v", p.Number, first)
+		first, kind, mark := p.Blocks[0], document.KindHeading, "## "
+		if n == 0 {
+			kind, mark = document.KindTitle, "# "
 		}
-		if want := fmt.Sprintf("# Step %d", n+1); !strings.Contains(out, want) {
+		if first.Kind != kind || first.Repeated {
+			t.Errorf("deck page %d: the line it opens with became %+v, want a %s that is not repeated", p.Number, first, kind)
+		}
+		if want := fmt.Sprintf("%sStep %d", mark, n+1); !strings.Contains(out, want) {
 			t.Errorf("the Markdown lost %q", want)
 		}
 	}
