@@ -35,10 +35,10 @@ const (
 	dirMode = 0o700
 
 	// writeAttempts bounds how often Put writes a file again after a Delete
-	// pruned its directory away. Each loss needs a prune to land between two
-	// system calls. On a loaded machine with few processors that happens
-	// several times in a row, so the bound is far above a handful and a
-	// writer yields between two attempts.
+	// pruned its directory away. Where the store's lock holds, a prune and
+	// a write never meet and the first attempt is the only one; the bound is
+	// for a system with no such lock, where each loss needs a prune to land
+	// between two system calls.
 	writeAttempts = 64
 )
 
@@ -88,13 +88,15 @@ func (d *Dir) Put(ctx context.Context, key string, data []byte, contentType stri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := write(d.path(objectsTree, key), data); err != nil {
-		return fmt.Errorf("blob: writing an object: %w", err)
-	}
-	if err := write(d.path(typesTree, key), []byte(cmp.Or(contentType, DefaultContentType))); err != nil {
-		return fmt.Errorf("blob: writing an object's content type: %w", err)
-	}
-	return nil
+	return d.locked(false, func() error {
+		if err := write(d.path(objectsTree, key), data); err != nil {
+			return fmt.Errorf("blob: writing an object: %w", err)
+		}
+		if err := write(d.path(typesTree, key), []byte(cmp.Or(contentType, DefaultContentType))); err != nil {
+			return fmt.Errorf("blob: writing an object's content type: %w", err)
+		}
+		return nil
+	})
 }
 
 // Get reads the bytes and then the content type.
@@ -134,18 +136,20 @@ func (d *Dir) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	for _, tree := range []string{objectsTree, typesTree} {
-		file := d.path(tree, key)
-		// A path that is a directory with files in it is the directory of
-		// other keys and not an object, so it is left as it is.
-		if err := os.Remove(file); err != nil && !absent(err) && !errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("blob: removing an object: %w", err)
+	return d.locked(true, func() error {
+		for _, tree := range []string{objectsTree, typesTree} {
+			file := d.path(tree, key)
+			// A path that is a directory with files in it is the directory
+			// of other keys and not an object, so it is left as it is.
+			if err := os.Remove(file); err != nil && !absent(err) && !errors.Is(err, fs.ErrExist) {
+				return fmt.Errorf("blob: removing an object: %w", err)
+			}
+			if err := prune(filepath.Join(d.root, tree), filepath.Dir(file)); err != nil {
+				return fmt.Errorf("blob: removing an empty directory: %w", err)
+			}
 		}
-		if err := prune(filepath.Join(d.root, tree), filepath.Dir(file)); err != nil {
-			return fmt.Errorf("blob: removing an empty directory: %w", err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // List walks the objects tree. A file system orders a directory's names and
