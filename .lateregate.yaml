@@ -4,6 +4,10 @@
 
 cover:
   trim_prefix: latere.ai/x/lectio/
+  exempt:
+    internal/testservers: >-
+      starts the containers the suites run against; the lines no run reaches
+      are the ones for a container runtime that fails
 
 license:
   spdx: Apache-2.0

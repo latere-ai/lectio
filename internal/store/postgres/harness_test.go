@@ -32,12 +32,12 @@ var modes = []mode{
 	{"direct", func(_ testing.TB, _ servers, direct string) string { return direct }},
 	{"exec", func(t testing.TB, _ servers, direct string) string { return execMode(t, direct) }},
 	{"pooler", func(t testing.TB, srv servers, direct string) string {
-		if srv.poolerErr != nil {
+		if srv.PoolerErr != nil {
 			// The server is up and the pooler is not: a skip here would let
 			// the pooled run go missing without anyone seeing it.
-			t.Fatalf("the pooler did not start: %v", srv.poolerErr)
+			t.Fatalf("the pooler did not start: %v", srv.PoolerErr)
 		}
-		return onDatabase(t, srv.pooler, nameOf(t, direct))
+		return onDatabase(t, srv.Pooler, nameOf(t, direct))
 	}},
 }
 
