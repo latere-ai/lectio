@@ -571,7 +571,7 @@ func TestConcurrentClaims(t *testing.T) {
 			wg.Go(func() {
 				var settles []tasks.Settle
 				for count.Load() < dispatch && failed.Load() == nil {
-					reply, err := h.store.Exchange(context.Background(), id, tasks.Request{Free: 4, Idle: true, Settles: settles})
+					reply, err := h.store.Exchange(context.Background(), id, tasks.Request{Free: 4, Idle: true, Settles: settles, Kinds: tasks.Kinds})
 					if err != nil {
 						failed.Store(&err)
 						return

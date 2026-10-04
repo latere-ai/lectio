@@ -190,6 +190,17 @@ RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
       || ARRAY(SELECT k || ':' || r FROM unnest(ARRAY['page', 'extract', 'figure']) k CROSS JOIN unnest(p_room) r);
 $$;
 
+-- lectio_runs answers the lanes of p_lanes whose tasks a worker that runs
+-- the kinds of p_kinds can run. A lane's name begins with the kind of its
+-- tasks. The lane with no name holds the 2 kinds that call no model, and is
+-- run by a worker that runs both.
+CREATE FUNCTION lectio_runs(p_lanes text[], p_kinds text[])
+RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY(SELECT l FROM unnest(p_lanes) l
+                WHERE CASE WHEN l = '' THEN p_kinds @> ARRAY['prepare', 'assemble']
+                           ELSE substring(l from '^[a-z]+') = ANY (p_kinds) END);
+$$;
+
 -- lectio_drop removes the tasks of one kind of a parse, or the one of them
 -- p_task names, and takes the ones that had not ended out of the counters
 -- of queued and running tasks. A task that was leased holds no slot from
@@ -972,8 +983,16 @@ END $$;
 -- never read, never written and never charged. p_sleep answers when the
 -- earliest pause ends among the scopes that held a reader back, when the
 -- claim ended with a slot still free.
-CREATE OR REPLACE FUNCTION lectio_claim(p_worker text, p_free integer, p_idle boolean, p_cfg settings, p_now timestamptz,
-                                        OUT p_claims jsonb, OUT p_sleep timestamptz)
+--
+-- p_kinds are the kinds of task the worker runs. A lane of another kind is
+-- no lane that can run for it, so a worker of the release before this one,
+-- which names no kind and runs prepare, page and assemble, is handed no
+-- extraction and no figure while it runs beside the workers that take them.
+-- The function has an argument more than the one it replaces, which is
+-- dropped: the exchange is the one caller.
+DROP FUNCTION lectio_claim(text, integer, boolean, settings, timestamptz);
+CREATE FUNCTION lectio_claim(p_worker text, p_free integer, p_idle boolean, p_cfg settings, p_now timestamptz,
+                             p_kinds text[], OUT p_claims jsonb, OUT p_sleep timestamptz)
 LANGUAGE plpgsql AS $$
 DECLARE
   v_free   integer := p_free;
@@ -1037,10 +1056,11 @@ BEGIN
     -- among those that hold a task in a lane some key could run: one with a
     -- reader, from its position on, whose pool admits a call.
     IF p_cfg.scope_by_group THEN
-      v_among := lectio_lanes(v_open, ARRAY(SELECT reader FROM pools WHERE NOT (reader = ANY (v_open))), p_cfg);
+      v_among := lectio_runs(
+        lectio_lanes(v_open, ARRAY(SELECT reader FROM pools WHERE NOT (reader = ANY (v_open))), p_cfg), p_kinds);
     ELSE
       SELECT r.p_room, r.p_wake, r.p_paused INTO v_room, p_sleep, v_paused FROM lectio_room(v_open, '', p_cfg, p_now) r;
-      v_lanes := lectio_lanes(v_room, v_shut || v_paused, p_cfg);
+      v_lanes := lectio_runs(lectio_lanes(v_room, v_shut || v_paused, p_cfg), p_kinds);
       v_among := v_lanes;
     END IF;
 
@@ -1067,7 +1087,7 @@ BEGIN
         v_scope := CASE WHEN p_cfg.scope_by_group THEN v_g.group_id ELSE '' END;
         IF p_cfg.scope_by_group THEN
           SELECT r.p_room, r.p_wake, r.p_paused INTO v_room, v_wake, v_paused FROM lectio_room(v_open, v_scope, p_cfg, p_now) r;
-          v_lanes := lectio_lanes(v_room, v_shut || v_paused, p_cfg);
+          v_lanes := lectio_runs(lectio_lanes(v_room, v_shut || v_paused, p_cfg), p_kinds);
           p_sleep := least(p_sleep, v_wake);
         END IF;
 
@@ -1342,9 +1362,16 @@ DECLARE
   v_s        jsonb;
   v_t        tasks%ROWTYPE;
   v_parse    text;
+  v_kinds    text[];
 BEGIN
   PERFORM lectio_lock();
   SELECT * INTO STRICT v_cfg FROM settings;
+  -- The kinds of task the worker runs. A worker that names none is one of
+  -- the release before an extraction and a figure were tasks: it runs the 3
+  -- kinds a parse is made of, and is handed no other, which it would fail.
+  v_kinds := CASE WHEN jsonb_typeof(v_req->'kinds') = 'array'
+                  THEN ARRAY(SELECT jsonb_array_elements_text(v_req->'kinds'))
+                  ELSE ARRAY['prepare', 'page', 'assemble'] END;
 
   -- 1. Renew. A worker whose row is gone was taken for dead by another
   -- worker, which returned its tasks to the queue: nothing it sent is
@@ -1414,7 +1441,7 @@ BEGIN
     -- 4. Claim.
     SELECT p_claims, p_sleep INTO v_claims, v_sleep
       FROM lectio_claim(p_worker, coalesce((v_req->>'free')::integer, 0),
-                        coalesce((v_req->>'idle')::boolean, false), v_cfg, v_now);
+                        coalesce((v_req->>'idle')::boolean, false), v_cfg, v_now, v_kinds);
     -- Each claim carries what its task needs of its parse, so a worker makes
     -- no second statement to run it.
     SELECT coalesce(jsonb_agg(c.claim || jsonb_build_object('context', lectio_context(c.claim)) ORDER BY c.at), '[]'::jsonb)

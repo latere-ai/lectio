@@ -412,6 +412,19 @@ attaches the same tree as `deploy-<tag>.tar.gz`, with both images pinned
 to the release by digest, and publishes the images as
 `ghcr.io/<owner>/lectiod:<tag>` and `ghcr.io/<owner>/lectio-convert:<tag>`.
 
+### Rolling a release
+
+The API applies the schema when it starts, and the workers of the
+release before keep running against it until they are replaced. That
+needs no order. A worker names the kinds of task it runs in every
+exchange and is handed no other, and a worker of `v0.3.0`, which names
+none, is handed the tasks a parse is made of. So while a fleet is
+rolled the earlier workers go on reading pages, and the extractions and
+the figure runs wait in the queue for the first worker of the new
+release. A worker of the new release that starts before the API has
+applied the schema stops with what it needs, and starts when the schema
+is there.
+
 ## Converting office documents
 
 The sidecar that converts presentations, rich text and legacy

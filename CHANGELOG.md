@@ -54,6 +54,11 @@ refused before it is pushed.
   read and reported as not applied. With no `extract` chain an
   extraction runs only when its request names an `extractor`, and with
   no `describe` chain a run only when its request names a `describer`.
+- Changed: a worker names the kinds of task it runs in every exchange
+  and is handed no other. A worker of `v0.3.0` names none and is handed
+  `prepare`, `page` and `assemble`, so the API and the workers of this
+  release are rolled in any order: the extractions and the figure runs
+  wait for the first worker that takes them.
 - Changed: `POST /parses/{parse}/retry` is `409 conflict` while an
   extraction or a figure of the parse is queued or running. A retry
   writes again the pages that work reads.

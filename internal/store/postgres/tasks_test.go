@@ -824,7 +824,7 @@ func TestSubmitsCancelsAndExchangesAtOnce(t *testing.T) {
 			wg.Go(func() {
 				var settles []tasks.Settle
 				for failed.Load() == nil && (submitted.Load() < submitters*each || len(settles) > 0 || open() > 0) {
-					reply, err := h.store.Exchange(ctx, id, tasks.Request{Free: 4, Idle: true, Settles: settles})
+					reply, err := h.store.Exchange(ctx, id, tasks.Request{Free: 4, Idle: true, Settles: settles, Kinds: tasks.Kinds})
 					if err != nil {
 						fail(err)
 						return

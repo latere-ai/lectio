@@ -246,6 +246,19 @@ and at least once per third of the lease. In order, the exchange:
    `prepare`, the manifest and the language hints for a page, so
    running a task costs a worker no statement of its own.
 
+A worker is handed only the kinds of task it names. The API role
+applies a migration while the workers of the release before still run,
+and a migration can add a kind: the sixth added `extract` and `figure`
+as tasks, and a worker that knows 3 kinds would fail a claim of a
+fourth for good, with the field's name then taken. So the request
+carries the kinds the worker runs, and a lane of another kind is no
+lane that can run for it. A request that names none is from a worker
+of the release before the request had the member, and stands for
+`prepare`, `page` and `assemble`. The 2 releases then run side by
+side: the earlier workers read pages, and the extractions and the
+figures wait for the first worker that names them. No order of
+stopping and starting is asked of an operator.
+
 There is no fifth step. The first draft had one: a task that makes more
 than one model call asked the exchange for a slot before each call and
 gave it back after. Such a task now makes one call a claim (A task of
@@ -264,8 +277,8 @@ the lock is split by class or by group, which changes no row.
 The statement is `SELECT lectio_exchange($1, $2)`: the worker's id and
 the request as one JSON document bound as text, answered by one JSON
 document. The request names the settles, the tasks the worker still
-holds, how many it can take, whether it runs nothing at all, and
-whether this is its last exchange. The reply names the settles that
+holds, how many it can take, whether it runs nothing at all, whether
+this is its last exchange, and the kinds of task it runs. The reply names the settles that
 were refused, the held tasks that are no longer the worker's, the
 claims, when the earliest pause ends among the scopes that had no room,
 and whether the fleet gave the worker up. The function, and the
@@ -776,6 +789,7 @@ durable and a restart loses every parse that had not ended.
 | An input that crashes the worker is failed after `LECTIO_TASK_EXPIRIES` workers with code `page_unreadable`; the seven pages that shared its first worker each have `expiries` 1 and succeed | a test with a stub reader that exits the process |
 | The database made unreachable for two lease periods and restored: no task has `expiries` raised and no page is read twice | a test that blocks the database connection |
 | A graceful shutdown returns leased tasks to the queue within the grace period with no counter changed | a test sending `SIGTERM` |
+| A worker of the release before, whose requests name no kind of task, is handed no extraction and no figure and runs a parse to its end beside them; a worker that names them takes them | `TestAWorkerOfTheReleaseBeforeRunsBesideThisOne` at the store |
 | Every statement runs unchanged through a transaction-mode pooler | the store conformance suite run through PgBouncer in transaction mode |
 | 25 worker processes with 200 slots and a stub reader of one-second pages sustain 190 pages a second through one pooled backend connection, with at most 130 statements a second and no lease lost | a throughput test through a pooler with a pool of one |
 | The claim inside an exchange uses `tasks_runnable` and stays under 5 ms at one million queued rows | a benchmark with `EXPLAIN` assertions |

@@ -540,6 +540,56 @@ func TestAnExtractionStaysWithTheExtractorThatBeganIt(t *testing.T) {
 	})
 }
 
+// TestAWorkerOfTheReleaseBeforeRunsBesideThisOne: a fleet is rolled one
+// process at a time, so a worker that knows 3 kinds of task exchanges with
+// a store that holds 5. Such a worker names no kind, and is handed no
+// extraction and no figure, which it would fail: it runs the parses, and
+// the extractions and the figures wait for a worker that names them. A
+// worker is handed the tasks that call no model only when it runs both
+// kinds of them.
+func TestAWorkerOfTheReleaseBeforeRunsBesideThisOne(t *testing.T) {
+	logic(t, extractors(), func(t *testing.T, h *harness) {
+		w := h.worker()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 1)
+		h.field("prs_a", "invoice", "")
+		h.figures("prs_a", "", false, "1.2", "1.3")
+
+		before := h.worker()
+		before.earlier = true
+		before.claim(4, 0)
+		for _, task := range []string{"extract-invoice", "figure-1.2", "figure-1.3"} {
+			if row := h.task("prs_a", task); row.State != tasks.Queued || row.LeaseToken != 0 || row.Attempt != 0 {
+				t.Fatalf("a worker of the release before touched %+v", row)
+			}
+		}
+
+		// It runs a parse from its prepare to its end, past the extraction
+		// and the figures that are ahead of the pages in the queue.
+		h.submit(postgres.Submission{Parse: "prs_b", Group: "acme"})
+		h.through(before, "prs_b", 2)
+
+		// A worker that runs one of the 2 kinds that call no model is not
+		// handed their lane, and is handed the extraction it names.
+		h.submit(postgres.Submission{Parse: "prs_c", Group: "acme"})
+		partial := h.worker()
+		reply := partial.raw(tasks.Request{Free: 4, Kinds: []tasks.Kind{tasks.Prepare, tasks.Extract}})
+		if len(reply.Claims) != 1 || reply.Claims[0].Task != "extract-invoice" {
+			t.Fatalf("a worker that runs prepare and extract claimed %s", names(reply.Claims))
+		}
+
+		// A worker of this release takes what is left: the prepare, and the
+		// 2 figures.
+		got := map[tasks.Kind]int{}
+		for _, c := range w.claim(4, 3) {
+			got[c.Kind]++
+		}
+		if got[tasks.Prepare] != 1 || got[tasks.Figure] != 2 {
+			t.Fatalf("a worker of this release claimed %v", got)
+		}
+		h.consistent()
+	})
+}
+
 // TestAWorkerThatDiesMidExtractionLosesOneCall: an extraction whose worker
 // dies between 2 of its calls returns to the queue with one expiry and what
 // it had so far: the worker that takes it next is handed the key the last

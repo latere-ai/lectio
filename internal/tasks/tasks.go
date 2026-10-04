@@ -42,6 +42,10 @@ const (
 	Figure Kind = "figure"
 )
 
+// Kinds are the kinds of task a worker of this release runs, which it names
+// in every exchange.
+var Kinds = []Kind{Prepare, Page, Assemble, Extract, Figure}
+
 // CallsModel reports whether a task of the kind holds a slot in a reader's
 // pool. A prepare or an assemble task calls no model and is claimed whatever
 // the pools hold.
@@ -463,6 +467,13 @@ type Request struct {
 	// every task it still holds returns to the queue with no counter
 	// changed, nothing is claimed, and its registration is removed.
 	Shutdown bool `json:"shutdown"`
+
+	// Kinds are the kinds of task the worker runs: it is handed no other.
+	// A request that names none comes from a worker of the release before
+	// an extraction and a figure were tasks, and is handed the 3 kinds a
+	// parse is made of, so the 2 releases can run side by side while a
+	// fleet is rolled.
+	Kinds []Kind `json:"kinds"`
 }
 
 // Validate reports the first thing in the request the store would refuse.

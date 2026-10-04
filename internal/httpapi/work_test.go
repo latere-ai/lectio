@@ -69,7 +69,7 @@ func TestWorkOnAnEndedParseSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	var held []tasks.Held
 	exchange := func(free int, settles ...tasks.Settle) []tasks.Claim {
 		t.Helper()
-		reply, err := st.Exchange(ctx, worker, tasks.Request{Settles: settles, Held: held, Free: free, Idle: true})
+		reply, err := st.Exchange(ctx, worker, tasks.Request{Settles: settles, Held: held, Free: free, Idle: true, Kinds: tasks.Kinds})
 		if err != nil || len(reply.Refused) != 0 {
 			t.Fatalf("the exchange: %+v, %v", reply, err)
 		}

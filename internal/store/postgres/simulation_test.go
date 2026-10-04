@@ -55,7 +55,8 @@ BEGIN
     END IF;
     v_reply := lectio_exchange(p_worker, jsonb_build_object(
       'settles', CASE WHEN v_settle IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(v_settle) END,
-      'held', '[]'::jsonb, 'free', 1, 'idle', true, 'shutdown', false)::text, p_now)::jsonb;
+      'held', '[]'::jsonb, 'free', 1, 'idle', true, 'shutdown', false,
+      'kinds', jsonb_build_array('prepare', 'page', 'assemble', 'extract', 'figure'))::text, p_now)::jsonb;
     IF (v_reply->>'gone')::boolean OR jsonb_array_length(v_reply->'refused') > 0 THEN
       RAISE EXCEPTION 'the simulation''s exchange answered %', v_reply;
     END IF;

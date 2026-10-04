@@ -255,6 +255,9 @@ type worker struct {
 	h    *harness
 	id   string
 	held map[tasks.Ref]tasks.Claim
+	// earlier makes the worker one of the release before an extraction and
+	// a figure were tasks: its requests name no kind.
+	earlier bool
 }
 
 // worker registers a worker.
@@ -291,8 +294,12 @@ func (w *worker) raw(req tasks.Request, settles ...tasks.Settle) tasks.Reply {
 }
 
 // send makes the exchange and keeps the worker's hands in step with the
-// reply.
+// reply. The worker runs every kind of task, unless the case made it one of
+// an earlier release, which names none.
 func (w *worker) send(req tasks.Request, settles ...tasks.Settle) (tasks.Reply, error) {
+	if req.Kinds == nil && !w.earlier {
+		req.Kinds = tasks.Kinds
+	}
 	for _, s := range settles {
 		delete(w.held, tasks.Ref{Parse: s.Parse, Task: s.Task})
 	}

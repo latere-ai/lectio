@@ -364,7 +364,7 @@ func (l *loop) finish(f finished) {
 
 // request is what the worker says in an exchange.
 func (l *loop) request() tasks.Request {
-	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Free: l.free(), Idle: len(l.held) == 0}
+	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Free: l.free(), Idle: len(l.held) == 0, Kinds: tasks.Kinds}
 	for ref, r := range l.held {
 		if !r.lost {
 			req.Held = append(req.Held, tasks.Held{Parse: ref.Parse, Task: ref.Task, Token: r.claim.Token})
@@ -499,7 +499,7 @@ func (l *loop) stop(ctx context.Context) error {
 	}
 	final, cancel := context.WithTimeout(ctx, max(l.w.renewal(), time.Second))
 	defer cancel()
-	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Shutdown: true}
+	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Shutdown: true, Kinds: tasks.Kinds}
 	if _, err := l.w.Store.Exchange(final, l.id, req); err != nil {
 		return fmt.Errorf("worker: the last exchange of %s: %w", l.id, err)
 	}

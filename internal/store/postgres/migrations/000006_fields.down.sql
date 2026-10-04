@@ -22,6 +22,8 @@ DROP FUNCTION IF EXISTS lectio_field_view(fields);
 DROP FUNCTION IF EXISTS lectio_field_create(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_fields_release(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_drop(text, text, text);
+DROP FUNCTION IF EXISTS lectio_runs(text[], text[]);
+DROP FUNCTION IF EXISTS lectio_claim(text, integer, boolean, settings, timestamptz, text[]);
 
 -- lectio_configure, as 000001 wrote it.
 --
@@ -539,7 +541,7 @@ END $$;
 -- never read, never written and never charged. p_sleep answers when the
 -- earliest pause ends among the scopes that held a reader back, when the
 -- claim ended with a slot still free.
-CREATE OR REPLACE FUNCTION lectio_claim(p_worker text, p_free integer, p_idle boolean, p_cfg settings, p_now timestamptz,
+CREATE FUNCTION lectio_claim(p_worker text, p_free integer, p_idle boolean, p_cfg settings, p_now timestamptz,
                                         OUT p_claims jsonb, OUT p_sleep timestamptz)
 LANGUAGE plpgsql AS $$
 DECLARE
