@@ -1,5 +1,5 @@
 ---
-title: "Intake: detect the type, unwrap, convert, extract natively, count and render pages, and hand over a page's own text"
+title: "Intake: detect the type, unwrap, convert, extract natively, count and render pages"
 status: validated
 track: core
 depends_on:

@@ -206,7 +206,7 @@ reason is one fixed sentence that holds nothing the page says.
 | its words are not words | of 20 or more words of 4 letters or more in the basic Latin alphabet, not all capitals, over 15% hold no vowel |
 | it is mostly picture | figures cover over 40% of the page, or the page paints over 2,000 shapes |
 | a painted region is too full of text to be a figure | the words inside it cover over 30% of its area: a frame around a paragraph with a drawing in it cannot be told from a figure |
-| a drawing lies over a table | a figure's region touches a table's |
+| a drawing lies over a table | a figure's region touches a table's, or a drawing lies inside one: a mark or a picture in a cell, where this reader's tables hold words alone |
 | ruling does not close | lines make a grid whose frame has a gap, that runs past its last line, or whose cells join around a corner |
 | a word lies across ruling | a word inside a table reaches past the lines of its cell |
 | there is more ruling than a page of print holds | over 4,000 lines, or a grid of over 20,000 squares |
