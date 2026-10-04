@@ -81,7 +81,9 @@ The numbers are identifiers, not the order of work. The order is:
 4. **Many tenants** (006, 007, 013): fairness, pools, limits, meters,
    proven by the simulation and the soak. Built, in the task store:
    the fair queue and the pools, proven at the store by the dispatch
-   simulation. Not built: limits, meters and the soak.
+   simulation and by the soak; the limits on pages; and the meters,
+   written as tasks settle, with the reads of usage and of the queue.
+   Not built: submits per minute and tokens per parse.
 5. **Real documents** (009, 010): intake, rendering, assembly. Built:
    detection, unwrapping, counting and selection, native text, Markdown
    and CSV, image rendering, and assembly with its views. Not built:
