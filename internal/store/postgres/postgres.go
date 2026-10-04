@@ -96,6 +96,7 @@ const (
 	cancelAtSQL   = `SELECT lectio_cancel($1, $2)`
 	retrySQL      = `SELECT lectio_retry($1, $2)`
 	retryAtSQL    = `SELECT lectio_retry($1, $2, $3)`
+	eventsSQL     = `SELECT lectio_events($1, $2, $3)`
 
 	configureSQL = `SELECT lectio_configure($1)`
 	versionSQL   = `SELECT version, dirty FROM schema_migrations`
@@ -692,6 +693,10 @@ type Parse struct {
 	// RetriedAt is when the parse's failed pages were last queued again,
 	// and nil for a parse that never was retried.
 	RetriedAt *time.Time `json:"retried_at"`
+
+	// Events counts the changes of the parse's state and progress. It is
+	// the sequence the events of the parse are numbered from.
+	Events int64 `json:"events"`
 }
 
 // Terminal reports whether the parse has ended.
@@ -710,6 +715,40 @@ func (s *Store) Parse(ctx context.Context, parseID string) (Parse, error) {
 		return Parse{}, fmt.Errorf("store: reading %s: %w", parseID, err)
 	}
 	return p, nil
+}
+
+// PageEvent is one page of a parse that settled: its number, how it ended,
+// and the change of its parse that settled it.
+type PageEvent struct {
+	Page  int          `json:"page"`
+	State tasks.State  `json:"state"`
+	Event int64        `json:"event"`
+	Error *tasks.Error `json:"error"`
+}
+
+// Events is what a stream of a parse's events is told at one instant, read
+// from one snapshot: the parse as it stands, and the pages that settled
+// after a change of it.
+type Events struct {
+	Parse Parse       `json:"parse"`
+	Pages []PageEvent `json:"pages"`
+}
+
+// Events returns a parse as it stands and the pages of it that settled
+// after its change after, oldest first and at most limit of them. Every
+// page that settled up to the parse's own count of changes is among them or
+// came before: the 2 are read in one statement. A page is there for as long
+// as its task's row is, which is while its parse runs and after a parse
+// that ended with a failed page.
+func (s *Store) Events(ctx context.Context, parseID string, after int64, limit int) (Events, error) {
+	var out *Events
+	if err := s.decode(ctx, &out, eventsSQL, "", parseID, after, limit); err != nil {
+		return Events{}, fmt.Errorf("store: reading the events of %s: %w", parseID, err)
+	}
+	if out == nil {
+		return Events{}, fault.New(fault.ParseNotFound, "no parse %s", parseID)
+	}
+	return *out, nil
 }
 
 // Task is a task row.
@@ -753,6 +792,10 @@ type Task struct {
 
 	// Result is what the task said of its output when it succeeded.
 	Result json.RawMessage `json:"result"`
+
+	// Event is the change of the parse that settled the task, for a page
+	// that succeeded or failed, and 0 for a task that has not settled.
+	Event int64 `json:"event"`
 }
 
 // Tasks returns the task rows of a parse, in the order of its queue. The

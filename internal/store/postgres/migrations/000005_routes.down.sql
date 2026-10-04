@@ -2,10 +2,13 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- Back to a parse that fails with page_unreadable whatever its pages failed
--- with, keeps the rows of its failed tasks alone, and cannot be read again.
--- lectio_settled is the one of 000004 again.
+-- with, keeps the rows of its failed tasks alone, cannot be read again, and
+-- counts none of its changes. lectio_settled is the one of 000004 again.
 
+DROP FUNCTION IF EXISTS lectio_events(text, bigint, integer);
 DROP FUNCTION IF EXISTS lectio_retry(text, text, timestamptz);
+DROP TRIGGER IF EXISTS parses_changed ON parses;
+DROP FUNCTION IF EXISTS lectio_changed();
 
 -- lectio_settled as 000004 wrote it. It moves a parse forward when one of
 -- its tasks reaches succeeded or failed, in the transaction that settled the
@@ -133,4 +136,9 @@ END $$;
 
 DROP FUNCTION IF EXISTS lectio_failure(text);
 
-ALTER TABLE parses DROP COLUMN retried_at;
+DROP TABLE IF EXISTS page_events;
+DROP INDEX IF EXISTS tasks_events;
+ALTER TABLE tasks DROP COLUMN event;
+ALTER TABLE parses
+  DROP COLUMN events,
+  DROP COLUMN retried_at;

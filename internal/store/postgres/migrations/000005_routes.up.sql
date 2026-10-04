@@ -1,13 +1,48 @@
 -- SPDX-FileCopyrightText: 2026 Latere AI
 -- SPDX-License-Identifier: Apache-2.0
 
--- What a parse says of itself when pages of it failed, and reading those
--- pages again (specs/004-durable-tasks.md, specs/005-parse-graph.md,
+-- What a parse says of itself when pages of it failed, reading those pages
+-- again, and following a parse as it changes (specs/003-api.md,
+-- specs/004-durable-tasks.md, specs/005-parse-graph.md,
 -- specs/007-model-capacity.md).
 
 -- A parse that was read again has until its deadline from the retry, for as
 -- long as its submit gave it, so the time it was given is counted from here.
 ALTER TABLE parses ADD COLUMN retried_at timestamptz;   -- when its failed pages were last queued again
+
+-- The events of a parse are read from its rows (specs/003-api.md). events
+-- counts the changes of a parse that a stream reports: its state and its
+-- progress. A parse is written at 1, and a page's row holds the change that
+-- settled it, so the rows say in which order what happened and a stream on
+-- any replica numbers the same event the same.
+ALTER TABLE parses ADD COLUMN events bigint NOT NULL DEFAULT 1;
+ALTER TABLE tasks  ADD COLUMN event  bigint;            -- the change of its parse that settled the page
+CREATE INDEX tasks_events ON tasks (parse_id, event) WHERE event IS NOT NULL;
+
+-- page_events holds the same for the pages that have no task row: the pages
+-- of a format prepare wrote itself, and the pages of a parse that ended
+-- with every page read, whose rows are deleted. It is one row per parse and
+-- a few bytes per page, so a stream opened at any time tells every page of
+-- a parse under the id it had, and the task table keeps no settled page.
+CREATE TABLE page_events (
+  parse_id text  PRIMARY KEY REFERENCES parses ON DELETE CASCADE,
+  settled  jsonb NOT NULL                 -- [[page, change], ...] in the order the pages settled
+);
+
+-- lectio_changed counts a change of a parse. It is the one place the count
+-- is raised: a trigger on the row, so no function that moves a parse can
+-- leave a change a stream would then never report.
+CREATE FUNCTION lectio_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.events := OLD.events + 1;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER parses_changed BEFORE UPDATE ON parses FOR EACH ROW
+  WHEN (OLD.state IS DISTINCT FROM NEW.state
+        OR OLD.pages_total  IS DISTINCT FROM NEW.pages_total  OR OLD.pages_open   IS DISTINCT FROM NEW.pages_open
+        OR OLD.pages_done   IS DISTINCT FROM NEW.pages_done   OR OLD.pages_failed IS DISTINCT FROM NEW.pages_failed
+        OR OLD.pages_reused IS DISTINCT FROM NEW.pages_reused OR (OLD.manifest IS NULL) <> (NEW.manifest IS NULL))
+  EXECUTE FUNCTION lectio_changed();
 
 -- lectio_failure is the code a parse fails with when more of its pages
 -- failed than it allows: the code its failed pages carry when they all carry
@@ -81,6 +116,16 @@ BEGIN
            reserved_day = CASE WHEN v_budget > 0 AND v_n > 0 THEN v_day END
      WHERE parse_id = p_parse
     RETURNING * INTO STRICT v_p;
+    IF v_native AND v_n > 0 THEN
+      -- The pages of a format that carries its own structure are there with
+      -- prepare and have no task. Each is one change of the parse after the
+      -- one that counted them, in the order of the selection, so a stream
+      -- tells them one by one as it tells pages a reader read.
+      INSERT INTO page_events (parse_id, settled)
+      SELECT p_parse, jsonb_agg(jsonb_build_array(e.n, v_p.events + e.i) ORDER BY e.i)
+        FROM jsonb_array_elements(v_pages) WITH ORDINALITY AS e(n, i);
+      UPDATE parses SET events = events + v_n WHERE parse_id = p_parse;
+    END IF;
     IF v_native OR v_n = 0 THEN
       PERFORM lectio_enqueue(p_parse, 'assemble', 'assemble', NULL, p_now);
       RETURN;
@@ -111,6 +156,15 @@ BEGIN
      WHERE parse_id = p_parse
     RETURNING * INTO STRICT v_p;
     v_open := v_p.pages_open;
+    -- The page's row holds the change that settled it, which is the id its
+    -- event is sent under. A page the store failed itself came with no
+    -- settle: it is the parse's one failed page that holds no change yet.
+    IF p_settle IS NOT NULL THEN
+      UPDATE tasks SET event = v_p.events WHERE parse_id = p_parse AND task_id = p_settle->>'task';
+    ELSE
+      UPDATE tasks SET event = v_p.events
+       WHERE parse_id = p_parse AND kind = 'page' AND state = 'failed' AND event IS NULL;
+    END IF;
     -- A page that was read whole is kept under what was read, for the next
     -- parse of the same owner that would do the same read. A page whose
     -- reply was cut is read again, a page that was taken from an earlier
@@ -158,7 +212,16 @@ BEGIN
   -- a failed page keeps every row: they are what a retry queues again, and
   -- what the assemble after it finds the pages that were read through.
   IF v_p.pages_failed = 0 THEN
-    DELETE FROM tasks WHERE parse_id = p_parse AND state = 'succeeded';
+    -- The change that settled each page outlives the page's row, so the
+    -- events of the parse are the same before and after.
+    WITH gone AS (
+      DELETE FROM tasks WHERE parse_id = p_parse AND state = 'succeeded' RETURNING kind, task_id, event
+    )
+    INSERT INTO page_events (parse_id, settled)
+    SELECT p_parse, jsonb_agg(jsonb_build_array(substr(task_id, 6)::integer, event) ORDER BY event)
+      FROM gone WHERE kind = 'page' AND event IS NOT NULL
+    HAVING count(*) > 0
+    ON CONFLICT (parse_id) DO UPDATE SET settled = EXCLUDED.settled;
   END IF;
 END $$;
 
@@ -235,7 +298,7 @@ BEGIN
     WITH back AS (
       UPDATE tasks SET state = 'queued', attempt = 0, expiries = 0, chain_at = 0, invalid = 0, escalated = false,
              available_at = v_now, lease_owner = NULL, reader = NULL, scope = NULL, calling = false, charged = 0,
-             error = NULL, settled_at = NULL
+             error = NULL, settled_at = NULL, event = NULL
        WHERE parse_id = p_parse AND kind = 'page' AND state = 'failed'
       RETURNING lane
     )
@@ -256,3 +319,30 @@ BEGIN
    WHERE parse_id = p_parse;
   RETURN 'retried';
 END $$;
+
+-- lectio_events answers what a stream of a parse's events is told
+-- (specs/003-api.md): the parse as it stands, with the count of its changes,
+-- and the pages that settled after the change p_after, oldest first and at
+-- most p_limit of them. A page is read from its task's row while it has one
+-- and from page_events after. It is one statement, so the parse and its
+-- pages are read from one snapshot: every page that settled up to the
+-- parse's count is in it and none after. It answers the JSON null for a
+-- parse that is not there.
+CREATE FUNCTION lectio_events(p_parse text, p_after bigint, p_limit integer)
+RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT coalesce((
+    SELECT jsonb_build_object(
+             'parse', to_jsonb(p),
+             'pages', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                'page', e.page, 'state', e.state, 'event', e.event, 'error', e.error)
+                              ORDER BY e.event), '[]'::jsonb)
+                         FROM (SELECT substr(t.task_id, 6)::integer AS page, t.state, t.event, t.error
+                                 FROM tasks t
+                                WHERE t.parse_id = p.parse_id AND t.event > p_after
+                               UNION ALL
+                               SELECT (s.pair->>0)::integer, 'succeeded', (s.pair->>1)::bigint, NULL::jsonb
+                                 FROM page_events k CROSS JOIN LATERAL jsonb_array_elements(k.settled) AS s(pair)
+                                WHERE k.parse_id = p.parse_id AND (s.pair->>1)::bigint > p_after
+                               ORDER BY event LIMIT p_limit) e))::text
+      FROM parses p WHERE p.parse_id = p_parse), 'null');
+$$;
