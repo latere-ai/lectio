@@ -39,7 +39,10 @@ refused before it is pushed.
   with the pages of every parse in the parse's group, and its
   description is on the figure's block wherever the block is read. A
   figure that was described from the same bytes by the same describers
-  is taken from that description by a later run of the same owner.
+  is taken from that description by a later run of the same owner. A
+  run describes at most 1,000 figures, in both servers: a request whose
+  pages hold more is `413 too_many_pages`, and the parse is described
+  a range of pages at a time.
 - Added: an extraction and a figure are read with the key of their
   parse's group, as a page is. With `LECTIO_KEYS=endpoint`, a `402` from
   the key endpoint fails them with `budget_exhausted`, a `403` with

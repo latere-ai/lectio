@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
 )
@@ -836,6 +837,27 @@ func TestWhatAFigureRunIsRefusedFor(t *testing.T) {
 			t.Fatalf("the run that replaced it is %+v", run)
 		}
 		w.settle(described(w.claim(1, 1)[0]))
+
+		// A run describes at most figures.MaxRun figures: 1 more is refused
+		// with nothing written, and as many is 1 row and 1 task each.
+		h.readThrough(w, postgres.Submission{Parse: "prs_many", Group: "acme"}, 1)
+		refs := make([]string, figures.MaxRun+1)
+		for i := range refs {
+			refs[i] = "1." + strconv.Itoa(i+1)
+		}
+		many := postgres.FigureStart{Parse: "prs_many", Deadline: time.Hour}
+		for _, ref := range refs {
+			many.Figures = append(many.Figures, postgres.FigureAsk{Ref: ref, Page: 1, PageKey: "parses/prs_many/pages/1.1.json"})
+		}
+		refused(t, "a run of 1 figure more than a run describes", h.store.StartFigures(ctx, many), fault.TooManyPages)
+		if _, started, err := h.store.Figures(ctx, "prs_many"); started || err != nil {
+			t.Fatalf("a run that was refused was started: %t, %v", started, err)
+		}
+		h.figures("prs_many", "", false, refs[:figures.MaxRun]...)
+		if got := h.run("prs_many"); got.Run.Total != figures.MaxRun || got.Run.Open != figures.MaxRun || len(got.Figures) != figures.MaxRun || len(h.tasks("prs_many")) != figures.MaxRun {
+			t.Fatalf("a run of %d figures holds %d figures and %d tasks: %+v", figures.MaxRun, len(got.Figures), len(h.tasks("prs_many")), got.Run)
+		}
+		h.consistent()
 	})
 }
 

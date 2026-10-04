@@ -68,6 +68,9 @@ func (r *Runner) Figures(p store.Parse, opt FigureOptions) (store.FigureRun, err
 		}
 		found = append(found, figures.Of(page, opt.Redo)...)
 	}
+	if err := figures.Bounded(len(found)); err != nil {
+		return store.FigureRun{}, err
+	}
 
 	run := store.FigureRun{State: store.RunRunning, Total: len(found), StartedAt: time.Now().UTC()}
 	if err := r.Store.StartFigureRun(p.ID, run); err != nil {

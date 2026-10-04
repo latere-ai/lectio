@@ -94,6 +94,10 @@ CREATE TABLE figures (
   error      jsonb,
   PRIMARY KEY (parse_id, ref)
 );
+-- The figures a run has not described, which a run's start and its deadline
+-- look for: both then read as many rows as one run holds, whatever the
+-- figures of the parse that earlier runs described.
+CREATE INDEX figures_open ON figures (parse_id) WHERE state <> 'succeeded';
 
 -- descriptions keeps, per owner, where the description of a figure is: the
 -- key names the file's bytes, the figure's page and place on it, its

@@ -16,6 +16,7 @@ import (
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/render"
@@ -186,6 +187,42 @@ func TestAParsesFiguresAreDescribed(t *testing.T) {
 	run(t, r, store.Parse{ID: "prs_3"}, testfixtures.MultiTIFF)
 	if fresh := described(t, r, "prs_3", FigureOptions{Pages: []int{1}}); fresh.Total != 1 || fresh.Reused != 0 || d.Calls() != 5 {
 		t.Fatalf("a parse with no digest: %+v, %d calls", fresh, d.Calls())
+	}
+}
+
+// crowded reads the first page as 1,001 figures and every other page as 1.
+type crowded struct{ illustrated }
+
+func (crowded) ReadPage(_ context.Context, page reader.Page) (reader.Result, error) {
+	n := 1
+	if page.Number == 1 {
+		n = figures.MaxRun + 1
+	}
+	raw := make([]reader.Raw, n)
+	for i := range raw {
+		raw[i] = reader.Raw{Label: "figure", Box: []float64{250, 200, 750, 800}}
+	}
+	return reader.Result{Model: "layout", Usage: document.Usage{Pages: 1}, Blocks: reader.Normalize(raw, reader.Grid{Width: 1000, Height: 1000})}, nil
+}
+
+// TestARunOfMoreFiguresThanARunDescribesIsRefused: a run over pages that
+// hold more figures than one run describes is refused before anything is
+// queued, and a run over fewer of the parse's pages is taken.
+func TestARunOfMoreFiguresThanARunDescribesIsRefused(t *testing.T) {
+	r := start(t, &Runner{
+		Pipeline: &parse.Pipeline{Limits: pages.DefaultLimits(), Renderer: painted{}},
+		Readers:  map[string]reader.Reader{"layout": crowded{}}, Chain: []string{"layout"},
+		Describers: map[string]reader.Describer{"vision": &stub.Describer{}}, DescribeChain: []string{"vision"},
+	})
+	p := run(t, r, store.Parse{ID: "prs_1"}, testfixtures.MultiTIFF)
+	if _, err := r.Figures(p, FigureOptions{}); fault.CodeOf(err) != fault.TooManyPages {
+		t.Fatalf("a run over %d figures: %v", figures.MaxRun+3, err)
+	}
+	if _, started := r.Store.FigureRun("prs_1"); started {
+		t.Fatal("a run that was refused was started")
+	}
+	if got := described(t, r, "prs_1", FigureOptions{Pages: []int{2, 3}}); got.Total != 2 || got.Done != 2 {
+		t.Fatalf("a run over the pages after the first: %+v", got)
 	}
 }
 

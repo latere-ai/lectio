@@ -750,17 +750,20 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 	at = slices.DeleteFunc(at, func(l located) bool {
 		return l.key == "" || (opt.Pages != nil && !slices.Contains(opt.Pages, l.n))
 	})
-	stored, err := b.read(ctx, at)
-	if err != nil {
-		return err
-	}
-	pages := make([]document.Page, len(stored))
-	for i, s := range stored {
-		pages[i] = s.Page
-	}
-	// A figure an earlier run described is known by its description.
-	if err := b.describe(ctx, p, pages); err != nil {
-		return err
+	// A figure an earlier run described is known by the key of its
+	// description, which the run's rows hold: no description is read to
+	// find which figures have one.
+	kept := map[string]string{}
+	if p.Described > 0 && !opt.Redo {
+		got, started, err := b.Store.Figures(ctx, p.ID)
+		if err != nil {
+			return err
+		}
+		for _, f := range got.Figures {
+			if started && f.Output != "" {
+				kept[f.Ref] = f.Output
+			}
+		}
 	}
 	// The file's bytes name a description so that it is made once. A
 	// file that is gone names none, and its figures are described.
@@ -771,20 +774,41 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 		return err
 	}
 	start := postgres.FigureStart{Parse: p.ID, Pin: opt.Describer, Redo: opt.Redo, Deadline: b.deadline()}
-	for i, page := range pages {
-		// A page that was not read from an image has nothing to cut a
-		// figure from.
-		if stored[i].Image == "" {
-			continue
+	// The pages are read a batch at a time, and no further once the run
+	// holds more figures than it may: a run that is refused has read the
+	// pages up to the one that passed the bound, and not the document.
+	for len(at) > 0 {
+		batch := at[:min(len(at), figureBatch)]
+		at = at[len(batch):]
+		stored, err := b.read(ctx, batch)
+		if err != nil {
+			return err
 		}
-		for _, f := range figures.Of(page, opt.Redo) {
-			start.Figures = append(start.Figures, postgres.FigureAsk{
-				Ref: f.Ref, Page: f.Page, PageKey: at[i].key, FigureKey: figures.Key(sha, f, p.Languages, chain, b.Describers),
-			})
+		for i, s := range stored {
+			// A page that was not read from an image has nothing to cut a
+			// figure from.
+			if s.Image == "" {
+				continue
+			}
+			for _, f := range figures.Of(s.Page, opt.Redo) {
+				if kept[f.Ref] != "" {
+					continue
+				}
+				start.Figures = append(start.Figures, postgres.FigureAsk{
+					Ref: f.Ref, Page: f.Page, PageKey: batch[i].key, FigureKey: figures.Key(sha, f, p.Languages, chain, b.Describers),
+				})
+			}
+		}
+		if err := figures.Bounded(len(start.Figures)); err != nil {
+			return err
 		}
 	}
 	return b.Store.StartFigures(ctx, start)
 }
+
+// figureBatch is how many pages a request that starts a run reads at a
+// time while it finds the run's figures.
+const figureBatch = 16
 
 // FigureRun returns the run of a parse that describes its figures, when
 // one was started: what the task store counted of it, and why each figure

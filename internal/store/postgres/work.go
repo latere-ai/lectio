@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/tasks"
 )
 
@@ -201,9 +202,10 @@ type figureStart struct {
 
 // StartFigures begins a run that describes figures of a parse that has
 // ended: the run, a row per figure and a task per figure, in one
-// transaction. A parse that has not ended is refused with not_terminal, and
-// one whose earlier run is in flight with conflict. A run of no figure has
-// ended when it is written.
+// transaction. A parse that has not ended is refused with not_terminal, one
+// whose earlier run is in flight with conflict, and a run of more figures
+// than figures.MaxRun with too_many_pages. A run of no figure has ended
+// when it is written.
 func (s *Store) StartFigures(ctx context.Context, r FigureStart) error {
 	switch {
 	case r.Parse == "":
@@ -213,6 +215,11 @@ func (s *Store) StartFigures(ctx context.Context, r FigureStart) error {
 	}
 	if r.Figures == nil {
 		r.Figures = []FigureAsk{}
+	}
+	// The statement writes a row and a task per figure under the lock the
+	// exchange takes, so the bound on a run is held before it is sent.
+	if err := figures.Bounded(len(r.Figures)); err != nil {
+		return err
 	}
 	doc, err := json.Marshal(figureStart{FigureStart: r, DeadlineMS: r.Deadline.Milliseconds()})
 	if err != nil {

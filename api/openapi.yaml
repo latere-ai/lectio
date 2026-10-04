@@ -489,6 +489,12 @@ paths:
         ended is `not_terminal`. With no describer configured, or one
         named that is not, it is `reader_not_found`.
 
+        A run describes at most 1,000 figures. A request whose pages hold
+        more that it would describe is `too_many_pages` and starts
+        nothing: name fewer pages, and describe the parse a range of
+        pages at a time. A figure that has a description does not count
+        unless `redo` is true.
+
         Answers `202` with the run. With `Prefer: wait=<seconds>` the
         answer is held until the run ends or the wait runs out, and is
         `200` when it ended. A run succeeds when it described any figure
@@ -514,6 +520,7 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
     get:
       tags: [figures]
       operationId: listFigures

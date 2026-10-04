@@ -5,9 +5,11 @@ package figures
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/reader"
 	"latere.ai/x/lectio/reader/stub"
 )
@@ -125,5 +127,18 @@ func TestADescriptionIsWrittenOntoItsBlock(t *testing.T) {
 	Description{Type: reader.FigureChart, Description: "A chart.", Labels: []string{"one", "two"}}.Onto(&read)
 	if read.Text != "Q1 Q2" || read.Description != "A chart." || read.Figure.Type != reader.FigureChart {
 		t.Fatalf("a figure whose reader gave it text becomes %+v", read)
+	}
+}
+
+// TestARunDescribesAtMostMaxRunFigures: a run of 1,000 figures is taken,
+// and one of 1 more is refused with the code of a request that named too
+// many pages, and with what to do about it.
+func TestARunDescribesAtMostMaxRunFigures(t *testing.T) {
+	if err := Bounded(MaxRun); err != nil {
+		t.Fatalf("a run of %d figures: %v", MaxRun, err)
+	}
+	err := Bounded(MaxRun + 1)
+	if fault.CodeOf(err) != fault.TooManyPages || !strings.Contains(fault.DetailOf(err), "more than 1000 figures") || !strings.Contains(fault.DetailOf(err), "name fewer pages") {
+		t.Fatalf("a run of %d figures: %v", MaxRun+1, err)
 	}
 }

@@ -18,8 +18,32 @@ import (
 	"strings"
 
 	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/reader"
 )
+
+// MaxRun is the most figures one run describes. A run is started by one
+// request, which finds the figures in the pages it takes, and in the
+// durable server by one statement, which writes a row and a task for each
+// under the lock every worker's exchange waits for. At 1,000 that is
+// 2,000 rows, fewer than the task rows the prepare of a parse at the
+// default limit on pages writes under the same lock, and 1,000 calls to a
+// describer, which a run's deadline has time for. A parse that holds more
+// is described in several runs, each over a range of its pages: a figure
+// keeps its description from run to run.
+const MaxRun = 1000
+
+// Bounded refuses a run that found more figures than MaxRun, with the code
+// a caller that named too many pages for one request is answered with. The
+// count is of what the run would describe, so figures that already hold a
+// description do not count unless the run describes them again.
+func Bounded(found int) error {
+	if found > MaxRun {
+		return fault.New(fault.TooManyPages,
+			"the pages of the run hold more than %d figures to describe, and a run describes at most %d: name fewer pages", MaxRun, MaxRun)
+	}
+	return nil
+}
 
 // Figure is one figure a run sets out to describe.
 type Figure struct {
