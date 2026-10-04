@@ -442,6 +442,14 @@ func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	failed("the pages with the task store down", err)
 	_, _, err = b.Document(ctx, ended)
 	failed("a document with the task store down", err)
+	_, err = b.Retry(ctx, "alice", running.ID)
+	failed("a retry with the task store down", err)
+	_, err = b.Events(ctx, running.ID, 0, 10)
+	failed("the events of a parse with the task store down", err)
+	_, err = b.Usage(ctx, store.UsageQuery{By: "group", Interval: "hour", From: time.Now().Add(-time.Hour), To: time.Now()})
+	failed("the meters with the task store down", err)
+	_, err = b.Queue(ctx, nil)
+	failed("the queue with the task store down", err)
 }
 
 // undeletable is an object store that lists and cannot delete.

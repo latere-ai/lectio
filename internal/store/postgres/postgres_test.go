@@ -402,6 +402,12 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 			_, _, err := h.store.Parses(ctx, []string{"acme"}, postgres.Filter{}, "", 10)
 			return err
 		},
+		"Retry":  func() error { return h.store.Retry(ctx, "acme", "prs_a") },
+		"Events": func() error { _, err := h.store.Events(ctx, "prs_a", 0, 10); return err },
+		"Usage": func() error {
+			_, err := h.store.Usage(ctx, postgres.UsageQuery{By: "group", Interval: "hour", From: epoch, To: epoch.Add(time.Hour)})
+			return err
+		},
 		"DeleteParse":   func() error { return h.store.DeleteParse(ctx, "acme", "prs_a") },
 		"File":          func() error { _, err := h.store.File(ctx, "fil_1"); return err },
 		"FileByContent": func() error { _, _, err := h.store.FileByContent(ctx, "acme", "aa"); return err },

@@ -548,4 +548,27 @@ func TestWhatEndsAStream(t *testing.T) {
 			t.Errorf("%s: the log is %q", name, logged.String())
 		}
 	}
+
+	// A client that leaves ends its stream: the server stops reading the
+	// rows for it, which closing the server would otherwise wait on for as
+	// long as a stream is held, and it logs nothing.
+	var logged bytes.Buffer
+	backend := &scripted{Memory: &Memory{Store: store.NewMemory()}, parse: running, steps: []func() (store.Events, error){steady}}
+	s := &Server{Backend: backend, Auth: callers, Authz: ownerPolicy(), Log: slog.New(slog.NewTextHandler(&logged, nil))}
+	quick(s)
+	srv := httptest.NewServer(s.Handler())
+	f := (&env{t: t, server: s, url: srv.URL, token: "alice-token"}).follow("prs_1", "")
+	f.expect("progress stage=reading", "state state=running")
+	f.idle()
+	f.stop()
+	closed := make(chan struct{})
+	go func() { srv.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the stream of a client that left was still held")
+	}
+	if logged.Len() != 0 {
+		t.Errorf("a client that left was logged: %s", logged.String())
+	}
 }
