@@ -3,9 +3,10 @@
 #
 # The workers: the same image in the role that runs tasks. A worker serves
 # no caller and holds no caller's token; it reaches the database, the
-# object store and the model endpoint, and coordinates with the others
-# through the database alone. Their count times LECTIO_WORKERS is the
-# fleet's task concurrency, and the API and the workers scale apart.
+# object store, the model endpoint and, where each group reads with a key
+# of its own, the key endpoint, and coordinates with the others through
+# the database alone. Their count times LECTIO_WORKERS is the fleet's task
+# concurrency, and the API and the workers scale apart.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,14 +93,35 @@ spec:
                 secretKeyRef:
                   name: lectiod-s3
                   key: LECTIO_S3_SECRET_KEY
-            # The key the readers are called with. Only the workers call a
-            # model, so only the workers hold it. Optional: an endpoint
-            # that takes no key needs none.
+            # The key the readers are called with while LECTIO_KEYS is
+            # `static`, its default: one key for every group. Only the
+            # workers call a model, so only the workers hold it. Optional:
+            # an endpoint that takes no key needs none, and an installation
+            # whose keys come from the endpoint below applies none.
             - name: LECTIO_MODEL_KEY
               valueFrom:
                 secretKeyRef:
                   name: lectiod-model
                   key: LECTIO_MODEL_KEY
+                  optional: true
+            # The endpoint that issues each group the key its pages are
+            # read with, and the bearer lectiod sends it, for an
+            # installation whose ConfigMap sets LECTIO_KEYS to `endpoint`.
+            # Optional: with no Secret the source is the key above. Only
+            # the workers read the pair: the API faces callers and holds
+            # no credential that obtains a tenant's key. The pair lives in
+            # one Secret and rotates together.
+            - name: LECTIO_KEYS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-keys
+                  key: LECTIO_KEYS_URL
+                  optional: true
+            - name: LECTIO_KEYS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-keys
+                  key: LECTIO_KEYS_TOKEN
                   optional: true
           # No public port: nothing dials a worker. The internal listener
           # answers the kubelet's probes.
@@ -109,7 +131,9 @@ spec:
           # Readiness is the database, the object store and a recent
           # exchange. Liveness is the process. A worker whose readers are
           # all paused is ready: that is the pool's to handle, and not a
-          # reason to restart.
+          # reason to restart. A worker whose key endpoint does not answer
+          # is ready too: the pages that need a key wait in the queue, and
+          # the worker runs every other task.
           readinessProbe:
             httpGet:
               path: /readyz

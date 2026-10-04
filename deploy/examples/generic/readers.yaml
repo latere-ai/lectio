@@ -10,7 +10,9 @@
 # One Reader and one Policy, with example values. The endpoint is any
 # that speaks chat completions with image input, a gateway included, and
 # the model is a name that endpoint knows. The key the endpoint is called
-# with is not here: it is LECTIO_MODEL_KEY, in the Secret lectiod-model.
+# with is not here: it is LECTIO_MODEL_KEY, in the Secret lectiod-model,
+# or, with LECTIO_KEYS=endpoint, the key the endpoint of the Secret
+# lectiod-keys issues the page's group.
 # specs/008-readers.md lists every member of both documents.
 apiVersion: v1
 kind: ConfigMap

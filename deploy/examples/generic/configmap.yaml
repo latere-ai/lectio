@@ -30,3 +30,9 @@ data:
   LECTIO_S3_ENDPOINT: "https://objects.example.com"
   LECTIO_S3_REGION: "us-east-1"
   LECTIO_S3_PATH_STYLE: "true"
+  # Where the key a page is read with comes from. `static` is one key for
+  # every group, the key of the Secret lectiod-model. `endpoint` asks the
+  # endpoint of the Secret lectiod-keys for a key of each group's own, and
+  # is set here, for both roles, because it also decides whether a rate
+  # limit pauses a reader for every group or for the one whose key it was.
+  LECTIO_KEYS: "static"

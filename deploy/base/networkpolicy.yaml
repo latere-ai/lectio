@@ -61,9 +61,10 @@ spec:
           protocol: TCP
 ---
 # The workers. Inbound is nothing: no rule, so no connection is admitted.
-# Outbound is cluster DNS, the database, and over TLS the object store and
-# the model endpoint. The conversion sidecar is not among them here; the
-# component that deploys it admits the workers to it.
+# Outbound is cluster DNS, the database, and over TLS the object store, the
+# model endpoint and, where an installation asks one, the key endpoint. The
+# conversion sidecar is not among them here; the component that deploys it
+# admits the workers to it.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

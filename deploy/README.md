@@ -122,6 +122,7 @@ variable the base sets itself is not overridden from here.
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | the largest file and the most pages a parse takes |
 | `LECTIO_GROUP_DEFAULTS` | what a group takes where no allow names it, as `name=value` pairs: its `weight`, `max_running`, `max_queued`, `max_priority` and `pages_per_day` |
 | `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | how long a file and a parse are kept, `24h` and `720h` unless set |
+| `LECTIO_KEYS` | where the key a page is read with comes from: `static`, the default, or `endpoint`; see [A key per tenant](#a-key-per-tenant) |
 
 **The ConfigMap `lectiod-readers`**, which the overlay carries: the
 Reader and Policy documents, mounted read-only at `/etc/lectio`. Every
@@ -136,7 +137,8 @@ variable reads one key of the same name.
 |---|---|---|---|
 | `lectiod-db` | `LECTIO_DATABASE_URL`, and optionally `LECTIO_DATABASE_POOL_URL` | both roles | the Pods do not start |
 | `lectiod-s3` | `LECTIO_S3_ACCESS_KEY`, `LECTIO_S3_SECRET_KEY` | both roles | the Pods do not start |
-| `lectiod-model` | `LECTIO_MODEL_KEY` | the workers | the readers' endpoints are called with no key |
+| `lectiod-model` | `LECTIO_MODEL_KEY` | the workers | with `LECTIO_KEYS=static`, the readers' endpoints are called with no key |
+| `lectiod-keys` | `LECTIO_KEYS_URL`, `LECTIO_KEYS_TOKEN` | the workers | every page is read with the key of `lectiod-model`; with `LECTIO_KEYS=endpoint` the workers do not start |
 | `lectiod-authorizer` | `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | the API | the owner policy decides: a subject acts on what it owns |
 
 `LECTIO_DATABASE_URL` is the direct endpoint of the database. The API
@@ -144,9 +146,57 @@ runs the migrations over it at start. `LECTIO_DATABASE_POOL_URL` is a
 transaction-mode pooler's endpoint, which the serving path opens where
 there is one.
 
-The model key is the workers' alone and the authorizer's bearer the
-API's alone: a role holds the credentials of what it dials and no
-others.
+The model key and the key endpoint's bearer are the workers' alone, and
+the authorizer's bearer the API's alone: a role holds the credentials of
+what it dials and no others.
+
+## A key per tenant
+
+The key a reader's endpoint is called with decides who that endpoint
+charges. `LECTIO_KEYS` names where the key comes from.
+
+| `LECTIO_KEYS` | The key of a page | Apply |
+|---|---|---|
+| `static`, the default | one key for every group: the operator pays for every page | the Secret `lectiod-model`, or none for an endpoint that takes no key |
+| `endpoint` | a key an endpoint of yours issued for the page's group, so a gateway attributes each tenant's spend and bounds it by that tenant's budget | the Secret `lectiod-keys`, and `LECTIO_KEYS: "endpoint"` in the ConfigMap `lectiod` |
+
+`LECTIO_KEYS` is a key of the ConfigMap and not of the workers' Secret
+because both roles act on it: with a key per group, a rate limit pauses
+the calls of the group whose key was limited and no other group's, and
+that is a setting of the task store each role opens. The API reads
+neither `LECTIO_KEYS_URL` nor `LECTIO_KEYS_TOKEN` and starts without
+them.
+
+The 2 sources exclude each other. A worker that is given
+`LECTIO_KEYS=endpoint` without both keys of `lectiod-keys`, or with
+`lectiod-model` beside them, does not start and names the variable. A
+worker that is given `lectiod-keys` while `LECTIO_KEYS` is `static` does
+not start either: an installation must not believe its tenants read with
+their own keys while every page is read with the operator's.
+
+To switch an installation to the endpoint, apply `lectiod-keys`, delete
+`lectiod-model`, set `LECTIO_KEYS: "endpoint"` in the ConfigMap, and
+roll both Deployments.
+
+The workers send the endpoint one request per group, with the bearer:
+
+```
+POST <LECTIO_KEYS_URL>
+Authorization: Bearer <LECTIO_KEYS_TOKEN>
+Content-Type: application/json
+
+{"group": "...", "owner": "...", "parse": "..."}
+```
+
+| The endpoint answers | The group's pages |
+|---|---|
+| `200` with `{"key": "...", "expires_at": "<RFC 3339>"}` | are read with the key, which a worker holds in memory and asks again 1 minute before it expires |
+| `402` | fail with `budget_exhausted`: the group has no budget |
+| `403` | fail with `reader_unavailable`: the group is issued no key |
+| anything else, or nothing | wait in the queue and fail nothing; the worker asks again after 1 second, then after twice as long each time, up to 30 seconds |
+
+A key has to be good for more than 1 minute when it is issued, or it is
+never used. A worker whose key endpoint does not answer stays ready.
 
 ## Stopping and rolling
 
@@ -169,11 +219,12 @@ installation's:
 | Role | In | Out |
 |---|---|---|
 | API | 8080 from any Pod of the cluster | cluster DNS; 443 for the issuers, the authorizer, the object store and a source a caller submits by address; 5432 for the database |
-| Worker | nothing | cluster DNS; 443 for the object store and the model endpoint; 5432 for the database |
+| Worker | nothing | cluster DNS; 443 for the object store, the model endpoint and the key endpoint; 5432 for the database |
 
 A port in a rule is the destination Pod's own and not its Service's. A
-pooler on 6432, an object store on 9000 or a model gateway inside the
-cluster on another port is refused until an overlay adds it. The
+pooler on 6432, an object store on 9000 or a model gateway or a key
+endpoint inside the cluster on another port is refused until an overlay
+adds it. The
 kubelet's probes are not subject to policy, so port 8081 is in no rule;
 an installation that scrapes the internal listener admits its scraper.
 

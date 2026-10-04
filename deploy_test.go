@@ -907,6 +907,141 @@ func TestNoManifestCarriesACredential(t *testing.T) {
 	}
 }
 
+// secretOf is the Secret a container's variable is read from, with whether
+// the Pod starts without it. The name is empty for a variable that is not
+// set, or is set from anything but a Secret.
+func secretOf(c any, variable string) (name string, optional bool) {
+	ref := dig(env(c)[variable], "valueFrom", "secretKeyRef")
+	return str(dig(ref, "name")), dig(ref, "optional") == true
+}
+
+// TestEachRoleHoldsTheCredentialsOfWhatItDials: a role is given the
+// credentials of what it dials and no others
+// (specs/013-limits-and-usage.md). The workers read the model key and the
+// key endpoint's address and bearer, each from a Secret a Pod starts
+// without. The API reads none of the 3: it faces callers, and the bearer
+// obtains every tenant's key. The authorizer's pair is the API's and no
+// worker's. The ConfigMap both roles read whole carries the key source and
+// none of the 3, every key a Deployment reads of a Secret is in the
+// template, and the values the template and the example hold for the key
+// source are ones a worker starts with.
+func TestEachRoleHoldsTheCredentialsOfWhatItDials(t *testing.T) {
+	const keysSecret, modelSecret, authorizerSecret = "lectiod-keys", "lectiod-model", "lectiod-authorizer"
+	workersAlone := []string{"LECTIO_MODEL_KEY", "LECTIO_KEYS_URL", "LECTIO_KEYS_TOKEN"}
+	apiAlone := []string{"LECTIO_AUTHORIZER_URL", "LECTIO_AUTHORIZER_TOKEN"}
+
+	check := func(t *testing.T, objects []object) {
+		t.Helper()
+		worker := containers(find(t, objects, "Deployment", workerName))[0]
+		api := containers(find(t, objects, "Deployment", apiName))[0]
+		for variable, want := range map[string]string{
+			"LECTIO_MODEL_KEY": modelSecret, "LECTIO_KEYS_URL": keysSecret, "LECTIO_KEYS_TOKEN": keysSecret,
+		} {
+			if secret, optional := secretOf(worker, variable); secret != want || !optional {
+				t.Errorf("the workers read %s from the Secret %q (optional: %t), want %s, which a Pod starts without", variable, secret, optional, want)
+			}
+		}
+		for _, variable := range apiAlone {
+			if secret, optional := secretOf(api, variable); secret != authorizerSecret || !optional {
+				t.Errorf("the API reads %s from the Secret %q (optional: %t), want %s, which a Pod starts without", variable, secret, optional, authorizerSecret)
+			}
+			if _, set := env(worker)[variable]; set {
+				t.Errorf("the workers are given %s; a worker asks no authorizer", variable)
+			}
+		}
+		for _, variable := range workersAlone {
+			if _, set := env(api)[variable]; set {
+				t.Errorf("the API is given %s; it reads no page, and holds nothing that obtains a tenant's key", variable)
+			}
+		}
+		// Both roles read the ConfigMap whole, so what it holds reaches the
+		// API: the key source belongs there, and the endpoint does not.
+		for _, o := range objects {
+			if kindOf(o) != "ConfigMap" {
+				continue
+			}
+			values, _ := o["data"].(map[string]any)
+			for _, variable := range append(workersAlone, apiAlone...) {
+				if _, set := values[variable]; set {
+					t.Errorf("the ConfigMap %s holds %s, which reaches both roles", nameOf(o), variable)
+				}
+			}
+			if source, set := values["LECTIO_KEYS"]; set && source != config.KeysStatic && source != config.KeysEndpoint {
+				t.Errorf("the ConfigMap %s sets LECTIO_KEYS to %q, which is no key source", nameOf(o), source)
+			}
+		}
+	}
+	t.Run("as written", func(t *testing.T) {
+		objects := manifests(t)
+		check(t, objects)
+
+		// Every key a Deployment reads of a Secret is one the template
+		// declares, so an operator who fills the template has filled what
+		// the Pods read.
+		declared := map[string]bool{}
+		for _, o := range objects {
+			if kindOf(o) != "Secret" {
+				continue
+			}
+			values, _ := o["stringData"].(map[string]any)
+			for key := range values {
+				declared[nameOf(o)+"/"+key] = true
+			}
+		}
+		read := 0
+		for _, d := range workloads(objects) {
+			for name, e := range env(containers(d)[0]) {
+				ref := dig(e, "valueFrom", "secretKeyRef")
+				if ref == nil {
+					continue
+				}
+				read++
+				if key := str(dig(ref, "name")) + "/" + str(dig(ref, "key")); !declared[key] {
+					t.Errorf("%s reads %s from %s, which the template of deploy/bootstrap does not declare", nameOf(d), name, key)
+				}
+			}
+		}
+		if read < 10 {
+			t.Fatalf("the Deployments read %d keys of Secrets, too few to be the tree", read)
+		}
+		if !declared[keysSecret+"/LECTIO_KEYS_URL"] || !declared[keysSecret+"/LECTIO_KEYS_TOKEN"] {
+			t.Errorf("the template does not declare both keys of %s", keysSecret)
+		}
+
+		// A worker given the template's key endpoint and the endpoint as its
+		// source starts, the API starts with the source alone, and a worker
+		// given the example's ConfigMap as it is starts with one key for
+		// every group.
+		keys, _ := find(t, objects, "Secret", keysSecret)["stringData"].(map[string]any)
+		settings, _ := find(t, objects, "ConfigMap", apiName)["data"].(map[string]any)
+		getenv := func(role, source string, secret map[string]any) func(string) string {
+			return func(name string) string {
+				switch {
+				case name == "LECTIO_ROLE":
+					return role
+				case name == "LECTIO_KEYS" && source != "":
+					return source
+				case secret[name] != nil:
+					return str(secret[name])
+				}
+				return str(settings[name])
+			}
+		}
+		if s, err := config.FromEnv(getenv(config.RoleWorker, config.KeysEndpoint, keys)); err != nil || s.KeysURL == "" || s.KeysToken.IsZero() {
+			t.Errorf("a worker with the template's key endpoint does not start: %v", err)
+		}
+		if s, err := config.FromEnv(getenv(config.RoleAPI, config.KeysEndpoint, nil)); err != nil || s.KeysURL != "" || !s.KeysToken.IsZero() {
+			t.Errorf("the API with the endpoint as its key source and no Secret does not start: %v", err)
+		}
+		if s, err := config.FromEnv(getenv(config.RoleWorker, "", nil)); err != nil || s.Keys != config.KeysStatic {
+			t.Errorf("a worker with the example's ConfigMap reads its keys from %q: %v", s.Keys, err)
+		}
+	})
+	for _, dir := range kustomizations {
+		t.Run(dir, func(t *testing.T) { check(t, render(t, dir)) })
+	}
+}
+
 // address matches a URL's scheme and authority anywhere in a text.
 var address = regexp.MustCompile("[a-z][a-z0-9+.-]*://([^/\\s\"'<>)}`,]*)")
 

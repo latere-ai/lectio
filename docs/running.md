@@ -80,6 +80,52 @@ file of Reader and Policy documents, mount it into the `lectiod`
 service, and set `LECTIO_CONFIG` to its path and `LECTIO_MODEL_KEY` to
 the key the endpoint takes.
 
+## Whose key reads a page
+
+The key a model endpoint is called with decides who it charges. With
+`LECTIO_KEYS=static`, the default, every page is read with the key of
+`LECTIO_MODEL_KEY`, and whoever runs the server pays for every caller.
+
+With `LECTIO_KEYS=endpoint` a page is read with a key of its group's
+own, which a service of yours issues: a gateway then attributes each
+tenant's spend to that tenant and bounds it by the tenant's budget. Set
+`LECTIO_KEYS_URL` to the service and `LECTIO_KEYS_TOKEN` to the bearer
+it requires, and set no `LECTIO_MODEL_KEY`. The durable server takes
+this source; the development server does not.
+
+| Process | `LECTIO_KEYS` | `LECTIO_KEYS_URL`, `LECTIO_KEYS_TOKEN` |
+|---|---|---|
+| role `worker`, role `all` | read | read, and both required with `endpoint` |
+| role `api` | read | not read, and not required |
+
+A process that runs tasks does not start with `endpoint` and no address
+or no bearer, with `endpoint` and a `LECTIO_MODEL_KEY`, or with an
+address or a bearer while the source is `static`. The API never holds
+the bearer: it faces callers, and the bearer obtains every tenant's key.
+
+A worker asks for a group's key when it first reads a page of the
+group:
+
+```
+POST <LECTIO_KEYS_URL>
+Authorization: Bearer <LECTIO_KEYS_TOKEN>
+Content-Type: application/json
+
+{"group": "...", "owner": "...", "parse": "..."}
+```
+
+| The service answers | The group's pages |
+|---|---|
+| `200` with `{"key": "...", "expires_at": "<RFC 3339>"}` | are read with the key. A worker holds it in memory, never writes it down, and asks again 1 minute before it expires, so a key has to be good for more than 1 minute when it is issued |
+| `402` | fail with `budget_exhausted`: the group has no budget |
+| `403` | fail with `reader_unavailable`: the group is issued no key |
+| anything else, or nothing | wait in the queue. No page fails and none spends an attempt. The worker asks again after 1 second, then after twice as long each time, up to 30 seconds |
+
+One request per group is in flight at a time, and a refusal is asked
+again after 5 seconds. A worker whose key service is down stays ready.
+With a key per group, a rate limit of the model endpoint pauses the
+calls of the group whose key was limited and no other group's.
+
 ## Signing in and deciding
 
 What `lectiod` needs set to serve callers, in each of its 3 setups:

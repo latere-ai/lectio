@@ -254,7 +254,10 @@ Lectio is that system, and nothing else: it does not serve models,
 store files beyond the parse, or hold accounts. Identity comes from any
 OpenID Connect issuer. Permission and limits come from an endpoint the
 operator writes. Models are reached through any OpenAI-compatible
-endpoint, a gateway included.
+endpoint, a gateway included, with one key for every tenant or with a
+key of each tenant's own that an endpoint of the operator issues, so
+the gateway meters and bounds each tenant
+([docs/running.md](docs/running.md#whose-key-reads-a-page)).
 
 ## Shape
 
@@ -268,6 +271,7 @@ flowchart LR
   w --> obj
   api -. "verify" .-> issuer["OIDC issuer"]
   api -. "ask, receive limits" .-> authz["authorizer"]
+  w -. "ask a tenant's key, optional" .-> keys["key endpoint"]
 ```
 
 ## License

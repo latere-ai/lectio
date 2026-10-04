@@ -57,6 +57,7 @@ internal/fetch/           a source URL fetched with the address check
 internal/httpapi/         the routes, held to the contract by its tests
 internal/id/              prefixed, time-ordered identifiers
 internal/intake/          detect, unwrap, pages, tiffx
+internal/keys/            the key a page is read with: one from configuration, or one an operator's endpoint issues per group
 internal/native/          formats read with no model
 internal/objects/         the shapes a parse writes to the object store
 internal/parse/           the steps of a parse: Prepare and ReadPage
@@ -151,9 +152,10 @@ whether the binary reads the variable today.
 | `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | yes |
 | `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | yes: under the owner policy |
 | `LECTIO_CONFIG` | none: the stub reader | [[008-readers]] | yes |
-| `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes |
-| `LECTIO_KEYS` | `static` | [[013-limits-and-usage]] | yes: `static` is the one value taken |
-| `LECTIO_KEYS_URL` | none | [[013-limits-and-usage]] | no |
+| `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes: with `LECTIO_KEYS=static` |
+| `LECTIO_KEYS` | `static`: `static` or `endpoint` | [[013-limits-and-usage]] | yes: by every role; a development server takes `static` alone |
+| `LECTIO_KEYS_URL` | none | [[013-limits-and-usage]] | yes: by a process that runs tasks, with `LECTIO_KEYS=endpoint`; the API does not read it |
+| `LECTIO_KEYS_TOKEN` | none | [[013-limits-and-usage]] | yes: as `LECTIO_KEYS_URL` |
 | `LECTIO_WORKERS` | 8 task slots per process | [[004-durable-tasks]] | yes |
 | `LECTIO_TASK_ATTEMPTS` | 5 | [[004-durable-tasks]] | yes |
 | `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: open requests and running tasks |
@@ -215,6 +217,22 @@ and takes no static token, so the verifier and an authorizer can be
 tried over the memory store. The durable server takes no static token
 at all: `LECTIO_DEV_TOKEN` is read by a development server alone.
 
+`LECTIO_KEYS` names where the key a page is read with comes from
+([[013-limits-and-usage]]). `static` is the key of `LECTIO_MODEL_KEY`
+for every group. `endpoint` asks `LECTIO_KEYS_URL`, an absolute `http`
+or `https` URL, with the bearer `LECTIO_KEYS_TOKEN`, for a key of each
+group's own. The 3 variables are not every role's:
+
+| Variable | Roles `worker` and `all` | Role `api` |
+|---|---|---|
+| `LECTIO_KEYS` | read | read: it decides the key scope the task store is opened with |
+| `LECTIO_KEYS_URL`, `LECTIO_KEYS_TOKEN` | read; both required with `endpoint`, and refused with `static` | not read, not required |
+| `LECTIO_MODEL_KEY` | read; refused with `endpoint` | read and not used |
+
+The bearer obtains every tenant's key, so the role that faces callers
+never holds it. A process that runs tasks logs the source in force at
+start and asks the endpoint nothing until a group's first page is read.
+
 At start the server logs the mode in force, reads each issuer's keys
 and sends the authorizer the probe. An issuer or an authorizer that does
 not answer is named in the log and the server starts: a token of that
@@ -251,7 +269,9 @@ before the schema is applied, it waits for it. `all` does both in one
 process. Every role serves `/livez`, `/readyz` and `/version` on
 `LECTIO_INTERNAL_ADDR`: ready means the database answers and, for a
 worker, the task store answered an exchange of it within a third of
-its lease.
+its lease. Neither a reader's endpoint nor the key endpoint is part of
+readiness: a worker whose key endpoint is down is ready, and the pages
+that need a key wait in the queue ([[013-limits-and-usage]]).
 
 `LECTIO_S3_PATH_STYLE=true` addresses the bucket as the first segment
 of the path and not as a label of the host, which a server reached by
@@ -382,7 +402,12 @@ disruption budget, and nothing an installation chooses. The settings
 and the Reader and Policy documents are 2 ConfigMaps an overlay
 carries, and the credentials are Secrets an operator applies by hand;
 the base reads each by name, and `deploy/README.md` lists the names and
-the keys. Every host, bucket and namespace is the overlay's.
+the keys. A role is given the credentials of what it dials and no
+others: the model key and the key endpoint's address and bearer are the
+workers', from the optional Secrets `lectiod-model` and `lectiod-keys`,
+and the authorizer's are the API's. `LECTIO_KEYS` is a key of the
+ConfigMap, since both roles read it. Every host, bucket and namespace is
+the overlay's.
 `deploy/components/converter` is the conversion sidecar, which an
 overlay adds: Pods of its own, since containers of one Pod share a
 network, under a policy that admits the workers' calls and has no
@@ -484,8 +509,10 @@ Built:
   against what a stop takes; a policy with both directions around every
   Pod, and no egress rule and no credential for the sidecar; every
   variable set under `deploy/` against the configuration table; no
-  credential and no address but an example's in a shipped file; and the
-  example Reader and Policy against the loader. The tests that render
+  credential and no address but an example's in a shipped file; each
+  role's credentials, with the key endpoint's pair read by the workers
+  alone and the template's values for it read by the settings a worker
+  starts with; and the example Reader and Policy against the loader. The tests that render
   the base and the examples need `kubectl`, skip in the gate, and run
   in the `deploy` job, which fails on a skip. The `image` job builds
   the server's image and holds it under 60 MiB, with no shell, starting
