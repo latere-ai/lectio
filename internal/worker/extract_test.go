@@ -384,6 +384,21 @@ func TestASchemaIsSentForEnforcementOnlyWhenADecoderTakesIt(t *testing.T) {
 	}
 }
 
+// TestCitationsNobodyAskedForAreNotKept: a request that asks for no
+// citations tells the extractor so, and what the model cites all the same
+// is not in the result.
+func TestCitationsNobodyAskedForAreNotKept(t *testing.T) {
+	ext := &asking{}
+	b := extracting(t, ext)
+	index := b.assembled("prs_a", leaf(1, "Invoice INV-0042"))
+	c := extraction("prs_a", "invoice", 1, index, invoiceSchema, "")
+	c.Context.Request = strings.Replace(c.Context.Request, `"citations":true`, `"citations":false`, 1)
+	s := b.w.run(context.Background(), c)
+	if got := b.field(s.Output); s.Outcome != tasks.Done || got.Citations != nil || string(got.Data) != `{"number":"INV-0042"}` || ext.asked[0].Citations {
+		t.Fatalf("settled %+v with the citations %v, asked for citations: %t", s, got.Citations, ext.asked[0].Citations)
+	}
+}
+
 // TestAnExtractorsErrorDecidesWhatTheExtractionDoesNext: the class of the
 // extractor's error decides the settle, as a reader's does for a page, and
 // what the call spent is recorded whatever it returned.

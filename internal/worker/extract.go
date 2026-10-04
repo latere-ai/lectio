@@ -86,6 +86,11 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	}
 	s.Usage = tasks.Usage{Calls: 1, InputTokens: res.Usage.InputTokens, OutputTokens: res.Usage.OutputTokens}
 	s.Units, s.Health = w.cost(c.Reader), tasks.Healthy
+	if !asked.Citations {
+		// What the caller did not ask for is not kept, whatever the model
+		// returned.
+		res.Citations = nil
+	}
 	step, result, findings := extract.Take(schema, in, &progress, res)
 	w.conclude(ctx, c, s, name, in, progress, step, result, findings)
 }
