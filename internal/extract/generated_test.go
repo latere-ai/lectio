@@ -270,13 +270,12 @@ func TestCountedWorkBoundsTheValidatorsTime(t *testing.T) {
 
 		// The same family, sized past the bound, when that is an object a
 		// test can afford to build.
-		schema, larger := f.build(1)
 		if size := len(data) * (MaxCheckWork/max(work, 1) + 2); size > (2<<20)/slowdown {
 			continue
 		}
 		n := 2
 		for range 24 {
-			if _, larger, work = counted(t, f, n); work > MaxCheckWork {
+			if _, _, work = counted(t, f, n); work > MaxCheckWork {
 				break
 			}
 			n = max(n+1, min(2*n, n*(MaxCheckWork/max(work, 1)+1)))
@@ -285,11 +284,10 @@ func TestCountedWorkBoundsTheValidatorsTime(t *testing.T) {
 			t.Errorf("%s: no object of up to %d counts past the bound", f.name, n)
 			continue
 		}
-		schema, _ = f.build(n)
-		began = time.Now()
-		refused, findings, took := held(schema, larger)
+		schema, larger := f.build(n)
+		findings, took, refused := held(schema, larger)
 		if refused != nil || !unchecked(findings) || took > 400*time.Millisecond*slowdown {
-			t.Errorf("%s: an object of %d bytes past the bound: refused %v, %d findings, after %s", f.name, len(larger), refused, len(findings), time.Since(began))
+			t.Errorf("%s: an object of %d bytes past the bound: refused %v, %d findings, after %s", f.name, len(larger), refused, len(findings), took)
 		}
 	}
 }
@@ -482,8 +480,8 @@ func TestCalibration(t *testing.T) {
 		best := time.Duration(1 << 62)
 		for range 3 {
 			began := time.Now()
-			err := s.compiled.Validate(value)
-			_ = err
+			// The verdict is no matter here: the time is.
+			_ = s.compiled.Validate(value)
 			best = min(best, time.Since(began))
 		}
 		rows = append(rows, row{f.name, work, best, len(data)})

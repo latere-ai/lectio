@@ -17,14 +17,14 @@ import (
 // held holds a schema and an object together as a request and its reply
 // would be, and answers what came of it and how long it took: the schema
 // refused, the object not checked, or the findings of a check.
-func held(schema, data string) (refused error, findings []Finding, took time.Duration) {
+func held(schema, data string) (findings []Finding, took time.Duration, refused error) {
 	began := time.Now()
 	s, err := Compile([]byte(schema))
 	if err != nil {
-		return err, nil, time.Since(began)
+		return nil, time.Since(began), err
 	}
 	findings = s.Check([]byte(data), false)
-	return nil, findings, time.Since(began)
+	return findings, time.Since(began), nil
 }
 
 // TestAKeywordTheCountDoesNotModelIsRefused: the keywords of earlier drafts
@@ -56,7 +56,7 @@ func TestAKeywordTheCountDoesNotModelIsRefused(t *testing.T) {
 		"a keyword nobody knows":    {`{"type":"object","properties":{"a":{"type":"string","x-order":3}}}`, "x-order"},
 		"a keyword in a definition": {`{"type":"object","$defs":{"a":{"nullable":true}}}`, "nullable"},
 	} {
-		refused, _, took := held(tc.schema, `{"a":1,"b":1}`)
+		_, took, refused := held(tc.schema, `{"a":1,"b":1}`)
 		if fault.CodeOf(refused) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(refused), `"`+tc.keyword+`"`) {
 			t.Errorf("%s: %v after %s, want invalid_schema naming %q", name, refused, took, tc.keyword)
 		}
@@ -81,7 +81,7 @@ func TestANumberCostsNoMoreThanAMachineNumber(t *testing.T) {
 		"an exponent of -400": "1e-400",
 		"a long exponent":     "1e-99999999999999999999",
 	} {
-		refused, findings, took := held(schema, `{"n":`+number+`}`)
+		findings, took, refused := held(schema, `{"n":`+number+`}`)
 		if refused != nil || len(findings) != 1 || findings[0].Pointer != "/n" || findings[0].Unchecked || took > time.Second {
 			t.Errorf("%s: refused %v, findings %+v, after %s", name, refused, findings, took)
 		}
@@ -92,17 +92,17 @@ func TestANumberCostsNoMoreThanAMachineNumber(t *testing.T) {
 		"a large number":  `{"n":1e300}`,
 		"a small integer": `{"n":0}`,
 	} {
-		if refused, findings, took := held(schema, data); refused != nil || findings != nil || took > time.Second {
+		if findings, took, refused := held(schema, data); refused != nil || findings != nil || took > time.Second {
 			t.Errorf("%s: refused %v, findings %+v, after %s", name, refused, findings, took)
 		}
 	}
 	// A multiple is held as a decimal is written, not as its nearest
 	// machine number: 0.3 is 3 times 0.1.
 	cents := `{"type":"object","properties":{"n":{"type":"number","multipleOf":0.1}}}`
-	if refused, findings, _ := held(cents, `{"n":0.3}`); refused != nil || findings != nil {
+	if findings, _, refused := held(cents, `{"n":0.3}`); refused != nil || findings != nil {
 		t.Errorf("0.3 as a multiple of 0.1: %v, %+v", refused, findings)
 	}
-	if refused, findings, _ := held(cents, `{"n":0.35}`); refused != nil || len(findings) != 1 {
+	if findings, _, refused := held(cents, `{"n":0.35}`); refused != nil || len(findings) != 1 {
 		t.Errorf("0.35 as a multiple of 0.1: %v, %+v", refused, findings)
 	}
 
@@ -113,7 +113,7 @@ func TestANumberCostsNoMoreThanAMachineNumber(t *testing.T) {
 		"an example, too long":       `{"type":"object","examples":[` + strings.Repeat("9", 4000) + `]}`,
 		"a count that is no integer": `{"type":"object","properties":{"n":{"type":"string","maxLength":1e999}}}`,
 	} {
-		refused, _, took := held(schema, `{}`)
+		_, took, refused := held(schema, `{}`)
 		if fault.CodeOf(refused) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(refused), "number") || took > time.Second {
 			t.Errorf("%s: %v after %s", name, refused, took)
 		}
@@ -135,13 +135,13 @@ func TestAListOfValuesIsPricedByWhatAComparisonCosts(t *testing.T) {
 		values[i] = fmt.Sprint(2*i + 1)
 	}
 	schema := `{"type":"object","properties":{"l":{"type":"array","items":{"enum":[` + strings.Join(listed, ",") + `]}}}}`
-	refused, findings, took := held(schema, `{"l":[`+strings.Join(values, ",")+`]}`)
+	findings, took, refused := held(schema, `{"l":[`+strings.Join(values, ",")+`]}`)
 	if refused != nil || !unchecked(findings) || took > time.Second {
 		t.Fatalf("2,000 values listed and 6,000 numbers: refused %v, %d findings, after %s", refused, len(findings), took)
 	}
 	// 60 numbers held to the same list are checked, and each one that is
 	// not listed is a finding.
-	refused, findings, took = held(schema, `{"l":[`+strings.Join(values[:60], ",")+`,4]}`)
+	findings, took, refused = held(schema, `{"l":[`+strings.Join(values[:60], ",")+`,4]}`)
 	if refused != nil || len(findings) != 60 || took > time.Second {
 		t.Fatalf("60 numbers: refused %v, %d findings, after %s", refused, len(findings), took)
 	}
