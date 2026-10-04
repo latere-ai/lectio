@@ -5,6 +5,7 @@ package postgres_test
 
 import (
 	"context"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,12 +21,28 @@ import (
 // of simulation_test.go; a row that names a store test or a concurrency test
 // runs through the store in every mode.
 
+// simulationSize names the variable that runs the simulations at the size
+// the spec states: LECTIO_SIMULATION=full. Without it each runs at a size
+// that proves the same property in a tenth of the dispatches, since none of
+// the properties depends on the count: a late arrival is held to its share
+// after 10,000 dispatches as it is after 100,000.
+const simulationSize = "LECTIO_SIMULATION"
+
+// sized is a count of a simulation: whole when the simulations run at the
+// spec's size, and small on every other run.
+func sized(small, whole int) int {
+	if os.Getenv(simulationSize) == "full" {
+		return whole
+	}
+	return small
+}
+
 // backlog is more pages than any case dispatches from one parse, so a group
 // or a project that holds one always has a task that can run.
 //
 // The simulation cases run beside each other: each has a database of its own
-// and a clock of its own, and the longest of them makes 100,000 dispatches.
-const backlog = 20000
+// and a clock of its own.
+var backlog = sized(5000, 20000)
 
 // TestShareFollowsWeight: 3 groups with weights 1, 2 and 4, all backlogged.
 // After 700 dispatches each has been served within one task of 100, 200 and
@@ -57,10 +74,11 @@ func TestALateGroupStartsAtTheClock(t *testing.T) {
 	for _, group := range []string{"a", "b", "c"} {
 		s.queue(postgres.Submission{Group: group}, 1, backlog)
 	}
-	// 3 prepare tasks and 10,000 pages of each.
-	before := served(s.run(30003), byGroup)
+	// 3 prepare tasks and as many pages of each: 10,000 at the spec's size.
+	each := sized(1001, 10001)
+	before := served(s.run(3*each), byGroup)
 	for _, group := range []string{"a", "b", "c"} {
-		within(t, "before the late groups, group "+group, before[group], 10001, 1)
+		within(t, "before the late groups, group "+group, before[group], each, 1)
 	}
 
 	// A group whose id sorts after the others joins.
@@ -90,13 +108,16 @@ func TestALateGroupStartsAtTheClock(t *testing.T) {
 // TestBatchWorkAfterInteractiveOnly: batch work that arrives after 100,000
 // interactive-only dispatches receives at most one dispatch in a row, and
 // then between 19% and 21% of dispatches. With no interactive work, batch
-// receives all.
+// receives all. The 100,000 are made at the spec's size, and 10,000 on every
+// other run: what batch work is held to does not grow with how long it was
+// away.
 func TestBatchWorkAfterInteractiveOnly(t *testing.T) {
 	t.Parallel()
 	h := direct(t, defaults())
 	s := h.simulate()
-	s.queue(postgres.Submission{Group: "a", Class: tasks.Interactive}, 1, 104000)
-	if got := served(s.run(100000), byClass); got["interactive"] != 100000 {
+	alone := sized(10000, 100000)
+	s.queue(postgres.Submission{Group: "a", Class: tasks.Interactive}, 1, alone+4000)
+	if got := served(s.run(alone), byClass); got["interactive"] != alone {
 		t.Fatalf("with interactive work alone the dispatches were %v", got)
 	}
 
@@ -144,8 +165,9 @@ func TestAPausedGroupReturnsWithItsShare(t *testing.T) {
 		stub, h.now.Add(time.Hour), h.now)
 
 	// Its prepare calls no reader and runs; its pages wait.
-	during := served(s.run(10003), byGroup)
-	if during["paused"] != 1 || during["a"] != 5001 || during["b"] != 5001 {
+	each := sized(1001, 5001)
+	during := served(s.run(2*each+1), byGroup)
+	if during["paused"] != 1 || during["a"] != each || during["b"] != each {
 		t.Fatalf("while the group's reader was paused the dispatches were %v", during)
 	}
 
@@ -215,7 +237,8 @@ func TestPriorityAndVolumeMoveNoOtherGroup(t *testing.T) {
 	base := run(t, postgres.Submission{}, 5000)
 	for name, got := range map[string]map[string]int{
 		"raising its priorities": run(t, postgres.Submission{Priority: 100, MaxPriority: 100}, 5000),
-		"queuing 100,000 tasks":  run(t, postgres.Submission{}, 50000),
+		// 2 parses: 100,000 tasks at the spec's size.
+		"queuing many more tasks": run(t, postgres.Submission{}, sized(10000, 50000)),
 	} {
 		if got["a"] != base["a"] || got["b"] != base["b"] || got["c"] != base["c"] {
 			t.Errorf("%s changed the dispatch counts from %v to %v", name, base, got)
@@ -346,7 +369,8 @@ func TestALateProjectStartsAtItsGroupsClock(t *testing.T) {
 	s := h.simulate()
 	s.queue(postgres.Submission{Group: "a", Project: "m"}, 1, backlog)
 	s.queue(postgres.Submission{Group: "a", Project: "n"}, 1, backlog)
-	if got := served(s.run(10002), byProject); got["m"] != 5001 || got["n"] != 5001 {
+	each := sized(1001, 5001)
+	if got := served(s.run(2*each), byProject); got["m"] != each || got["n"] != each {
 		t.Fatalf("before the late projects the dispatches were %v", got)
 	}
 	// A project whose id sorts after the others joins.
@@ -390,7 +414,8 @@ func TestAProjectMovesNoOtherGroup(t *testing.T) {
 	for name, got := range map[string]map[string]int{
 		"raising its weight to 1000": run(postgres.Submission{ProjectWeight: 1000}, 5000),
 		"raising its priorities":     run(postgres.Submission{Priority: 100, MaxPriority: 100}, 5000),
-		"queuing 100,000 tasks":      run(postgres.Submission{}, 50000),
+		// 2 parses: 100,000 tasks at the spec's size.
+		"queuing many more tasks": run(postgres.Submission{}, sized(10000, 50000)),
 	} {
 		if got["other"] != base["other"] || got["a"] != base["a"] {
 			t.Errorf("a project %s changed the groups' counts from %v to %v", name, base, got)

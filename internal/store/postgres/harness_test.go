@@ -41,12 +41,18 @@ var modes = []mode{
 	}},
 }
 
-// everywhere runs a case once per mode, each on a database of its own.
+// everywhere runs a case once per mode, each on a database of its own. The
+// modes run beside each other, and so do the cases: none holds anything
+// another shares. A test calls it once.
 func everywhere(t *testing.T, settings tasks.Settings, run func(t *testing.T, h *harness)) {
 	t.Helper()
 	srv := server(t)
+	t.Parallel()
 	for _, m := range modes {
-		t.Run(m.name, func(t *testing.T) { run(t, open(t, srv, m, settings)) })
+		t.Run(m.name, func(t *testing.T) {
+			t.Parallel()
+			run(t, open(t, srv, m, settings))
+		})
 	}
 }
 

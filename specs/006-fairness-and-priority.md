@@ -350,6 +350,14 @@ Built:
   one worker that takes one task at a time through the real
   `lectio_exchange` over a real queue, on the clock the case passes.
   The loop runs in the database, a few hundred steps per statement.
+  The rows that state a count in the thousands run at a tenth to a
+  fifth of it on every run, and at the stated count with
+  `LECTIO_SIMULATION=full`: the 10,000 pages others were served before
+  a late or a paused group or project returns are 1,000, the 100,000
+  interactive-only dispatches are 10,000, and the 100,000 tasks a group
+  or a project queues are 20,000. No property depends on the count, and
+  at the stated counts the simulation alone takes longer than a test
+  package may on a hosted runner.
 
 Proven: every row of the table below that names the dispatch
 simulation, a store test or a concurrency test over Postgres, the 5
@@ -381,10 +389,10 @@ its group's empty project.
 |---|---|
 | Three groups with weights 1, 2 and 4, all backlogged: after 700 dispatches each has been served within one task of 100, 200 and 400 units | the dispatch simulation |
 | A group that joins after three others were served 10,000 pages is served at most one task before another group is served, is at no point more than 2 tasks ahead of its share when its id wins every tie, and over the next 3,000 dispatches four equal groups receive 750 each within one task | the dispatch simulation |
-| Batch work that arrives after 100,000 interactive-only dispatches receives at most one dispatch in a row, and then between 19% and 21% of dispatches; with no interactive work, batch receives all | the dispatch simulation |
+| Batch work that arrives after 100,000 interactive-only dispatches receives at most one dispatch in a row, and then between 19% and 21% of dispatches; with no interactive work, batch receives all | the dispatch simulation, at 10,000 dispatches on every run and at the 100,000 with `LECTIO_SIMULATION=full` |
 | A group whose reader was paused while two others were served 10,000 pages receives its weight's share from the first dispatch after the pause and no more | the dispatch simulation with a stub pool |
 | A group that queues 10,000 `prepare` tasks, or 10,000 extractions, receives its weight's share of dispatches and changes no other group's share | the dispatch simulation, run with and without the group |
-| A group raising its own priorities, or queuing 100,000 tasks, changes no other group's dispatch count | the dispatch simulation, run with and without the change |
+| A group raising its own priorities, or queuing 100,000 tasks, changes no other group's dispatch count | the dispatch simulation, run with and without the change; 20,000 tasks on every run and the 100,000 with `LECTIO_SIMULATION=full` |
 | A page read by a reader of `cost` 5 advances its group's virtual time five times as far as one of `cost` 1; a blank page under that reader is corrected to 1; a page that escalated is corrected to the sum of both readers' costs | a store test |
 | A group whose 3,000 pages are all blank receives its weight's share of dispatches against a group whose pages are read, and no more | the dispatch simulation |
 | A group at `max_running` is skipped and others proceed; it resumes when a task of its settles | a store test |
@@ -393,6 +401,6 @@ its group's empty project.
 | Two groups of equal weight, all backlogged, one of them with three projects: each group receives half of the dispatches within one task, and the count is the same when that group's work is queued in one project | the dispatch simulation, run both ways |
 | A project with nothing to run: its group's dispatches go to the group's other projects in the ratio of their weights, and no other group's dispatch count changes | the dispatch simulation, run with and without the project's work |
 | A project that joins after its group's other projects were served 10,000 pages is served at most one task before another project of the group is served, is at no point more than 2 tasks ahead of its share when its id wins every tie, and receives its weight's share of the group's dispatches from then on | the dispatch simulation |
-| A project raising its weight from 1 to 1000, raising its priorities, or queuing 100,000 tasks changes no other group's dispatch count | the dispatch simulation, run with and without the change |
+| A project raising its weight from 1 to 1000, raising its priorities, or queuing 100,000 tasks changes no other group's dispatch count | the dispatch simulation, run with and without the change; 20,000 tasks on every run and the 100,000 with `LECTIO_SIMULATION=full` |
 | `queued` and `running`, of every group and every project, equal a recount from `tasks` after a soak run with kills | a consistency check in the soak test of [[004-durable-tasks]] |
 | 50 concurrent submits of one group at `max_queued` minus 10 admit exactly 10 | a concurrency test over Postgres |

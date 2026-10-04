@@ -701,7 +701,8 @@ func TestTheStoreKeepsNothingOnItsConnection(t *testing.T) {
 		if err := h.store.Decode(ctx, &prepared, `SELECT count(*)::text FROM pg_prepared_statements`); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.store.Decode(ctx, &locks, `SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory'`); err != nil {
+		if err := h.store.Decode(ctx, &locks, `SELECT count(*)::text FROM pg_locks WHERE locktype = 'advisory'
+			   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`); err != nil {
 			t.Fatal(err)
 		}
 		if prepared != 0 || locks != 0 {
