@@ -18,7 +18,9 @@ refused before it is pushed.
   show what it holds before it is filled. A `uniqueItems` check of a
   long list that holds lists or objects is priced as if every item met
   every other, so a reply built for its items to hash alike is not
-  checked. A value the document does not state is
+  checked, and an honest list of more than about 500 objects held to
+  `uniqueItems` costs too much to check and fails its field. A value
+  the document does not state is
   left out and never made up. An object that does not satisfy the
   schema is sent back to the model with what was wrong, up to 2 times,
   and the extraction then fails with `schema_not_satisfied`; its parse
