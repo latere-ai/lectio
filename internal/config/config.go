@@ -52,8 +52,17 @@ type Settings struct {
 	DatabasePoolURL string // LECTIO_DATABASE_POOL_URL
 	ConfigPath      string // LECTIO_CONFIG
 
-	// ModelKey is the key every reader is called with.
+	// ModelKey is the key every reader is called with under the static key
+	// source.
 	ModelKey reader.Credential // LECTIO_MODEL_KEY
+
+	// Keys is the key source: KeysStatic reads every group's pages with
+	// ModelKey, and KeysEndpoint asks KeysURL, with the bearer KeysToken,
+	// for a key of the group's own (specs/013-limits-and-usage.md). The
+	// address and the bearer are set only in a process that runs tasks.
+	Keys      string            // LECTIO_KEYS
+	KeysURL   string            // LECTIO_KEYS_URL
+	KeysToken reader.Credential // LECTIO_KEYS_TOKEN
 
 	MaxFileBytes int64         // LECTIO_MAX_FILE_BYTES
 	MaxPages     int           // LECTIO_MAX_PAGES
@@ -238,10 +247,7 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	duration("LECTIO_WORKER_POLL", &s.Poll)
 	duration("LECTIO_POOL_RECOVERY", &s.PoolRecovery)
 	duration("LECTIO_POOL_RESUME", &s.PoolResume)
-	// One key source is built: the key of LECTIO_MODEL_KEY for every group.
-	if keys := strings.TrimSpace(getenv("LECTIO_KEYS")); keys != "" && keys != "static" {
-		errs = append(errs, errors.New("LECTIO_KEYS is not static, the one key source this build has"))
-	}
+	errs = append(errs, s.readKeys(getenv)...)
 	for host := range strings.SplitSeq(getenv("LECTIO_FETCH_ALLOW"), ",") {
 		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
 			s.FetchAllow = append(s.FetchAllow, host)
@@ -324,7 +330,9 @@ func (s Settings) Queue(r Readers) tasks.Settings {
 	return tasks.Settings{
 		Lease: s.Lease, SweepInterval: s.SweepInterval, Attempts: s.Attempts, Expiries: s.Expiries,
 		PoolRecovery: s.PoolRecovery, PoolResume: s.PoolResume,
-		Pools: r.Pools, ReadChain: r.Chain,
+		// A key per group makes the group the scope a rate limit pauses.
+		KeysPerGroup: s.Keys == KeysEndpoint,
+		Pools:        r.Pools, ReadChain: r.Chain,
 	}
 }
 
