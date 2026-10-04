@@ -6,6 +6,63 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: `POST /parses/{parse}/retry`, in the durable server. It reads
+  again the pages of a parse that failed and no other: the answer is
+  `202` with the parse `running` again, the pages that were read stay
+  readable, and the parse is assembled again when the retried pages
+  have settled. It is for a parse whose pages all settled and of which
+  at least 1 failed. A parse that has not ended is `409 not_terminal`;
+  one with no failed page, and one that was canceled, ran out of time
+  or could not be prepared, is `409 conflict`. The parse stays in its
+  group: a group at `max_queued` is `429 queue_full`, and one whose day
+  does not hold the failed pages is `402 budget_exhausted`. The parse
+  has as long from the retry as its submit gave it. A parse that ended
+  with a failed page before this version cannot be retried and is
+  `409 conflict`: submit its file again.
+- Added: `GET /parses/{parse}/events`, in the durable server: server-sent
+  events of a parse until it ends. `page` is sent once for each page
+  that is read or fails, and `progress` and `state` as they change.
+  Each event has an id that only grows, and `Last-Event-ID` resumes
+  after it with nothing sent twice, at any replica and after a restart
+  of the API: the events are read from stored rows. The server polls a
+  parse once a second, sends a comment line after 15 seconds of
+  silence, and ends a stream it has held for 5 minutes, so a client
+  connects again with the last id it saw.
+- Added: `GET /usage`, in the durable server: the pages read, the model
+  calls made for them and their input and output tokens, summed by
+  `group`, `owner` or `reader` over hours or days in UTC. The meters
+  are written as pages settle, a failed call counted as the call it
+  was, and start empty at this version. A caller reads its own usage,
+  a subject of `LECTIO_ADMIN_SUBJECTS` everyone's, and an authorizer is
+  asked `usage.read` with the `owner` and the `group` the request
+  names.
+- Added: `GET /queue`, in the durable server: each group with its
+  weight, its bounds, its parses that have not ended and its queued and
+  running tasks per class, the same for each of its projects, and each
+  reader's pool with its calls in flight, its breaker and the keys a
+  rate limit paused. A caller sees its own group, a subject of
+  `LECTIO_ADMIN_SUBJECTS` every group that holds work, and an
+  authorizer is asked `queue.read` with the `group` the request names.
+- Fixed: a parse that fails for its pages says what they failed with.
+  When every failed page carries the same code the parse carries it
+  too, so a parse whose pages were all refused for budget fails with
+  `budget_exhausted` and not with `page_unreadable`. Pages that failed
+  with several codes still fail the parse with `page_unreadable`. In
+  the durable server.
+- Changed: `api/openapi.yaml` no longer marks those 4 routes planned
+  and describes their answers. `GET /usage` loses `by=model`, which no
+  server could answer, takes `owner` and `group`, and answers `400` for
+  a parameter that is not valid; `GET /queue` takes `group`; `POST
+  /parses/{parse}/retry` lists `402`; and `GET /parses/{parse}/events`
+  names its `Last-Event-ID` header. Each of the 4 still lists `501`,
+  which a development server answers: they are built over the task
+  store.
+- Changed: the schema is at version 5. The API applies migration
+  `000005_routes` at start; a worker of this version waits for it. In
+  the durable server a parse that ends with a failed page now keeps the
+  task rows of all its pages, which a retry needs, until the parse is
+  deleted.
+
 ## v0.2.0 - 2026-10-04
 
 - Added: a key per tenant, in the durable server. `LECTIO_KEYS=endpoint`
