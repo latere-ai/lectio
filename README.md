@@ -18,16 +18,18 @@ way past another.
 
 > **Status: first release.** The specs in [`specs/`](specs/README.md)
 > are the design, and each says what of it is built. Two servers run.
-> The development server is the whole parsing path and the whole HTTP
-> contract in one process with nothing durable. The durable server keeps
-> parses and their tasks in Postgres and bytes in an S3 bucket, with the
-> API and the workers as separate processes: a worker that is killed
-> loses its lease and not the work. It verifies its callers against an
-> OpenID Connect issuer, asks an authorizer or its own owner policy what
-> each may do, and holds a parse to the limits it is given. Not built
-> yet, and answered `501` by the durable server: retry, the event
-> stream, extraction with a schema, describing figures, usage and the
-> queue view.
+> The development server is the whole parsing path in one process with
+> nothing durable. The durable server keeps parses and their tasks in
+> Postgres and bytes in an S3 bucket, with the API and the workers as
+> separate processes: a worker that is killed loses its lease and not
+> the work. It verifies its callers against an OpenID Connect issuer,
+> asks an authorizer or its own owner policy what each may do, and
+> holds a parse to the limits it is given. It reads again the pages of
+> a parse that failed, streams a parse's pages and progress as events,
+> meters what each group, owner and reader read by the hour, and shows
+> what waits and what runs per group; the development server answers
+> `501` for those 4. Not built yet in the durable server, and answered
+> `501`: extraction with a schema and describing figures.
 
 ## Run it
 

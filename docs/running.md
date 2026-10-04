@@ -80,6 +80,68 @@ file of Reader and Policy documents, mount it into the `lectiod`
 service, and set `LECTIO_CONFIG` to its path and `LECTIO_MODEL_KEY` to
 the key the endpoint takes.
 
+## Following a parse, and reading its failed pages again
+
+The durable server streams a parse as server-sent events until it ends:
+a `page` event for each page as it is read or fails, and the parse's
+`progress` and `state` as they change.
+
+```sh
+curl -sN -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8080/v1/parses/prs_.../events"
+```
+
+Each event has an id. The server ends a stream it has held for 5
+minutes, and a proxy may end one sooner: connect again with the header
+`Last-Event-ID` set to the last id you saw, and the stream continues
+after it, with nothing sent twice. Any replica of the API answers, and
+the ids are the same after a restart. A stream that says nothing for 15
+seconds sends a comment line, so a proxy with an idle timeout above
+that leaves it open.
+
+A parse that ended with pages that failed keeps the pages it read.
+Reading the failed ones again is one request, and no other page is
+read:
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8080/v1/parses/prs_.../retry"
+```
+
+The parse is `running` again, in the group it was submitted to and held
+to that group's bounds, and ends when the pages have settled. A parse
+with no failed page, and one that was canceled or ran out of time, is
+answered `409`: submit the file again, and the pages that were read
+are taken from the earlier read.
+
+## What was used, and what waits
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8080/v1/usage?by=reader&interval=day"
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/v1/queue"
+```
+
+`/usage` sums the pages read, the model calls made for them and the
+tokens those calls took in and gave out, by `group`, `owner` or
+`reader`, over hours or days in UTC. A call that failed is counted as
+the call it was. With no `from` it covers the last 24 hours, or the
+last 30 days with `interval=day`.
+
+`/queue` lists each group with its weight, its bounds, its parses that
+have not ended and its queued and running tasks per class, the same for
+each of its projects, and each reader's pool: the calls in flight
+against its bound, whether its breaker admits calls, and the keys a
+rate limit paused.
+
+Under the owner policy a caller is answered its own usage and its own
+group, and a subject of `LECTIO_ADMIN_SUBJECTS` everyone's. With an
+authorizer, `usage.read` and `queue.read` are asked of it, with the
+`owner` and the `group` the request names.
+
+The development server answers `501` for these 4 routes: they are built
+over the task store.
+
 ## Whose key reads a page
 
 The key a model endpoint is called with decides who it charges. With
