@@ -235,9 +235,10 @@ paths:
         file that could not be prepared. Submit such a file again. A
         parse of which an extraction or a figure is queued or running is
         `conflict` too, until that work has ended: a retry writes again
-        the pages it reads. The parse stays in its group: a group that already holds as many
-        parses that have not ended as it may is `queue_full`, and one
-        whose day does not hold the failed pages is `budget_exhausted`.
+        the pages it reads. The parse stays in its group: a group that
+        already holds as many parses that have not ended as it may is
+        `queue_full`, and one whose day does not hold the failed pages is
+        `budget_exhausted`.
 
         A development server does not read pages again and answers `501
         not_implemented`.
