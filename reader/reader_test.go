@@ -405,3 +405,17 @@ func TestAFiguresTypeIsOneOfASet(t *testing.T) {
 		}
 	}
 }
+
+// A page's own text places everything in points from the page's top left,
+// so a rectangle's extent is the difference of its corners.
+func TestARectangleOfAPagesTextHasItsExtent(t *testing.T) {
+	r := Rect{X0: 72, Y0: 100, X1: 540, Y1: 124}
+	if r.Width() != 468 || r.Height() != 24 {
+		t.Fatalf("%+v is %v by %v", r, r.Width(), r.Height())
+	}
+	text := PageText{Width: 612, Height: 792, Words: []Word{{Text: "word", Box: r, Baseline: 120, Size: 12}}}
+	page := Page{Number: 1, Text: &text}
+	if page.Text.Words[0].Box.Height() != 24 || page.Text.Partial {
+		t.Fatalf("a page carries its text: %+v", page.Text)
+	}
+}

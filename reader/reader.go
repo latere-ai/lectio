@@ -13,9 +13,10 @@
 // makes a model a line of configuration and a page the unit of work.
 //
 // An adapter is an implementation of one or more interfaces over one wire
-// format. The module ships three: chat, for any endpoint that speaks
+// format. The module ships 4: chat, for any endpoint that speaks
 // OpenAI-compatible chat completions with image input; layout, for an OCR
-// engine behind a small HTTP contract of its own; and stub, which is
+// engine behind a small HTTP contract of its own; text, which reads a page
+// from the text its file carries and calls nothing; and stub, which is
 // deterministic and makes no call. An adapter for another engine lives
 // outside this module and needs nothing but this package and document.
 //
@@ -76,6 +77,11 @@ type Description struct {
 	// in for a new one. A reader that cannot say leaves it empty, and its
 	// pages are never reused.
 	Version string `json:"version,omitempty"`
+
+	// Text reports that the reader reads what the file itself holds of a
+	// page: the caller hands it Page.Text for a page of a format that
+	// carries its text, beside the image.
+	Text bool `json:"text,omitempty"`
 }
 
 // ImageSpec is how a page is rendered into an image.
@@ -105,6 +111,13 @@ type Page struct {
 	// Languages are hints, most likely first. May be empty.
 	Languages []string
 
+	// Text is what the file itself holds of the page, for a reader whose
+	// description asks for it. It is nil for every other reader, for a
+	// format that carries no text of its own, such as an image, and for a
+	// page whose text could not be read within the bounds a page is held
+	// to.
+	Text *PageText
+
 	// Credential is the key this call is made with. It decides who the
 	// model endpoint charges, so it arrives per call and is never part of
 	// a reader's configuration.
@@ -126,6 +139,12 @@ type Result struct {
 	// Truncated reports that the reply ended at the model's output limit,
 	// so the page's last block may be cut short.
 	Truncated bool
+
+	// TextLayer reports that the blocks were built from Page.Text alone
+	// and no model was called: the page's characters are the file's own,
+	// and its structure is what their positions and type show. The page
+	// then says so as its source.
+	TextLayer bool
 }
 
 // Extractor turns a document's text into an object in the shape of a

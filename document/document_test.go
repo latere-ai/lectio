@@ -248,4 +248,20 @@ func TestWireShape(t *testing.T) {
 	if err := back.Validate(); err != nil {
 		t.Fatal(err)
 	}
+
+	// A page read from the text its file carries says so as its source,
+	// names its reader and no model, and reports one page and no token.
+	own := Page{
+		Number: 1, Width: 1323, Height: 1871, State: PageSucceeded, Source: SourceTextLayer, Reader: "text",
+		Blocks: Number(1, []Block{{Kind: KindText, Box: &box, Text: "the file's own words"}}), Usage: &Usage{Pages: 1},
+	}
+	if raw, err = json.Marshal(own); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw); !strings.Contains(got, `"source":"text_layer"`) || !strings.Contains(got, `"reader":"text"`) || strings.Contains(got, `"model"`) || !strings.Contains(got, `"usage":{"pages":1}`) {
+		t.Errorf("a page read from its text layer:\n%s", got)
+	}
+	if got := own.Summary(); got.Source != SourceTextLayer || got.Blocks != 1 {
+		t.Errorf("its entry in the document: %+v", got)
+	}
 }

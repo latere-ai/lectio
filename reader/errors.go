@@ -43,10 +43,12 @@ const (
 	// too large for it, or in a form it does not take. It is not retried.
 	Permanent
 
-	// Refused: the model, or a filter in front of it, declined the content
-	// of this page. The reader is healthy and another may read the page,
-	// so the page goes to the next reader in the chain and is not tried
-	// again here.
+	// Refused: the reader declined this page. A model, or a filter in
+	// front of it, declined the page's content; or a reader that reads a
+	// page from the text its file carries found none it can read the page
+	// from. The reader is healthy and another may read the page, so the
+	// page goes to the next reader in the chain and is not tried again
+	// here.
 	Refused
 
 	// Misconfigured: the endpoint rejected the request itself: a parameter

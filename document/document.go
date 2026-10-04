@@ -239,6 +239,11 @@ const (
 	SourceReader PageSource = "reader"
 	// SourceNative: the file format carried its own structure.
 	SourceNative PageSource = "native"
+	// SourceTextLayer: the blocks were built from the text the file
+	// carries for the page, with the position and the type of every word,
+	// and no model was called. The characters are the file's own; the
+	// structure is what the positions show.
+	SourceTextLayer PageSource = "text_layer"
 )
 
 // Error is why a page, a field, or a parse failed: a code a caller branches
@@ -278,7 +283,8 @@ type Page struct {
 	Rotation int        `json:"rotation,omitempty"`
 	State    PageState  `json:"state"`
 	Source   PageSource `json:"source,omitempty"`
-	// Reader and Model name what read the page; both are empty on a native page.
+	// Reader and Model name what read the page. Both are empty on a native
+	// page, and Model is empty on a page read from its text layer.
 	Reader   string `json:"reader,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
