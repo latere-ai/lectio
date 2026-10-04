@@ -128,6 +128,21 @@ gave no boxes is not joined. Joining by comparing the columns' own
 positions, or by asking a model, is left out until these rules' errors
 are measured on real documents.
 
+### One title
+
+A reader sees one page, so on a page that opens with a large line it
+cannot know whether the document already has a title: the first slide
+of a deck and each slide after it look alike, and so do the first page
+of a report and the first page of each of its parts. A document has the
+title of its first page that holds one, every block of that page a
+reader called a `title`, since a title set in 2 lines is read as 2
+blocks. A `title` on a later page becomes a `heading`: it keeps its
+text, its place and its ref, and the outline puts it below the title.
+The furniture pass runs first, so a title that runs from page to page
+is a running header before this rule looks at it. The rule is for pages
+a reader read: a format that carries its own structure names its own
+titles, a workbook's sheets for one, and its pages keep them.
+
 ### Outline
 
 Headings in page order form the outline: `[{ref, level, text, page}]`.
@@ -279,7 +294,8 @@ Remaining:
 |---|---|
 | Assembling the same page results twice writes byte-identical objects | a determinism test |
 | A 40-page report with a running title and "Page n of 40", none labeled by a reader, yields 40 header blocks with 39 marked repeated and 40 page numbers; the Markdown prints the title once and no page number | `TestAFortyPageReport` |
-| A six-page statement whose pages each end with "Balance carried forward" and a different amount keeps all six as text, and the Markdown prints all six. The same holds for a batch whose pages each begin with a heading "Invoice No." and a different number, which all stay in the outline, and for slides titled "Step 1", "Step 2" | `TestContentThatDiffersByItsNumbersIsNotARunningLine` |
+| A six-page statement whose pages each end with "Balance carried forward" and a different amount keeps all six as text, and the Markdown prints all six. The same holds for a batch whose pages each begin with a heading "Invoice No." and a different number, which all stay in the outline, and for slides that open with "Step 1", "Step 2", of which none is hidden | `TestContentThatDiffersByItsNumbersIsNotARunningLine` |
+| A document whose first titled page holds 2 title blocks and whose later pages each open with a block a reader called a title keeps the 2 as its title and has each later one as a heading below it in the outline, with its text and ref unchanged | `TestADocumentKeepsTheTitleOfItsFirstTitledPage` |
 | "3", "Page 3 of 40", "3 / 40", "- 3 -" and their like as a page's first or last block become `page_number`; "1,234.56", "Total 3", a heading "3" and a number in the middle of a page do not. A reader's `page_number` is never rewritten | `TestAPageNumberIsFoundByWhatItSays` |
 | A page number is printed only under `repeated=keep`, and is in no chunk | `TestAPageNumberIsPrintedOnlyWhenEverythingIsKept` |
 | A line that repeats on every page becomes a running header or footer when its box lies in the top or bottom 12 percent of the page, and stays text when it lies elsewhere | `TestARunningLineSitsAtThePagesEdge` |

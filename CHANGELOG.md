@@ -63,6 +63,12 @@ refused before it is pushed.
   the durable server a parse that ends with a failed page now keeps the
   task rows of all its pages, which a retry needs, until the parse is
   deleted.
+- Changed: a document has one title. A reader sees one page and calls the
+  line each slide of a deck opens with a `title`; assembly now keeps the
+  titles of the first page that holds one and makes a `title` on a later
+  page a `heading`, with its text, place and ref unchanged and its level
+  below the title's in the outline. A parse that has ended is not
+  assembled again, so its pages keep the kinds they have.
 
 ## v0.2.0 - 2026-10-04
 
