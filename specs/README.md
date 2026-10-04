@@ -75,8 +75,9 @@ The numbers are identifiers, not the order of work. The order is:
    the object store, so nothing a server runs is durable yet.
 3. **The contract** (003, 012): the API over that, with identity and
    the owner policy. Built: the contract and every route of it that is
-   not marked planned, with a static token and owner scoping. Not
-   built: the verifier and the authorizer.
+   not marked planned, with a static token and owner scoping; and, as
+   libraries, the vocabulary, the verifier, the authorizer client and
+   the owner policy. Not built: the handlers asking them.
 4. **Many tenants** (006, 007, 013): fairness, pools, limits, meters,
    proven by the simulation and the soak. Built, in the task store:
    the fair queue and the pools, proven at the store by the dispatch

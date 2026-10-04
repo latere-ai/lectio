@@ -11,6 +11,15 @@ refused before it is pushed.
   and `LECTIO_ADMIN_SUBJECTS`, and refuses to start when one is not
   well formed, naming the variable. Nothing uses them yet: the
   development server still takes its one static token.
+- Added: identity and authorization as a library the server does not
+  call yet (`internal/access`). A bearer is verified against the listed
+  issuers and becomes a subject, `<issuer>|<sub>`, with every claim
+  handed on unread. One question per request goes to the authorizer,
+  which may answer with limits and with whose a new parse or file is;
+  an authorizer that does not answer refuses the request with
+  `authorizer_unavailable`. With no authorizer the owner policy
+  decides: a caller acts on its own, and the admin subjects read
+  everyone's and change nothing.
 - Added: the package `authorizer`, what an authorization endpoint for
   Lectio is written against: the 11 actions `lectiod` asks, the resource
   kind and the fields of each, and the limits an allow may carry, with

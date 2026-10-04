@@ -263,6 +263,23 @@ A service that submits parses for many users authenticates as itself
 and names each user as `owner`; the authorizer decides whether it may.
 Lectio has no exchange endpoint and mints no token for a caller.
 
+### What a handler depends on
+
+Two interfaces, and it cannot tell what is behind either. One turns a
+request's bearer into a caller: the subject, its issuer and `sub`
+apart, and every verified claim. The other answers a question, an
+action and a resource, with a decision: allow or deny, the reason, the
+limits in force, and the filter of a list. Every route is written the
+same way: authenticate, build the resource from the request and the
+stored object, ask, and act within the decision.
+
+Which is behind each is selected by the settings
+([[016-distribution]]). The issuers select the verifier; a development
+server that lists none takes one static token, `LECTIO_DEV_TOKEN`, for
+the subject `dev`, which names no issuer and so can be no verified
+subject. The authorizer's URL selects the authorizer, and its absence
+the owner policy.
+
 ### What a worker carries
 
 A worker acts on tasks, not for a caller. It holds no user token. The
@@ -279,7 +296,7 @@ control: access is to a parse.
 
 ## Implementation status
 
-Built, as a library the server does not call yet:
+Built, as libraries the server does not call yet:
 
 - `authorizer`: the vocabulary and the fields each action sends, held
   equal to the table above by a test, and `Limits`, `WireLimits`,
@@ -292,6 +309,10 @@ Built, as a library the server does not call yet:
   subject `dev`, behind the same interface as the verifier; and the
   table of routes, each with the action it asks and the fields it
   sends, held equal to the contract and to the table of [[003-api]].
+  `access.New` selects what is behind the two interfaces from the
+  settings.
+- The identity declaration of the gate: `role: core`
+  ([[016-distribution]]).
 
 A stand-in, in the server:
 
@@ -332,5 +353,6 @@ and an upload take no `owner`, and no limit of an allow is enforced.
 | Under the owner policy, a subject cannot read, list, cancel or delete another subject's parse, and an admin subject can read it | API tests |
 | The rows of the owner policy: a subject and its own, another's, a create, the reads that range over owners, an admin that reads and does not change, and no subject | `TestTheOwnerPolicy`, `TestASubjectAndAnotherSubjectsParse` |
 | The owner policy answers the contract's conformance suite, and narrows an allow by the grants of a token | `TestOwnerPolicyConformance`, `TestOwnerPolicyNarrowsByTheGrants`, `TestTheGrantsOfATokenNarrowTheOwnersReach` |
+| The settings select who is calling and who decides, apart; a server that is not a development one and lists no issuer is refused, naming the variable | `TestTheSettingsSelectTheMode`, `TestAServerWithNoIssuerIsRefused`, and the 3 tests named `EndToEnd` in `internal/access` |
 | A probe id is denied for every subject and action by the stub authorizer and by the owner policy | `TestTheProbeIsDeniedForEverySubjectAndAction` |
 | The development token stands for one subject, is compared in constant time, and is never printed; under the owner policy its caller owns what it creates and nothing else | `TestTheDevelopmentTokenStandsForOneSubject`, `TestWhatTheDevelopmentTokenRefuses`, `TestTheDevelopmentCallerUnderTheOwnerPolicy` |

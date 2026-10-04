@@ -35,12 +35,19 @@ spec:
   require_section_by_status:
     complete: [Outcome]
 
-# The identity shape shared across the open cores. The verifier and the
-# authorizer client of spec 012 are not built yet: the development server
-# takes one static token and no production mode exists, so there is no
-# audience to declare until that spec lands.
+# The identity shape shared across the open cores (spec 012): lectiod
+# verifies one token against the issuers it is given, hands every claim to
+# the authorizer it asks, and reads none of them. internal/access holds the
+# verifier and the authorizer client; the handlers do not call them yet.
 identity:
-  role: none
+  role: core
+  audience: lectio
+  config_prefix: LECTIO
+  # The group the Reader and Policy documents are written under.
+  api_group: lectio.latere.ai
+  # The audience is the default of a server somebody runs themselves, and
+  # no client is registered anywhere to present it.
+  reached_by: self-hosted
 
 # The store of spec 004 serves through LECTIO_DATABASE_POOL_URL where an
 # installation names a pooled endpoint and falls back to LECTIO_DATABASE_URL.

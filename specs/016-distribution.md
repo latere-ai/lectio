@@ -46,6 +46,7 @@ reader/                   public: the reader and extractor interfaces
 reader/chat/              the adapter for OpenAI-compatible chat completions
 reader/layout/            the adapter for a layout engine behind its own HTTP contract
 reader/stub/              a deterministic reader and extractor that make no call
+internal/access/          who is calling and who decides: the verifier, the authorizer client, the owner policy
 internal/assemble/        the document-wide passes and the views
 internal/config/          settings from the environment; Reader and Policy documents
 internal/convert/         conversion: the client a pipeline converts through, and the sidecar's service
@@ -88,11 +89,13 @@ every hook runs: formatting, no cgo, license notices, the spec tree,
 dependency admission, sentence registers, the identity and Postgres
 declarations, lint, vulnerability check, and the suite under the race
 detector with a coverage floor of 90% per package. The identity block
-declares `role: core`, `audience: lectio`, `config_prefix: LECTIO`. The
-Postgres block declares `role: pooled` with `LECTIO_DATABASE_URL` for
-migrations and `LECTIO_DATABASE_POOL_URL` for serving. Until the
-verifier exists, the identity block declares `role: none`, since there
-is nothing yet for it to describe.
+declares `role: core`, `audience: lectio`, `config_prefix: LECTIO`,
+`api_group: lectio.latere.ai`, the group the Reader and Policy documents
+are written under, which a core must name, and `reached_by:
+self-hosted`, since the audience is the default of a server somebody
+runs themselves. The Postgres block declares `role: pooled` with
+`LECTIO_DATABASE_URL` for migrations and `LECTIO_DATABASE_POOL_URL` for
+serving.
 
 `make build` builds `out/lectiod` with the version, the commit and the
 date stamped in. `make run` builds and starts the development server.
@@ -180,6 +183,20 @@ error: the endpoint requires a bearer. A certificate authority of the
 operator's own, for an issuer or an authorizer, is trusted the way the
 process trusts any: through the system's roots or `SSL_CERT_FILE`.
 
+Who is calling and who decides are selected apart
+([[012-identity-and-authorization]]):
+
+| Set | Who is calling | Who decides |
+|---|---|---|
+| `LECTIO_OIDC_ISSUERS` and `LECTIO_AUTHORIZER_URL` | a token verified against the issuers | the authorizer |
+| `LECTIO_OIDC_ISSUERS` alone | a token verified against the issuers | the owner policy, with `LECTIO_ADMIN_SUBJECTS` |
+| `LECTIO_DEV=true` and no issuer | the one static token, as the subject `dev` | the owner policy, or the authorizer when its URL is set |
+| neither `LECTIO_DEV` nor an issuer | nobody: the server is refused, naming `LECTIO_OIDC_ISSUERS` | |
+
+A development server that lists issuers verifies tokens against them
+and takes no static token, so the verifier and an authorizer can be
+tried over the memory store.
+
 `LECTIO_DEV=true` runs one process with the memory store, the owner
 scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
 stub reader unless `LECTIO_CONFIG` names real ones, and logs at start
@@ -260,6 +277,13 @@ Built:
 - The Postgres declaration of the gate: `role: pooled`, since
   `internal/store/postgres` is a client and `internal/config` reads
   both URLs.
+- The identity declaration of the gate: `role: core`, since
+  `internal/access` verifies with the shared verifier and asks through
+  the shared authorizer client. The rule about roles is not turned on:
+  it cannot be turned off again, and no file here names the flag it
+  forbids. The selection of the table above is `access.New`, which no
+  command calls yet: `lectiod` still takes its one static token
+  through `httpapi.Tokens`.
 - A graceful stop: an upload that is still sending its body when the
   signal arrives is answered.
 - `cmd/lectio-convert` and `deploy/converter/Dockerfile`: the conversion
