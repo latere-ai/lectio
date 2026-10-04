@@ -139,5 +139,10 @@ func lead(r rune) bool { return r >= 0x00C2 && r <= 0x00F4 }
 // sequence, 0x80 to 0xBF, becomes when it is read as one byte: the
 // character of the same number, or the one Windows-1252 puts there.
 func trail(r rune) bool {
-	return (r >= 0x0080 && r <= 0x00BF) || strings.ContainsRune("€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ", r)
+	return (r >= 0x0080 && r <= 0x00BF) || strings.ContainsRune(windows1252, r)
 }
+
+// windows1252 is the 27 characters Windows-1252 puts at 0x80 to 0x9F,
+// where Latin-1 has control codes: the euro sign, the curved quotation
+// marks, the dashes, and the letters of a few languages.
+const windows1252 = "\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178"
