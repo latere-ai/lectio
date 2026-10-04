@@ -57,6 +57,11 @@ type scripted struct {
 	// with.
 	rows    map[string][]postgres.Task
 	rowsErr error
+
+	// described are the figures of each parse a run took, and describedErr
+	// what Figures fails with.
+	described    map[string]postgres.Figures
+	describedErr error
 }
 
 func (s *scripted) Register(context.Context) (string, error) {
@@ -98,6 +103,13 @@ func (s *scripted) Tasks(_ context.Context, parseID string) ([]postgres.Task, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.rows[parseID], s.rowsErr
+}
+
+func (s *scripted) Figures(_ context.Context, parseID string) (postgres.Figures, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	got, started := s.described[parseID]
+	return got, started, s.describedErr
 }
 
 // settles are the settles the worker sent so far, in order.

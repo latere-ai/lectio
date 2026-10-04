@@ -39,6 +39,10 @@ func (w *Worker) run(ctx context.Context, c tasks.Claim) tasks.Settle {
 		w.page(ctx, c, &s)
 	case tasks.Assemble:
 		w.assemble(ctx, c, &s)
+	case tasks.Extract:
+		w.extract(ctx, c, &s)
+	case tasks.Figure:
+		w.figure(ctx, c, &s)
 	default:
 		permanent(&s, fault.Internal, "a worker runs no task of kind %q", c.Kind)
 	}
@@ -176,7 +180,7 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 
 	got, err := w.Pipeline.ReadPage(ctx, m.Manifest, working, n, rd, opt)
 	if err != nil {
-		w.failed(c, s, err, local)
+		w.failed(c, s, err, unit{what: "page", who: "reader", unreadable: fault.PageUnreadable, local: local})
 		return
 	}
 	// A page with nothing on it is written with no read, and one read from
@@ -258,19 +262,20 @@ func (w *Worker) reuse(ctx context.Context, c tasks.Claim, n int, s *tasks.Settl
 	return true
 }
 
-// keyless ends a page's attempt for which the key source gave no key
-// (specs/013-limits-and-usage.md). No reader was called, so no call is
-// recorded and nothing is said about a reader's health.
+// keyless ends an attempt for which the key source gave no key
+// (specs/013-limits-and-usage.md), of a page, a figure or an extraction.
+// No model was called, so no call is recorded and nothing is said about a
+// reader's health.
 //
 // A refusal is about the group and stands whatever is tried, on every
-// reader, so the page fails at once and does not move down the chain: a
+// reader, so the task fails at once and does not move down the chain: a
 // group with no budget as the reader's own budget refusal does, and a group
-// that is issued no key as a page no reader can be called for.
+// that is issued no key as work no reader can be called for.
 //
 // Anything else is a source that cannot say yet. The attempt ends as a
 // wait, which spends no attempt and pauses the group's key scope, so the
-// group's pages stay unclaimed until the source is asked again. A source
-// that names no wait leaves it to the store's own pause.
+// group's work for that reader stays unclaimed until the source is asked
+// again. A source that names no wait leaves it to the store's own pause.
 func keyless(s *tasks.Settle, err error) {
 	switch {
 	case errors.Is(err, keys.ErrBudget):
@@ -287,21 +292,33 @@ func (w *Worker) cost(name string) int {
 	return max(1, w.Costs[name])
 }
 
-// failed ends a page's attempt for an error of ReadPage. A failure of the
-// file itself, a page that cannot be rendered, is not the reader's: no
-// other attempt or reader changes it. Every other error is the reader's and
-// is read by its class; one that carries none is taken for a failure that
-// may pass, as the reader package says. local says the reader calls no
-// model, so its failure is metered as no call.
-func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error, local bool) {
+// unit names what a call is made for and what makes it, in the reasons a
+// failure is recorded with: a page and its reader, a figure and its
+// describer, a document and its extractor.
+type unit struct {
+	what, who string
+	// unreadable is the code of a unit no candidate could take.
+	unreadable fault.Code
+	// local says the candidate calls no model, so its failure is metered
+	// as no call.
+	local bool
+}
+
+// failed ends an attempt for an error of the call a task made, and is the
+// one place that decides what a failed call means, for a page, a figure and
+// an extraction alike. A failure of the file itself, a page that cannot be
+// rendered, is not the candidate's: no other attempt or candidate changes
+// it. Every other error is read by its class; one that carries none is
+// taken for a failure that may pass, as the reader package says.
+func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error, u unit) {
 	if f, ok := errors.AsType[*fault.Error](err); ok {
 		permanent(s, f.Code, "%s", f.Detail)
 		return
 	}
-	// The reader was asked, and what the read spent is recorded whatever
-	// it returned: a call, unless the reader makes none.
+	// The candidate was asked, and what the call spent is recorded whatever
+	// it returned: a call, unless the candidate makes none.
 	s.Units = w.cost(c.Reader)
-	if !local {
+	if !u.local {
 		s.Usage = tasks.Usage{Calls: 1}
 	}
 	switch reader.ClassOf(err) {
@@ -309,26 +326,27 @@ func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error, local bool) {
 		// Waiting for capacity is not failing: it spends no attempt.
 		s.Outcome, s.RetryAfter = tasks.Wait, reader.RetryAfterOf(err)
 	case reader.Budget:
-		// The reader is healthy and the key is out of funds.
+		// The candidate is healthy and the key is out of funds.
 		permanent(s, fault.BudgetExhausted, "the key's budget is spent")
 	case reader.Permanent:
-		permanent(s, fault.PageUnreadable, "the reader cannot take the page as it is")
+		permanent(s, u.unreadable, "the %s cannot take the %s as it is", u.who, u.what)
 	case reader.Refused:
-		// The reader is healthy and declined this page. Another may take
-		// it; the same one would decline again.
+		// The candidate is healthy and declined this content. Another may
+		// take it; the same one would decline again.
 		s.Outcome = tasks.Next
-		s.Error = &tasks.Error{Code: string(fault.PageUnreadable), Detail: "the reader declined the page"}
+		s.Error = &tasks.Error{Code: string(u.unreadable), Detail: fmt.Sprintf("the %s declined the %s", u.who, u.what)}
 	case reader.Misconfigured:
 		// The endpoint rejected the request itself, as it will every time:
-		// the failure is the reader's and counts against it.
+		// the failure is the candidate's and counts against it.
 		s.Outcome, s.Health = tasks.Next, tasks.Unhealthy
-		s.Error = &tasks.Error{Code: string(fault.ReaderUnavailable), Detail: "the reader's endpoint rejected the request; its configuration needs to change"}
+		s.Error = &tasks.Error{Code: string(fault.ReaderUnavailable), Detail: fmt.Sprintf("the %s's endpoint rejected the request; its configuration needs to change", u.who)}
 	case reader.Invalid:
-		// The reader answered, so the reply says nothing about its health.
-		retryable(s, fault.PageUnreadable, "the reader's replies were not usable")
+		// The candidate answered, so the reply says nothing about its
+		// health.
+		retryable(s, u.unreadable, "the %s's replies were not usable", u.who)
 		s.Invalid = true
 	default:
-		retryable(s, fault.ReaderUnavailable, "the reader could not be reached")
+		retryable(s, fault.ReaderUnavailable, "the %s could not be reached", u.who)
 		s.Health = tasks.Unhealthy
 	}
 }

@@ -47,6 +47,9 @@ type Store interface {
 	// Tasks returns the task rows of a parse, which is what assemble reads
 	// the pages' keys from.
 	Tasks(ctx context.Context, parseID string) ([]postgres.Task, error)
+	// Figures returns the figures of a parse a run took, which is where an
+	// extraction finds the descriptions whose labels are part of its text.
+	Figures(ctx context.Context, parseID string) (postgres.Figures, bool, error)
 }
 
 // The defaults of a worker's settings, each the value its spec gives.
@@ -78,6 +81,12 @@ type Worker struct {
 	// costs 1.
 	Readers map[string]reader.Reader
 	Costs   map[string]int
+
+	// Extractors and Describers are what fills a schema and what says what
+	// a figure shows, by the names of the readers they are configured
+	// with: a task is claimed for a name, and its pool is that reader's.
+	Extractors map[string]reader.Extractor
+	Describers map[string]reader.Describer
 
 	// Keys resolves the key a group's pages are read with. Nil means every
 	// call is made without one.
