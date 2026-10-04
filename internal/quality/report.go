@@ -4,8 +4,10 @@
 package quality
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -118,9 +120,13 @@ type Result struct {
 
 	Scores Scores `json:"scores"`
 
-	// Seconds is the time from the submit of the parse to its end, and
-	// SecondsPerPage that time over the pages of the file.
+	// Seconds is the time from the submit of the parse to its end.
+	// ReadPages is how many pages a reader was called for: a blank page
+	// and a page read from the file itself cost no call. SecondsPerPage is
+	// the time over those pages, and over every page of a file no reader
+	// was called for.
 	Seconds        float64 `json:"seconds"`
+	ReadPages      int     `json:"read_pages"`
 	SecondsPerPage float64 `json:"seconds_per_page"`
 	InputTokens    int64   `json:"input_tokens"`
 	OutputTokens   int64   `json:"output_tokens"`
@@ -161,8 +167,8 @@ func (r *Report) Add(res Result) {
 			res.Error = fmt.Sprintf("class %q has no bars", res.Class)
 		}
 	}
-	if res.Scores.Pages > 0 {
-		res.SecondsPerPage = res.Seconds / float64(res.Scores.Pages)
+	if pages := cmp.Or(res.ReadPages, res.Scores.Pages); pages > 0 {
+		res.SecondsPerPage = res.Seconds / float64(pages)
 	}
 	r.Files = append(r.Files, res)
 }
@@ -199,7 +205,17 @@ func (r *Report) JSON() ([]byte, error) {
 func (r *Report) Markdown() string {
 	var b strings.Builder
 	b.WriteString("# Quality run\n\n")
-	fmt.Fprintf(&b, "Started %s. Reader `%s`. Server: %s.\n\n", r.Started, r.Reader, r.Server)
+	fmt.Fprintf(&b, "Started %s. Reader `%s`. Server: %s.\n", r.Started, r.Reader, r.Server)
+	var models []string
+	for _, f := range r.Files {
+		if f.Model != "" && !slices.Contains(models, f.Model) {
+			models = append(models, f.Model)
+		}
+	}
+	if len(models) > 0 {
+		fmt.Fprintf(&b, "Answered by `%s`, as the reader's endpoint names itself.\n", strings.Join(models, "`, `"))
+	}
+	b.WriteByte('\n')
 	b.WriteString("| File | Format | Class | Pages | Blocks | CER | Kinds | Cells | Order | Boxes | Seconds per page | Tokens in | Tokens out | Bars |\n")
 	b.WriteString("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
 	for _, f := range r.Files {

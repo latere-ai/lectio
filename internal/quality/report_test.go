@@ -72,7 +72,7 @@ func TestAReportSaysWhichFilesMeetTheirBars(t *testing.T) {
 		Scores: Scores{Pages: 3, Blocks: 40, CER: 0.0041, Kinds: 0.975, Order: 1, Cells: share1(1), Boxes: share1(0.95)},
 	})
 	r.Add(Result{
-		File: "scan.pdf", Format: "scanned PDF", Class: Scan, Seconds: 44,
+		File: "scan.pdf", Format: "scanned PDF", Class: Scan, Seconds: 44, ReadPages: 2, Model: "some-model",
 		Scores: Scores{Pages: 4, Blocks: 40, CER: 0.08, Kinds: 0.85, Order: 1, Cells: share1(1), Notes: []string{`1.2 title is found as heading: "Tide"`}},
 	})
 	r.Add(Result{File: "notes.txt", Format: "plain text", Class: Exact, Scores: Scores{Pages: 1, Blocks: 3, Kinds: 1, Order: 1, Notes: []string{"a note on a file that met its bars"}}})
@@ -93,15 +93,16 @@ func TestAReportSaysWhichFilesMeetTheirBars(t *testing.T) {
 	if !reflect.DeepEqual(failed, want) {
 		t.Fatalf("failed = %q, want %q", failed, want)
 	}
-	if r.Files[0].SecondsPerPage != 10 || r.Files[1].SecondsPerPage != 11 || r.Files[5].SecondsPerPage != 0 {
+	// A file with a blank page is timed over the pages that were read.
+	if r.Files[0].SecondsPerPage != 10 || r.Files[1].SecondsPerPage != 22 || r.Files[5].SecondsPerPage != 0 {
 		t.Fatalf("seconds per page: %v, %v, %v", r.Files[0].SecondsPerPage, r.Files[1].SecondsPerPage, r.Files[5].SecondsPerPage)
 	}
 
 	md := r.Markdown()
 	for _, line := range []string{
-		"Started 2026-10-04T04:00:00Z. Reader `engine`. Server: durable, role all.",
+		"Started 2026-10-04T04:00:00Z. Reader `engine`. Server: durable, role all.\nAnswered by `some-model`, as the reader's endpoint names itself.\n\n| File |",
 		"| `survey.pdf` | typeset PDF | `typeset` | 3 | 40 | 0.41% | 97.5% | 100.0% | 100.0% | 95.0% | 10.0 | 9000 | 3000 | met |",
-		"| `scan.pdf` | scanned PDF | `scan` | 4 | 40 | 8.00% | 85.0% | 100.0% | 100.0% | - | 11.0 | 0 | 0 | missed |",
+		"| `scan.pdf` | scanned PDF | `scan` | 4 | 40 | 8.00% | 85.0% | 100.0% | 100.0% | - | 22.0 | 0 | 0 | missed |",
 		"| `notes.txt` | plain text | `exact` | 1 | 3 | 0.00% | 100.0% | - | 100.0% | - | 0.0 | 0 | 0 | met |",
 		"| `slides.pptx` | presentation | `converted` | | | | | | | | | | | failed |",
 		"3 of 6 files meet their bars.\n\nLeft out of this run:\n\n- `memo.rtf`: no converter was named\n\n## Bars",
