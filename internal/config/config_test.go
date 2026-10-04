@@ -177,6 +177,7 @@ spec:
   timeout: 120s
   image: { dpi: 160, longEdge: 2048, format: png }
   constrained: true
+  maxInput: 200000
   boxes: { order: yxyx, space: grid }
   temperature: 0
   outputLimitParam: max_tokens
@@ -196,7 +197,7 @@ kind: Policy
 metadata: { name: default }
 spec:
   read:    { chain: [default, engine] }
-  extract: { chain: [text] }
+  extract: { chain: [default] }
   describe: { chain: [default] }
   escalate: { onInvalid: 2, max: 1 }
 `
@@ -226,12 +227,25 @@ func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
 		strings.Join(got.DescribeChain, ",") != "default" || got.Describers["default"].Describe().Name != "default" {
 		t.Fatalf("describers %v, chain %v", got.Describers, got.DescribeChain)
 	}
+	// It can fill a schema from text too, with the same model, the same
+	// parameters and its own bound on the text of one call.
+	if len(got.Extractors) != 2 || got.Extractors["offline"] == nil || got.Extractors["engine"] != nil || strings.Join(got.ExtractChain, ",") != "default" {
+		t.Fatalf("extractors %v, chain %v", got.Extractors, got.ExtractChain)
+	}
+	if d := got.Extractors["default"].Describe(); d.Name != "default" || d.MaxInput != 200000 || !d.Constrained {
+		t.Fatalf("the chat extractor: %+v", d)
+	}
 	// What is set and not acted on is named.
-	if want := `Policy extract.chain|Policy escalate`; strings.Join(got.Unapplied, "|") != want {
+	if want := `Policy escalate`; strings.Join(got.Unapplied, "|") != want {
 		t.Fatalf("unapplied: %q", got.Unapplied)
 	}
-	if want := `Reader "default" maxInFlight and cost`; strings.Join(got.RunnerUnapplied, "|") != want {
+	if want := `Reader "default" maxInFlight and cost|Policy extract.chain`; strings.Join(got.RunnerUnapplied, "|") != want {
 		t.Fatalf("what the task store applies and the runner does not: %q", got.RunnerUnapplied)
+	}
+	// The task store is opened with each of the policy's 3 orders.
+	queue := Settings{}.Queue(got)
+	if strings.Join(queue.ReadChain, ",") != "default,engine" || strings.Join(queue.ExtractChain, ",") != "default" || strings.Join(queue.DescribeChain, ",") != "default" {
+		t.Fatalf("the task store's chains are %v, %v and %v", queue.ReadChain, queue.ExtractChain, queue.DescribeChain)
 	}
 
 	// One file with one reader and no policy: the reader is the chain.
@@ -241,11 +255,12 @@ func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
 		t.Fatalf("one reader: %+v, %v", got, err)
 	}
 
-	if got.DescribeChain != nil || got.Describers["only"] == nil {
-		t.Fatalf("with no policy nothing is in the describe chain: %+v", got)
+	if got.DescribeChain != nil || got.Describers["only"] == nil || got.ExtractChain != nil || got.Extractors["only"] == nil {
+		t.Fatalf("with no policy nothing is in the describe chain or the extract chain: %+v", got)
 	}
 
-	if s := Stub(); len(s.Readers) != 1 || s.Chain[0] != "stub" || s.Readers["stub"] == nil || s.Describers["stub"] == nil || s.DescribeChain[0] != "stub" {
+	if s := Stub(); len(s.Readers) != 1 || s.Chain[0] != "stub" || s.Readers["stub"] == nil || s.Describers["stub"] == nil || s.DescribeChain[0] != "stub" ||
+		s.Extractors["stub"] == nil || s.ExtractChain[0] != "stub" {
 		t.Fatalf("the stub configuration: %+v", s)
 	}
 }
@@ -278,6 +293,10 @@ func TestAConfigurationThatDoesNotHoldIsRefusedWhole(t *testing.T) {
 		"a describe chain naming no one":    {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [x]}, describe: {chain: [y]}}\n"}, `describe chain names "y", which is no Reader`},
 		"a layout engine asked to describe": {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: e}\nspec: {adapter: layout, endpoint: 'http://engine.internal/read'}\n---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [e]}, describe: {chain: [e]}}\n"}, "cannot describe a figure"},
 		"a chain naming no one":             {map[string]string{"a.yaml": stub("x") + "---\n" + policy}, `names "default", which is no Reader`},
+		"an extract chain naming no one":    {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [x]}, extract: {chain: [y]}}\n"}, `extract chain names "y", which is no Reader`},
+		"a layout engine asked to extract":  {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: e}\nspec: {adapter: layout, endpoint: 'http://engine.internal/read'}\n---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [e]}, extract: {chain: [e]}}\n"}, "cannot fill a schema from text"},
+		"a bound on text below zero":        {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1', model: m, maxInput: -1}\n"}, "maxInput is below zero"},
+		"a bound on text nothing reads":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, maxInput: 100}\n"}, "only a chat reader"},
 	} {
 		got, err := Load(write(t, tc.files))
 		if err == nil || !strings.Contains(err.Error(), tc.want) || got.Readers != nil {
@@ -465,6 +484,59 @@ spec: { read: { chain: [small, large] } }
 		bad := write(t, map[string]string{"reader.yaml": "apiVersion: lectio.latere.ai/v1\nkind: Reader\nmetadata: { name: only }\nspec: " + spec + "\n"})
 		if _, err := Load(bad); err == nil || !strings.Contains(err.Error(), `Reader "only"`) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// TestOneModelReadsPagesDescribesFiguresAndExtracts: a deployment names one
+// chat model for its pages, its figures and its extractions with one Reader
+// document that the policy's 3 chains name, or with a document for each,
+// and no document holds a key. Each name is one pool of the task store,
+// whatever it is used for.
+func TestOneModelReadsPagesDescribesFiguresAndExtracts(t *testing.T) {
+	head := "apiVersion: lectio.latere.ai/v1\n"
+	model := func(name string) string {
+		return head + "kind: Reader\nmetadata: { name: " + name + " }\nspec: { adapter: chat, endpoint: 'https://gateway.example/v1', model: some-model }\n---\n"
+	}
+	one := model("default") + head + `kind: Policy
+metadata: { name: default }
+spec:
+  read:     { chain: [default] }
+  describe: { chain: [default] }
+  extract:  { chain: [default] }
+`
+	each := model("pages") + model("figures") + model("text") + head + `kind: Policy
+metadata: { name: default }
+spec:
+  read:     { chain: [pages] }
+  describe: { chain: [figures] }
+  extract:  { chain: [text] }
+`
+	for name, tc := range map[string]struct {
+		documents               string
+		read, describe, extract string
+		pools                   int
+	}{
+		"one document for all": {one, "default", "default", "default", 1},
+		"a document for each":  {each, "pages", "figures", "text", 3},
+	} {
+		got, err := Load(write(t, map[string]string{"readers.yaml": tc.documents}))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		queue := Settings{Keys: KeysStatic}.Queue(got).WithDefaults()
+		if err := queue.Validate(); err != nil {
+			t.Fatalf("%s: the task store's settings: %v", name, err)
+		}
+		if strings.Join(queue.ReadChain, ",") != tc.read || strings.Join(queue.DescribeChain, ",") != tc.describe ||
+			strings.Join(queue.ExtractChain, ",") != tc.extract || len(queue.Pools) != tc.pools {
+			t.Errorf("%s: the task store's settings are %+v", name, queue)
+		}
+		if got.Readers[tc.read] == nil || got.Describers[tc.describe] == nil || got.Extractors[tc.extract] == nil {
+			t.Errorf("%s: %v, %v, %v", name, got.Readers, got.Describers, got.Extractors)
+		}
+		if strings.Contains(strings.ToLower(tc.documents), "key") {
+			t.Errorf("%s: a document names a key", name)
 		}
 	}
 }

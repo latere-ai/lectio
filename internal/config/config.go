@@ -340,7 +340,7 @@ func (s Settings) Queue(r Readers) tasks.Settings {
 		PoolRecovery: s.PoolRecovery, PoolResume: s.PoolResume,
 		// A key per group makes the group the scope a rate limit pauses.
 		KeysPerGroup: s.Keys == KeysEndpoint,
-		Pools:        r.Pools, ReadChain: r.Chain,
+		Pools:        r.Pools, ReadChain: r.Chain, ExtractChain: r.ExtractChain, DescribeChain: r.DescribeChain,
 	}
 }
 
@@ -377,6 +377,10 @@ type readerSpec struct {
 	} `yaml:"image"`
 	Constrained     bool `yaml:"constrained"`
 	MaxOutputTokens int  `yaml:"maxOutputTokens"`
+
+	// MaxInput is the most text one extraction call to the model takes, in
+	// bytes. A document longer than it is extracted in windows.
+	MaxInput int `yaml:"maxInput"`
 
 	// What differs from one model family to the next, for the chat
 	// adapter: how the model is asked for boxes, whether a temperature is
@@ -426,6 +430,14 @@ type Readers struct {
 	Describers    map[string]reader.Describer
 	DescribeChain []string
 
+	// Extractors are the Reader documents whose adapter can also fill a
+	// schema from a document's text, by the same names: one that reaches a
+	// model that takes an instruction. ExtractChain is the order the policy
+	// tries them in; it is empty when the policy names none, and then an
+	// extraction is run only by an extractor its request names.
+	Extractors   map[string]reader.Extractor
+	ExtractChain []string
+
 	// Pools are the readers as the task store sees them: each with the
 	// bound of its calls in flight and the cost of one call.
 	Pools []tasks.Pool
@@ -444,6 +456,7 @@ func Stub() Readers {
 	return Readers{
 		Readers: map[string]reader.Reader{stub.Name: &stub.Reader{}}, Chain: []string{stub.Name},
 		Describers: map[string]reader.Describer{stub.Name: &stub.Describer{}}, DescribeChain: []string{stub.Name},
+		Extractors: map[string]reader.Extractor{stub.Name: stub.Extractor{}}, ExtractChain: []string{stub.Name},
 		Pools: []tasks.Pool{{Reader: stub.Name, MaxInFlight: DefaultMaxInFlight, Cost: 1}},
 	}
 }
@@ -470,7 +483,9 @@ func Load(path string) (Readers, error) {
 		slices.Sort(files)
 	}
 
-	out := Readers{Readers: map[string]reader.Reader{}, Describers: map[string]reader.Describer{}}
+	out := Readers{
+		Readers: map[string]reader.Reader{}, Describers: map[string]reader.Describer{}, Extractors: map[string]reader.Extractor{},
+	}
 	policies := 0
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
@@ -494,13 +509,16 @@ func Load(path string) (Readers, error) {
 				if _, taken := out.Readers[doc.Metadata.Name]; taken {
 					return Readers{}, fmt.Errorf("%s: the name is used twice", where)
 				}
-				rd, describer, pool, unapplied, err := build(doc)
+				rd, describer, extractor, pool, unapplied, err := build(doc)
 				if err != nil {
 					return Readers{}, fmt.Errorf("%s: %w", where, err)
 				}
 				out.Readers[doc.Metadata.Name] = rd
 				if describer != nil {
 					out.Describers[doc.Metadata.Name] = describer
+				}
+				if extractor != nil {
+					out.Extractors[doc.Metadata.Name] = extractor
 				}
 				out.Pools = append(out.Pools, pool)
 				out.RunnerUnapplied = append(out.RunnerUnapplied, unapplied...)
@@ -512,9 +530,11 @@ func Load(path string) (Readers, error) {
 				if err := strict(doc.Spec, &spec); err != nil {
 					return Readers{}, fmt.Errorf("%s: %w", where, err)
 				}
-				out.Chain, out.DescribeChain = spec.Read.Chain, spec.Describe.Chain
+				out.Chain, out.DescribeChain, out.ExtractChain = spec.Read.Chain, spec.Describe.Chain, spec.Extract.Chain
 				if len(spec.Extract.Chain) > 0 {
-					out.Unapplied = append(out.Unapplied, "Policy extract.chain")
+					// Extraction is built over the task store, which a
+					// development server does not have.
+					out.RunnerUnapplied = append(out.RunnerUnapplied, "Policy extract.chain")
 				}
 				if spec.Escalate.OnInvalid != 0 || spec.Escalate.Max != 0 {
 					out.Unapplied = append(out.Unapplied, "Policy escalate")
@@ -551,6 +571,14 @@ func Load(path string) (Readers, error) {
 			return Readers{}, fmt.Errorf("config: the Policy's describe chain names %q, whose adapter reads pages and cannot describe a figure", name)
 		}
 	}
+	for _, name := range out.ExtractChain {
+		switch {
+		case out.Readers[name] == nil:
+			return Readers{}, fmt.Errorf("config: the Policy's extract chain names %q, which is no Reader", name)
+		case out.Extractors[name] == nil:
+			return Readers{}, fmt.Errorf("config: the Policy's extract chain names %q, whose adapter reads pages and cannot fill a schema from text", name)
+		}
+	}
 	return out, nil
 }
 
@@ -569,24 +597,25 @@ func strict(node yaml.Node, into any) error {
 }
 
 // build makes the reader a Reader document declares, and the describer
-// when the document's adapter can say what a figure shows: one that
-// reaches a model that takes an instruction can, and one that reaches a
-// layout engine with a contract of its own, or that reads a page's own
-// text and reaches nothing, cannot. pool is the reader as the task store
-// sees it.
-func build(doc document) (rd reader.Reader, describer reader.Describer, pool tasks.Pool, unapplied []string, err error) {
+// and the extractor when the document's adapter can say what a figure
+// shows and fill a schema from text: one that reaches a model that takes
+// an instruction can, and one that reaches a layout engine with a contract
+// of its own, or that reads a page's own text and reaches nothing, cannot.
+// All 3 reach the same model with the same parameters, under one name and
+// one pool. pool is the reader as the task store sees it.
+func build(doc document) (rd reader.Reader, describer reader.Describer, extractor reader.Extractor, pool tasks.Pool, unapplied []string, err error) {
 	name := doc.Metadata.Name
 	if name == "" {
-		return nil, nil, pool, nil, errors.New("metadata.name is empty")
+		return nil, nil, nil, pool, nil, errors.New("metadata.name is empty")
 	}
 	var spec readerSpec
 	if err := strict(doc.Spec, &spec); err != nil {
-		return nil, nil, pool, nil, err
+		return nil, nil, nil, pool, nil, err
 	}
 	var timeout time.Duration
 	if spec.Timeout != "" {
 		if timeout, err = time.ParseDuration(spec.Timeout); err != nil || timeout <= 0 {
-			return nil, nil, pool, nil, errors.New("timeout is not a duration above zero, such as 120s")
+			return nil, nil, nil, pool, nil, errors.New("timeout is not a duration above zero, such as 120s")
 		}
 	}
 	if spec.MaxInFlight != 0 || spec.Cost != 0 {
@@ -597,9 +626,13 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, pool tas
 	pool = tasks.Pool{Reader: name, MaxInFlight: spec.MaxInFlight, Cost: int(spec.Cost)}
 	switch {
 	case spec.MaxInFlight < 0:
-		return nil, nil, pool, nil, errors.New("maxInFlight is below zero")
+		return nil, nil, nil, pool, nil, errors.New("maxInFlight is below zero")
 	case spec.Cost < 0 || spec.Cost != float64(pool.Cost):
-		return nil, nil, pool, nil, errors.New("cost is not a whole number of units, 1 or more")
+		return nil, nil, nil, pool, nil, errors.New("cost is not a whole number of units, 1 or more")
+	case spec.MaxInput < 0:
+		return nil, nil, nil, pool, nil, errors.New("maxInput is below zero")
+	case spec.MaxInput != 0 && spec.Adapter != "chat":
+		return nil, nil, nil, pool, nil, errors.New("maxInput bounds the text of an extraction call, which only a chat reader makes")
 	case spec.MaxInFlight == 0 && spec.Adapter == "text":
 		pool.MaxInFlight = DefaultTextInFlight
 	case spec.MaxInFlight == 0:
@@ -616,11 +649,15 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, pool tas
 			Name: name, Endpoint: spec.Endpoint, Model: spec.Model, Image: img,
 			Constrain: spec.Constrained, MaxOutputTokens: spec.MaxOutputTokens, Timeout: timeout,
 			Boxes:       chat.Boxes{Order: spec.Boxes.Order, Space: spec.Boxes.Space},
-			Temperature: spec.Temperature, OutputLimit: spec.OutputLimitParam,
+			Temperature: spec.Temperature, OutputLimit: spec.OutputLimitParam, MaxInput: spec.MaxInput,
 		}
 		if rd, err = chat.NewReader(cfg); err == nil {
-			// The same configuration reaches the same model for a figure.
+			// The same configuration reaches the same model for a figure
+			// and for an extraction.
 			describer, err = chat.NewDescriber(cfg)
+		}
+		if err == nil {
+			extractor, err = chat.NewExtractor(cfg)
 		}
 	case "layout":
 		rd, err = layout.New(layout.Config{Name: name, Endpoint: spec.Endpoint, Image: img, Timeout: timeout})
@@ -629,16 +666,16 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, pool tas
 		// where a call goes and what it asks is refused: a document that
 		// names a model here expects one to read the page.
 		if spec.Endpoint != "" || spec.Model != "" {
-			return nil, nil, pool, nil, errors.New("a text reader reads a page from the text its file carries and calls no endpoint: endpoint and model are not its members")
+			return nil, nil, nil, pool, nil, errors.New("a text reader reads a page from the text its file carries and calls no endpoint: endpoint and model are not its members")
 		}
 		rd, err = text.New(text.Config{Name: name, Image: img})
 	case "stub":
-		rd, describer = &stub.Reader{}, &stub.Describer{}
+		rd, describer, extractor = &stub.Reader{}, &stub.Describer{}, stub.Extractor{}
 	default:
 		err = fmt.Errorf("adapter is %q, want chat, layout, text or stub", spec.Adapter)
 	}
 	if err != nil {
-		return nil, nil, pool, nil, err
+		return nil, nil, nil, pool, nil, err
 	}
-	return rd, describer, pool, unapplied, nil
+	return rd, describer, extractor, pool, unapplied, nil
 }
