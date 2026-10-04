@@ -30,6 +30,10 @@ func TestTheKeyLayout(t *testing.T) {
 		{blob.ImageKey("prs_01", 12, 3, ""), "parses/prs_01/pages/12.3.bin"},
 		{blob.AssembledPageKey("prs_01", 12, 1), "parses/prs_01/pages/12.a1.json"},
 		{blob.IndexKey("prs_01", 1), "parses/prs_01/document.1.json"},
+		{blob.FieldKey("prs_01", "line-items", 4), "parses/prs_01/fields/line-items.4.json"},
+		{blob.FieldInputKey("prs_01", "line-items", 2), "parses/prs_01/fields/line-items.2.input.json"},
+		{blob.FieldProgressKey("prs_01", "line-items", 3), "parses/prs_01/fields/line-items.3.progress.json"},
+		{blob.FigureKey("prs_01", "12.3", 5), "parses/prs_01/figures/12.3.5.json"},
 	} {
 		if c.got != c.want {
 			t.Errorf("the key is %q, want %q", c.got, c.want)

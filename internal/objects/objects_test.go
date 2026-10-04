@@ -11,6 +11,7 @@ import (
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/objects"
 )
 
@@ -73,5 +74,63 @@ func TestAPageAndAnIndexAreReadAsTheyWereWritten(t *testing.T) {
 	}
 	if failed := objects.Failed(5, 3, "page_unreadable", "no"); failed.State != document.PageFailed || failed.Attempts != 3 || failed.Error.Code != "page_unreadable" {
 		t.Fatalf("a failed page is %+v", failed)
+	}
+}
+
+// TestADescriptionIsReadOntoItsFigure: a figure's description is an object
+// of its own, by the ref of the figure's block, and a page is read with the
+// descriptions of its figures written onto them. The page's own blocks are
+// not written to: whoever else holds them sees them as they were. A
+// description that is gone, a ref with no key, and a ref that is no
+// figure's leave their blocks as they were, and an object that is no
+// description is an error that names its key.
+func TestADescriptionIsReadOntoItsFigure(t *testing.T) {
+	ctx := context.Background()
+	store := blob.NewMemory()
+	kept := figures.Description{Type: "chart", Description: "Revenue by quarter.", Labels: []string{"Q1", "Q2"}, Model: "m"}
+	if err := objects.Put(ctx, store, "parses/p/figures/1.2.3.json", kept); err != nil {
+		t.Fatal(err)
+	}
+	var back figures.Description
+	if err := objects.Get(ctx, store, "parses/p/figures/1.2.3.json", &back); err != nil || back.Description != kept.Description || len(back.Labels) != 2 {
+		t.Fatalf("the description read back is %+v, %v", back, err)
+	}
+	if err := objects.Put(ctx, store, "parses/p/unencodable.json", func() {}); err == nil || !strings.Contains(err.Error(), "unencodable.json") {
+		t.Fatalf("a value that does not encode: %v", err)
+	}
+
+	shared := []document.Block{
+		{Ref: "1.1", Kind: document.KindText, Text: "A paragraph."},
+		{Ref: "1.2", Kind: document.KindFigure},
+		{Ref: "1.3", Kind: document.KindFigure, Text: "printed"},
+		{Ref: "1.4", Kind: document.KindFigure},
+	}
+	pages := []document.Page{{Number: 1, Blocks: shared}, {Number: 2, Blocks: []document.Block{{Ref: "2.1", Kind: document.KindFigure}}}}
+	keys := map[string]string{
+		"1.1": "parses/p/figures/1.2.3.json", // no figure
+		"1.2": "parses/p/figures/1.2.3.json",
+		"1.3": "parses/p/figures/gone.json", // not there any more
+		"1.4": "",                           // lost by its run
+		"9.9": "parses/p/figures/1.2.3.json",
+	}
+	if err := objects.Describe(ctx, store, pages, keys); err != nil {
+		t.Fatal(err)
+	}
+	got := pages[0].Blocks
+	if got[1].Description != kept.Description || got[1].Figure == nil || got[1].Figure.Type != "chart" || got[1].Text != "Q1\nQ2" {
+		t.Fatalf("the described figure is %+v", got[1])
+	}
+	if got[0].Description != "" || got[2].Description != "" || got[2].Text != "printed" || got[3].Description != "" || pages[1].Blocks[0].Description != "" {
+		t.Fatalf("blocks with no description to read were written: %+v", got)
+	}
+	if shared[1].Description != "" {
+		t.Fatal("the page's own blocks were written to")
+	}
+
+	if err := store.Put(ctx, "parses/p/figures/bad.json", []byte("["), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := objects.Describe(ctx, store, pages, map[string]string{"2.1": "parses/p/figures/bad.json"}); err == nil || !strings.Contains(err.Error(), "bad.json") {
+		t.Fatalf("an object that is no description: %v", err)
 	}
 }

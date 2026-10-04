@@ -82,6 +82,34 @@ func IndexKey(parseID string, token int64) string {
 	return fmt.Sprintf("%sdocument.%d.json", ParsePrefix(parseID), token)
 }
 
+// FieldKey is where the result of an extraction is stored, the object in
+// the shape of the caller's schema and its citations:
+// "parses/<parse>/fields/<name>.<token>.json". A field's name holds no dot,
+// so the token is what follows the first.
+func FieldKey(parseID, name string, token int64) string {
+	return fmt.Sprintf("%sfields/%s.%d.json", ParsePrefix(parseID), name, token)
+}
+
+// FieldInputKey is where the document is stored as one extraction reads
+// it, cut into the windows its calls are given:
+// "parses/<parse>/fields/<name>.<token>.input.json". The token is the one
+// of the claim that cut it, and every later claim reads it from there.
+func FieldInputKey(parseID, name string, token int64) string {
+	return fmt.Sprintf("%sfields/%s.%d.input.json", ParsePrefix(parseID), name, token)
+}
+
+// FieldProgressKey is where an extraction that has another call to make
+// stores what it has so far: "parses/<parse>/fields/<name>.<token>.progress.json".
+func FieldProgressKey(parseID, name string, token int64) string {
+	return fmt.Sprintf("%sfields/%s.%d.progress.json", ParsePrefix(parseID), name, token)
+}
+
+// FigureKey is where what a describer said of a figure is stored, by the
+// ref of the figure's block: "parses/<parse>/figures/<ref>.<token>.json".
+func FigureKey(parseID, ref string, token int64) string {
+	return fmt.Sprintf("%sfigures/%s.%d.json", ParsePrefix(parseID), ref, token)
+}
+
 // extensions is the file extension of each media type a working copy or a
 // page image has. The table is fixed and is not the machine's: the standard
 // library's lookup reads files that differ from one machine to the next, and

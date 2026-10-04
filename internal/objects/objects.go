@@ -3,19 +3,24 @@
 
 // Package objects is the shape of what a parse writes to the object store,
 // and the read and the write of each: the manifest prepare leaves, a page's
-// stored result, and the document index. A worker writes them and the API
-// reads them, so the shapes are defined once, here. Where each is kept is
+// stored result, the document index, what an extraction keeps and
+// produces, and a figure's description. A worker writes them and the API
+// reads them, so the shapes are defined once, here, or in the package that
+// computes them. Where each is kept is
 // specs/002-object-model.md; the keys are in internal/blob.
 package objects
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/parse"
 )
 
@@ -85,8 +90,10 @@ type Index struct {
 	Keys []Entry `json:"keys"`
 }
 
-// put writes a value as JSON.
-func put(ctx context.Context, store blob.Store, key string, v any) error {
+// Put writes a value as JSON. It is the write of every shape with nothing
+// to add: an extraction's input, its progress and its result
+// (internal/extract), and a figure's description (internal/figures).
+func Put(ctx context.Context, store blob.Store, key string, v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("objects: encoding %s: %w", key, err)
@@ -94,9 +101,9 @@ func put(ctx context.Context, store blob.Store, key string, v any) error {
 	return store.Put(ctx, key, raw, contentType)
 }
 
-// get reads a value stored as JSON. A key that holds nothing is
-// blob.ErrNotFound.
-func get(ctx context.Context, store blob.Store, key string, into any) error {
+// Get reads a value stored as JSON, the read of every shape Put writes. A
+// key that holds nothing is blob.ErrNotFound.
+func Get(ctx context.Context, store blob.Store, key string, into any) error {
 	raw, _, err := store.Get(ctx, key)
 	if err != nil {
 		return err
@@ -109,14 +116,14 @@ func get(ctx context.Context, store blob.Store, key string, into any) error {
 
 // PutPage stores a page's result.
 func PutPage(ctx context.Context, store blob.Store, key string, p Page) error {
-	return put(ctx, store, key, p)
+	return Put(ctx, store, key, p)
 }
 
 // GetPage reads a page's result. A page read from the store always has its
 // list of blocks, empty when it has none.
 func GetPage(ctx context.Context, store blob.Store, key string) (Page, error) {
 	var p Page
-	if err := get(ctx, store, key, &p); err != nil {
+	if err := Get(ctx, store, key, &p); err != nil {
 		return Page{}, err
 	}
 	if p.Page.Blocks == nil {
@@ -127,13 +134,13 @@ func GetPage(ctx context.Context, store blob.Store, key string) (Page, error) {
 
 // PutIndex stores a document index.
 func PutIndex(ctx context.Context, store blob.Store, key string, idx Index) error {
-	return put(ctx, store, key, idx)
+	return Put(ctx, store, key, idx)
 }
 
 // GetIndex reads a document index.
 func GetIndex(ctx context.Context, store blob.Store, key string) (Index, error) {
 	var idx Index
-	if err := get(ctx, store, key, &idx); err != nil {
+	if err := Get(ctx, store, key, &idx); err != nil {
 		return Index{}, err
 	}
 	return idx, nil
@@ -182,4 +189,58 @@ func GetPages(ctx context.Context, store blob.Store, keys []string) ([]Page, err
 	}
 	wg.Wait()
 	return out, first
+}
+
+// Describe writes onto the figure blocks of pages the descriptions stored
+// under keys, which are by the ref of each figure's block. It is how a
+// figure that was described is read with its description, wherever its
+// page is read: the page's stored result is as its reader left it, and the
+// description is an object of its own. A description that is not there any
+// more leaves its figure as it was.
+func Describe(ctx context.Context, store blob.Store, pages []document.Page, keys map[string]string) error {
+	type target struct {
+		block *document.Block
+		key   string
+	}
+	var targets []target
+	for p := range pages {
+		copied := false
+		for i := range pages[p].Blocks {
+			key, has := keys[pages[p].Blocks[i].Ref]
+			if !has || key == "" || pages[p].Blocks[i].Kind != document.KindFigure {
+				continue
+			}
+			// The blocks may be shared with whoever read the page: the page
+			// is given a list of its own before one of them is written.
+			if !copied {
+				pages[p].Blocks, copied = slices.Clone(pages[p].Blocks), true
+			}
+			targets = append(targets, target{block: &pages[p].Blocks[i], key: key})
+		}
+	}
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		first error
+		limit = make(chan struct{}, reads)
+	)
+	for _, t := range targets {
+		wg.Go(func() {
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			var d figures.Description
+			err := Get(ctx, store, t.key, &d)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, blob.ErrNotFound):
+			case err != nil && first == nil:
+				first = fmt.Errorf("%s: %w", t.key, err)
+			case err == nil:
+				d.Onto(t.block)
+			}
+		})
+	}
+	wg.Wait()
+	return first
 }
