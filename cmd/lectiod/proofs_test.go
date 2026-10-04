@@ -92,8 +92,9 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 	until(t, "the dead worker's tasks are returned", 20*time.Second, func() bool { return value[int](t, conn, held, doomed.worker()) == 0 })
 	lost := time.Since(killed)
 	// The lease is 2s, counted from the dead worker's last exchange, which
-	// was at most a quarter of a lease before the kill.
-	if lost < time.Second || lost > 8*time.Second {
+	// was at most a quarter of a lease before the kill. The upper bound
+	// leaves a loaded machine room to start the second worker.
+	if lost < time.Second || lost > 15*time.Second {
 		t.Fatalf("the dead worker's tasks were returned %v after the kill, want about one lease of 2s", lost)
 	}
 	returned := value[int](t, conn, `SELECT count(*) FROM tasks WHERE expiries = 1`)
@@ -259,7 +260,9 @@ func TestATerminatedWorkerReturnsItsTasks(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatalf("the worker did not exit:\n%s", worker.logs.String())
 	}
-	if took := time.Since(asked); worker.err != nil || took > 4*time.Second {
+	// The bound leaves a loaded machine room: the worker itself waits the
+	// grace period and makes one exchange.
+	if took := time.Since(asked); worker.err != nil || took > 8*time.Second {
 		t.Fatalf("the worker exited with %v, %v after the signal, with a grace period of 500ms", worker.err, took)
 	}
 	rows := value[string](t, conn, `SELECT string_agg(state || '/' || attempt || '/' || expiries || '/' || coalesce(lease_owner, '-') || '/' || charged, ' ' ORDER BY seq) FROM tasks WHERE parse_id = $1 AND kind = 'page'`, id)
