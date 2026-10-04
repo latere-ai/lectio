@@ -19,9 +19,10 @@
 # is set. To read them with a model, mount a file of Reader and Policy
 # documents into lectiod and point LECTIO_CONFIG at it.
 #
-# The stack has no identity provider. LECTIO_OIDC_ISSUERS in the
-# environment of the command names yours, and a token it issued for the
-# audience `lectio` is what a request carries.
+# The stack has no identity provider, and lectiod does not start without
+# one to verify a caller against. LECTIO_OIDC_ISSUERS in the environment
+# of the command names yours, the command stops without it, and a token
+# your provider issued for the audience `lectio` is what a request carries.
 
 name: lectio
 
@@ -116,7 +117,7 @@ services:
       LECTIO_S3_SECRET_KEY: lectio-example-secret-key
       LECTIO_S3_PATH_STYLE: "true"
       LECTIO_CONVERTER_URL: unix:///run/lectio/convert.sock
-      LECTIO_OIDC_ISSUERS: ${LECTIO_OIDC_ISSUERS:-https://issuer.example}
+      LECTIO_OIDC_ISSUERS: ${LECTIO_OIDC_ISSUERS:?name your identity provider, as in LECTIO_OIDC_ISSUERS=https://issuer.example}
       LECTIO_OIDC_AUDIENCE: lectio
     ports:
       - "127.0.0.1:8080:8080"

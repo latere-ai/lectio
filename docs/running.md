@@ -36,8 +36,10 @@ parses and their tasks, an S3-compatible object store for the bytes,
 `lectiod` in the role `all`, which is the API and a worker in one
 process, and the conversion sidecar on a socket with no network.
 
-The stack has no identity provider of its own. Name yours when you start
-it, and use a token it issued for the audience `lectio`:
+The stack has no identity provider of its own, and `lectiod` does not
+start without one to verify a caller against. Name yours when you start
+it, and use a token it issued for the audience `lectio`. Without
+`LECTIO_OIDC_ISSUERS` the command stops and says so:
 
 ```sh
 LECTIO_OIDC_ISSUERS=https://issuer.example \

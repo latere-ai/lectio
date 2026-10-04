@@ -334,8 +334,9 @@ Built:
   a file: Postgres and the object store start and the bucket is made,
   and `lectiod` of this build reads the stack's settings and exits,
   since it starts with `LECTIO_DEV=true` only. The stack has no stubs
-  and no identity provider, so a caller brings a token of its own
-  issuer.
+  and no identity provider: the command stops unless
+  `LECTIO_OIDC_ISSUERS` names one, and a caller brings a token that
+  issuer wrote.
 
 - `deploy_test.go`, the tests of the deploy tree, and 2 jobs of the
   verify workflow. From the files as written, on every run of the gate:
