@@ -416,14 +416,19 @@ func TestTheChargeFollowsCostAndUse(t *testing.T) {
 				value[int64](h, `SELECT vtime FROM project_service WHERE group_id = 'acme'`),
 				value[int64](h, `SELECT vtime FROM class_service WHERE class = 0`)
 		}
-		// moved claims one page, settles it with the units a case gives, and
+		// moved claims one task, settles it with the units a case gives, and
 		// answers how far the 3 virtual times moved, claim and settle
-		// together.
-		moved := func(reader string, units int) (group, project, class int64) {
+		// together. The charge is made at the claim, when the work is
+		// chosen: the reader's cost, or 1 for a task that calls no model.
+		moved := func(reader string, cost, units int) (group, project, class int64) {
 			g0, p0, c0 := vtime()
 			c := w.claim(1, 1)[0]
 			if c.Reader != reader {
 				t.Fatalf("the claim took a slot of %s, want %s", c.Reader, reader)
+			}
+			if g, _, _ := vtime(); g-g0 != int64(cost)*500000 || h.task(c.Parse, c.Task).Charged != cost {
+				t.Fatalf("the claim of a task of cost %d moved the group's virtual time by %d and recorded %d units",
+					cost, g-g0, h.task(c.Parse, c.Task).Charged)
 			}
 			settle := done(c)
 			settle.Units = units
@@ -433,27 +438,27 @@ func TestTheChargeFollowsCostAndUse(t *testing.T) {
 		}
 
 		// Weights: group 2, project 5, class 4. A unit is 1,000,000.
-		if g, p, c := moved("small", 1); g != 500000 || p != 200000 || c != 250000 {
+		if g, p, c := moved("small", 1, 1); g != 500000 || p != 200000 || c != 250000 {
 			t.Fatalf("a page of cost 1 moved the virtual times by %d, %d, %d", g, p, c)
 		}
 		// A page that was read by the small reader and then by the large one
 		// used both: 1 + 5.
-		if g, p, c := moved("small", 6); g != 3000000 || p != 1200000 || c != 1500000 {
+		if g, p, c := moved("small", 1, 6); g != 3000000 || p != 1200000 || c != 1500000 {
 			t.Fatalf("a page that used 6 units moved the virtual times by %d, %d, %d", g, p, c)
 		}
 		// The parse's other pages and its assemble, which costs 1 like any
 		// task that calls no model.
 		w.settle(done(w.claim(1, 1)[0]), done(w.claim(1, 1)[0]))
-		if g, p, c := moved("", 1); g != 500000 || p != 200000 || c != 250000 {
+		if g, p, c := moved("", 1, 1); g != 500000 || p != 200000 || c != 250000 {
 			t.Fatalf("an assemble task moved the virtual times by %d, %d, %d", g, p, c)
 		}
 
-		if g, p, c := moved("large", 5); g != 2500000 || p != 1000000 || c != 1250000 {
+		if g, p, c := moved("large", 5, 5); g != 2500000 || p != 1000000 || c != 1250000 {
 			t.Fatalf("a page of cost 5 moved the virtual times by %d, %d, %d", g, p, c)
 		}
 		// A blank page under the reader of cost 5 used nothing, and is
 		// corrected to the floor of 1.
-		if g, p, c := moved("large", 0); g != 500000 || p != 200000 || c != 250000 {
+		if g, p, c := moved("large", 5, 0); g != 500000 || p != 200000 || c != 250000 {
 			t.Fatalf("a blank page under a reader of cost 5 moved the virtual times by %d, %d, %d", g, p, c)
 		}
 		if got := h.task("prs_large", "page-2"); got.Charged != 1 {

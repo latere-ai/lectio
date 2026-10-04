@@ -85,8 +85,10 @@ func TestAPoolAdmitsNoMoreThanItsBound(t *testing.T) {
 						}
 					}
 					// The calls are in flight for as long as a worker holds
-					// them: they end before the settle that frees the slots.
-					time.Sleep(time.Millisecond)
+					// them, and end before the settle that frees the slots.
+					// They last several exchanges, so calls that another
+					// worker was handed meanwhile would be counted with them.
+					time.Sleep(15 * time.Millisecond)
 					flying.Add(-int64(len(reply.Claims)))
 					for _, c := range reply.Claims {
 						if c.Kind == tasks.Page {
