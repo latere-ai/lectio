@@ -79,6 +79,10 @@ func TestAReportSaysWhichFilesMeetTheirBars(t *testing.T) {
 	r.Add(Result{File: "slides.pptx", Format: "presentation", Class: Converted, Error: "the parse ended failed: unsupported_media_type"})
 	r.Add(Result{File: "odd.bin", Format: "unknown", Class: "guessed", Scores: Scores{Pages: 1}})
 	r.Add(Result{File: "empty.txt", Format: "plain text", Class: Exact, Scores: Scores{Kinds: 1, Order: 1}})
+	if strings.Contains(r.Markdown(), "Left out") {
+		t.Fatal("a run that left nothing out says it did")
+	}
+	r.Skipped = []string{"`memo.rtf`: no converter was named"}
 
 	failed := r.Failed()
 	want := []string{
@@ -100,7 +104,7 @@ func TestAReportSaysWhichFilesMeetTheirBars(t *testing.T) {
 		"| `scan.pdf` | scanned PDF | `scan` | 4 | 40 | 8.00% | 85.0% | 100.0% | 100.0% | - | 11.0 | 0 | 0 | missed |",
 		"| `notes.txt` | plain text | `exact` | 1 | 3 | 0.00% | 100.0% | - | 100.0% | - | 0.0 | 0 | 0 | met |",
 		"| `slides.pptx` | presentation | `converted` | | | | | | | | | | | failed |",
-		"3 of 6 files meet their bars.",
+		"3 of 6 files meet their bars.\n\nLeft out of this run:\n\n- `memo.rtf`: no converter was named\n\n## Bars",
 		"| `scan` | 5% | 90% | 95% | 95% | 85% |",
 		"### `scan.pdf`\n\n- missed: cer 8.00% is over 5.00%\n- missed: kinds 85.0% is under 90.0%\n- 1.2 title is found as heading: \"Tide\"\n",
 		"### `notes.txt`\n\n- a note on a file that met its bars\n",
@@ -122,7 +126,7 @@ func TestAReportSaysWhichFilesMeetTheirBars(t *testing.T) {
 	if err := json.Unmarshal(raw, &back); err != nil {
 		t.Fatal(err)
 	}
-	if len(back.Files) != 6 || back.Reader != "engine" || back.Bars[Scan].CER != 0.05 || back.Files[0].Model != "some-model" ||
+	if len(back.Files) != 6 || len(back.Skipped) != 1 || back.Reader != "engine" || back.Bars[Scan].CER != 0.05 || back.Files[0].Model != "some-model" ||
 		back.Files[1].Misses[0] != (Miss{"cer", 0.08, 0.05}) || back.Files[0].Scores.Boxes == nil || back.Files[1].Scores.Boxes != nil {
 		t.Fatalf("the report as JSON does not hold the same numbers:\n%s", raw)
 	}

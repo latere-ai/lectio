@@ -140,6 +140,9 @@ type Report struct {
 	Server string         `json:"server"`
 	Bars   map[Class]Bars `json:"bars"`
 	Files  []Result       `json:"files"`
+	// Skipped names the files of the corpus the run left out, each with
+	// why, so a report of fewer files does not read as the whole corpus.
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // NewReport starts a report that carries the bars it is judged by.
@@ -213,7 +216,14 @@ func (r *Report) Markdown() string {
 			f.File, f.Format, f.Class, s.Pages, s.Blocks, percent(s.CER, 2), percent(s.Kinds, 1),
 			optional(s.Cells), percent(s.Order, 1), optional(s.Boxes), f.SecondsPerPage, f.InputTokens, f.OutputTokens, verdict)
 	}
-	fmt.Fprintf(&b, "\n%d of %d files meet their bars.\n\n", len(r.Files)-len(r.Failed()), len(r.Files))
+	fmt.Fprintf(&b, "\n%d of %d files meet their bars.\n", len(r.Files)-len(r.Failed()), len(r.Files))
+	if len(r.Skipped) > 0 {
+		b.WriteString("\nLeft out of this run:\n\n")
+		for _, why := range r.Skipped {
+			fmt.Fprintf(&b, "- %s\n", why)
+		}
+	}
+	b.WriteByte('\n')
 
 	b.WriteString("## Bars\n\n")
 	b.WriteString(BarsTable())
