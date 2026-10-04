@@ -91,7 +91,7 @@ func Routes() []Route {
 
 // RouteOf finds the row of one operation. ok is false for an operation
 // the contract does not have.
-func RouteOf(method, path string) (rt Route, ok bool) {
+func RouteOf(method, path string) (Route, bool) {
 	for _, rt := range Routes() {
 		if rt.Method == method && rt.Path == path {
 			return rt, true

@@ -130,7 +130,7 @@ func TestADenyIsADecision(t *testing.T) {
 	}
 	// A read of a stored object answers a refused one as a missing one.
 	missing := fault.New(fault.ParseNotFound, "no parse has this id")
-	if got := d.Or(missing); got != error(missing) {
+	if got := d.Or(missing); !errors.Is(got, missing) {
 		t.Errorf("Or gives %v, want the error it was passed", got)
 	}
 }
