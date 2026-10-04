@@ -318,8 +318,11 @@ Built:
 - `deploy/components/converter` and `deploy/examples/with-converter`:
   the sidecar's Deployment, Service, account and policies. Its
   container has a read-only root file system and scratch space at
-  `/tmp`. No cluster has run them, and the sidecar has not been run
-  with a read-only root file system.
+  `/tmp`. No cluster has run them. The image has run that way under a
+  container engine: with a read-only root file system, scratch space at
+  `/tmp` and no capability it converts the fixture of each converted
+  format, and with no network, on a socket it shares with the server's
+  image, a parse of the presentation fixture succeeds.
 
 - `deploy/examples/compose.yaml` and `docs/running.md`: Postgres, an
   object store with its bucket, `lectiod` in the role `all` with the
