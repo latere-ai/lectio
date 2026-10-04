@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.1.1 - 2026-10-04
+
 - Fixed: a release publishes its images. The pipeline of `v0.1.0` stopped
   before it tagged them: the first bill of materials is written into a
   directory the job had not made yet. That tag has no image under its
