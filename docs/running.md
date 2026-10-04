@@ -123,6 +123,8 @@ the page goes to the next reader of the chain at the cost of one call:
 - a table set without ruling, a form, and text that stands side by side
   and is not columns of prose;
 - a page with a watermark or any other text set at an angle;
+- a page with a word the file holds and the page does not show: one
+  under a bar painted over it, or one in the paper's color;
 - a page whose font says nothing of what its glyphs are, or whose text
   does not read as text.
 

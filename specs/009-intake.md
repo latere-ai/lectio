@@ -537,8 +537,9 @@ page, and one that reads the image reads it.
 
 Not read: text an annotation or a form field shows, which the renderer
 does not draw either; whether a clip or a shape painted over a word
-hides it; and the document's structure tree, which says what a tagged
-PDF's author meant each run of text to be.
+hides it, which a reader judges from the page's image
+([[017-agent-driven-parsing]]); and the document's structure tree,
+which says what a tagged PDF's author meant each run of text to be.
 
 ### Blank pages
 

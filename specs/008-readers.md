@@ -373,9 +373,11 @@ sends it a page and nothing to say about how to read it.
 paragraphs, headings where the size and the weight of the type say so,
 list items, tables whose ruling closes every cell, and a figure where
 the page paints one, with the words inside it as its text and no
-description. Its characters are the file's own. It reads no meaning: a
-formula is the characters the file holds, and a running header and a
-page number are text, which assembly tells from the pages around them
+description. Its characters are the file's own. It reads nothing off
+the page's image, and looks at it only to see that each word shows
+where the file places it. It reads no meaning: a formula is the
+characters the file holds, and a running header and a page number are
+text, which assembly tells from the pages around them
 ([[010-assembly]]). What it cannot read without guessing it declines,
 and the page goes to the next reader. A page it declines costs one
 call to that reader, and a page it reads wrongly costs the result, so

@@ -169,7 +169,9 @@ the file holds of the page: its words, each with where it is drawn, the
 size it is drawn at and what its font says of it, the upright
 rectangles the page paints, and the boxes around everything else it
 paints ([[009-intake]]). From that alone the reader builds blocks, in
-the positions the file states.
+the positions the file states. It reads nothing off the page's image,
+and looks at it for one thing: that each word shows where the file
+places it.
 
 **What it builds.**
 
@@ -200,6 +202,7 @@ reason is one fixed sentence that holds nothing the page says.
 | its text is not whole | the renderer read up to its bound of characters or of painted objects ([[009-intake]]) |
 | no text is drawn on it | every word is hidden: drawn with no fill and no stroke, as the text a recognition pass lays under a scan is. Hidden words are never read |
 | a word is drawn at an angle | any word that does not run from left to right along the page: a watermark, a rotated table, a stamp in the margin |
+| a word is in the file and not on the page | a word of 3 letters and digits or more whose place in the page's image, at the height of its small letters, is one flat color: it lies under a bar painted over it, or is drawn in the paper's color. The positions do not say what was painted last, and the image does |
 | a character has no Unicode | any character the font maps to nothing or maps wrongly, a control character, a private one that is not a lone bullet before a line, a code Unicode leaves unassigned |
 | the text reads as decoded twice | 2 or more of the pairs of characters that one character becomes when UTF-8 is read as a single-byte encoding |
 | the text is not mostly text | under half of its characters are letters or digits |
@@ -222,6 +225,7 @@ result of earlier rules is never taken for a result of these.
 | `minLetters` | 0.5 | the least share of letters and digits. Raised, pages of dotted leaders and of notation are declined; lowered, pages whose glyphs map to symbols are read |
 | `mojibakePairs` | 2 | the pairs a double decoding leaves. At 1, a page that quotes one such pair is declined |
 | `maxVowelless`, `vowelSample` | 0.15, 20 | the share of plain words with no vowel, and the fewest words the share is judged on. Lowered, pages of identifiers are declined; raised, more pages of wrong letters are read |
+| `flat`, `seenLength`, `seenBand` | 24 of 255, 3, 0.5 sizes | how little the samples of a word's place in the page's image may differ for the word to count as not drawn, the fewest letters a word holds to be looked for, and the height above its baseline it is looked for in. `flat` raised, pale type on a tint declines its page; lowered, the noise of an image hides a covered word. `seenBand` raised toward the line's height, a word under a bar that leaves paper above and below it counts as drawn |
 | `maxRule` | 3 points | the thickest a rectangle may be and count as a line. Raised, a thin bar of a chart is ruling |
 | `snap` | 1.5 points | how far apart 2 positions may lie and be one line of a table. Raised, 2 lines set tight become one; lowered, a line drawn as 2 strokes becomes 2 |
 | `edgeCover` | 0.9 | the share of a cell's side that ruling must cover. Lowered, a dash of ruling splits a spanning cell; raised, a line that stops short of a corner joins 2 cells |
@@ -280,9 +284,11 @@ rendered at 160 dpi and stored with its result.
   its text is not what the page draws.
 - A word broken at the end of a line keeps its hyphen, since whether
   the hyphen is the word's own is not known.
-- Text that a shape or a clip hides, and text an annotation or a form
-  field shows, are read as the file holds them, which is not as the
-  page shows them.
+- A word under a flat shape, or in the paper's color, declines its
+  page. A word under a picture, and one a clip cuts away over a ground
+  that is not flat, cannot be told from a word that shows, and is read
+  as the file holds it. Text an annotation or a form field shows is not
+  in the page's text, and the renderer does not draw it either.
 
 ### Grain
 

@@ -84,8 +84,9 @@ refused before it is pushed.
   each with its box. It declines, at the cost of one call to the next
   reader, a scan with or without a recognition layer, a page that is
   mostly picture, a table set without ruling, text side by side that is
-  not columns of prose, text set at an angle, and text whose characters
-  have no Unicode or do not read as text. A parse that names a `text`
+  not columns of prose, text set at an angle, a word that lies under a
+  bar painted over it or is drawn in the paper's color, and text whose
+  characters have no Unicode or do not read as text. A parse that names a `text`
   reader gets it alone and fails the pages it declines with
   `page_unreadable`. Changed in the contract: a page's `source`, and
   its entry in the document, has a third value, `text_layer`, beside
