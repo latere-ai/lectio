@@ -173,6 +173,18 @@ func parsed(t *testing.T, base, fixture, name string) map[string]any {
 		t.Fatalf("upload of %s: %d %s", name, status, raw)
 	}
 	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=30")
+	// A parse that outlasts the wait is answered 202 and read until it
+	// ends: a loaded machine under the race detector takes longer than
+	// one wait to convert and render a file.
+	for deadline := time.Now().Add(5 * time.Minute); status == http.StatusAccepted && time.Now().Before(deadline); {
+		time.Sleep(200 * time.Millisecond)
+		if status, parse, raw = call(t, "GET", base+"/v1/parses/"+parse["id"].(string), "dev", nil); status != http.StatusOK {
+			break
+		}
+		if state := parse["state"]; state == "queued" || state == "running" {
+			status = http.StatusAccepted
+		}
+	}
 	if status != http.StatusOK {
 		t.Fatalf("parse of %s: %d %s", name, status, raw)
 	}
