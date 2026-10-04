@@ -208,8 +208,18 @@ func TestSoak(t *testing.T) {
 	if made < total*pagesEach {
 		t.Fatalf("the reader was called %d times for %d pages", made, total*pagesEach)
 	}
-	t.Logf("soak: %d parses of %d pages by %d workers in %v, with %d workers killed; the reader was called %d times, %d of them for a page that was read again after a kill",
-		total, pagesEach, fleet, took.Round(time.Second), kills, made, made-total*pagesEach)
+	// The meters equal a recount of what the settles recorded: every page
+	// once, and no more calls than the reader saw.
+	recount := value[string](t, conn, `SELECT sum(pages_done) || '/' || sum(calls) || '/' || sum(input_tokens) || '/' || sum(output_tokens) FROM parses`)
+	metered := meter(t, api.base, token(), "stub")
+	if calls := value[int](t, conn, `SELECT sum(calls) FROM usage`); metered != recount || !strings.HasPrefix(metered, strconv.Itoa(total*pagesEach)+"/") || calls > made {
+		t.Fatalf("the meters read %s and the parses recorded %s; %d calls are metered of the %d the reader saw", metered, recount, calls, made)
+	}
+	if rows := value[int](t, conn, `SELECT count(*) FROM usage`); rows > 2 {
+		t.Fatalf("the meter holds %d rows for one group, one owner and one reader over the hours of the run", rows)
+	}
+	t.Logf("soak: %d parses of %d pages by %d workers in %v, with %d workers killed; the reader was called %d times, %d of them for a page that was read again after a kill; the meters read %s",
+		total, pagesEach, fleet, took.Round(time.Second), kills, made, made-total*pagesEach, metered)
 }
 
 // TestThroughput: 25 worker processes with 200 slots and a stub reader of

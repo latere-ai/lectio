@@ -236,12 +236,30 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 	if scan["state"] != "succeeded" || scan["labels"].(map[string]any)["batch"] != "oct" {
 		t.Fatalf("the parse of an image ended %v", scan)
 	}
-	// The planned routes, and describing figures, answer 501.
-	for _, route := range []string{"POST /parses/" + scan["id"].(string) + "/figures", "GET /usage", "GET /queue"} {
+	// Describing figures and extraction are not built over the task store
+	// and answer 501.
+	for _, route := range []string{"POST /parses/" + scan["id"].(string) + "/figures", "GET /parses/" + scan["id"].(string) + "/fields"} {
 		method, path, _ := strings.Cut(route, " ")
 		if status, body, _ := call(t, method, base+"/v1"+path, token(), nil); status != http.StatusNotImplemented || body["error"].(map[string]any)["code"] != "not_implemented" {
 			t.Fatalf("%s: %d %v", route, status, body)
 		}
+	}
+	// The meters hold the 4 pages the 2 parses read, each with one call of
+	// the stub, the queue holds no group once both ended, a parse that
+	// ended tells its pages and its end as events, and one with no failed
+	// page has nothing to read again.
+	if got := meter(t, base, token(), "stub"); !strings.HasPrefix(got, "4/4/") {
+		t.Fatalf("the meters of the 2 parses are %s", got)
+	}
+	if status, view, raw := call(t, "GET", base+"/v1/queue", token(), nil); status != http.StatusOK || len(view["groups"].([]any)) != 1 ||
+		view["groups"].([]any)[0].(map[string]any)["parses"] != 0.0 || len(view["pools"].([]any)) != 1 {
+		t.Fatalf("the queue with every parse ended: %d %s", status, raw)
+	}
+	if events := follow(t, base, pdf["id"].(string), "").rest(); len(events) != 5 || len(pagesIn(t, events)) != 3 || events[4].data["state"] != "succeeded" {
+		t.Fatalf("the events of a parse that ended: %v", events)
+	}
+	if status, body, raw := call(t, "POST", at+"/retry", token(), nil); status != http.StatusConflict || code(body) != "conflict" {
+		t.Fatalf("a retry of a parse with every page read: %d %s", status, raw)
 	}
 
 	if err := stop(); err != nil {

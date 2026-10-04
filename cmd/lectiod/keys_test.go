@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -539,6 +540,17 @@ func TestARateLimitOnOneGroupsKeyPausesThatGroupAlone(t *testing.T) {
 	}
 	if answers := strings.Join(pagesOf(t, base, alice, limited, 3), "\n"); strings.Count(answers, `"attempts":1`) != 3 {
 		t.Fatalf("a page that waited out a rate limit was charged an attempt:\n%s", answers)
+	}
+	// The meters of the limited group hold what the gateway served it, the
+	// calls it answered with a rate limit included: 3 pages, a call for
+	// each and for each refusal, and the tokens of the 3 calls that were
+	// served. No worker was killed, so the 2 counts are equal.
+	_, refused = gw.calls()
+	if got, want := meter(t, base, alice, "gateway"), fmt.Sprintf("3/%d/300/60", 3+refused); got != want {
+		t.Fatalf("the meters of the limited group read %s, and the gateway served it %s", got, want)
+	}
+	if got := meter(t, base, bob, "gateway"); got != "3/3/300/60" {
+		t.Fatalf("the meters of the group beside it read %s", got)
 	}
 }
 

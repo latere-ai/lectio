@@ -120,11 +120,21 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if made := strings.Count(string(raw), "\n"); made < parses*pages || made > parses*pages+inFlight {
+	made := strings.Count(string(raw), "\n")
+	if made < parses*pages || made > parses*pages+inFlight {
 		t.Fatalf("the reader was called %d times for %d pages with %d calls in flight at the kill", made, parses*pages, inFlight)
 	}
 	if n := value[int](t, conn, drift); n != 0 {
 		t.Fatalf("%d counters differ from a recount of the rows", n)
+	}
+	// The meters equal a recount of what the settles recorded on the
+	// parses: every page once. A call in flight at the kill was made and
+	// never settled, so the meters hold no more calls than the reader saw,
+	// and fewer by at most the calls in flight at the kill.
+	recount := value[string](t, conn, `SELECT sum(pages_done) || '/' || sum(calls) || '/' || sum(input_tokens) || '/' || sum(output_tokens) FROM parses`)
+	metered := value[int](t, conn, `SELECT sum(calls) FROM usage`)
+	if got := meter(t, api.base, token(), "stub"); got != recount || !strings.HasPrefix(got, strconv.Itoa(parses*pages)+"/") || metered > made || made-metered > inFlight {
+		t.Fatalf("the meters read %s and the parses recorded %s; %d calls are metered of the %d the reader saw, with %d in flight at the kill", got, recount, metered, made, inFlight)
 	}
 }
 

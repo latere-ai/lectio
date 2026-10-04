@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -46,8 +47,14 @@ const (
 	// then waits for as long as the file hold is there. It does not stop
 	// when it is told to: it stands for a call that returns late.
 	gateEnv = "LECTIO_TEST_GATE"
+	// gatePageEnv narrows the gate to the page of that number: every other
+	// page passes it.
+	gatePageEnv = "LECTIO_TEST_GATE_PAGE"
 	// callsEnv names a file every call appends one line to.
 	callsEnv = "LECTIO_TEST_CALLS"
+	// failEnv names a file that lists page numbers. While the file is
+	// there, a call for one of those pages fails for good, at once.
+	failEnv = "LECTIO_TEST_FAIL"
 )
 
 // child runs lectiod's own main, which is configured by the environment the
@@ -82,7 +89,11 @@ func (s *staged) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 			return reader.Result{}, reader.Errorf(reader.Permanent, "the calls file: %v", err)
 		}
 	}
-	if dir := os.Getenv(gateEnv); dir != "" {
+	if listed, err := os.ReadFile(os.Getenv(failEnv)); err == nil && slices.Contains(strings.Fields(string(listed)), strconv.Itoa(page.Number)) {
+		return reader.Result{}, reader.Errorf(reader.Permanent, "the page cannot be taken")
+	}
+	only := os.Getenv(gatePageEnv)
+	if dir := os.Getenv(gateEnv); dir != "" && (only == "" || only == strconv.Itoa(page.Number)) {
 		if err := os.WriteFile(filepath.Join(dir, "reached"), nil, 0o600); err != nil {
 			return reader.Result{}, reader.Errorf(reader.Permanent, "the gate: %v", err)
 		}
