@@ -7,8 +7,9 @@
 -- specs/005-parse-graph.md, specs/006-fairness-and-priority.md,
 -- specs/007-model-capacity.md, specs/013-limits-and-usage.md).
 
--- A parse that was read again has until its deadline from the retry, for as
--- long as its submit gave it, so the time it was given is counted from here.
+-- A parse whose failed pages are queued again has as long from the retry as
+-- its submit gave it. The time it was given is its deadline less where the
+-- deadline was counted from: its submit, or its last retry.
 ALTER TABLE parses ADD COLUMN retried_at timestamptz;   -- when its failed pages were last queued again
 
 -- The events of a parse are read from its rows (specs/003-api.md). events

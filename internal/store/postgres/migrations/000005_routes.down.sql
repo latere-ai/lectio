@@ -1,12 +1,12 @@
 -- SPDX-FileCopyrightText: 2026 Latere AI
 -- SPDX-License-Identifier: Apache-2.0
 
--- Back to a parse that fails with page_unreadable whatever its pages failed
--- with, keeps the rows of its failed tasks alone, cannot be read again,
--- counts none of its changes, and is metered on its own row alone, and to a
--- queue that is read by a statement of the store's own.
--- lectio_settled is the one of 000004 again and lectio_settle the one of
--- 000002.
+-- Back to the schema of 000004: a parse fails with page_unreadable whatever
+-- its pages failed with, keeps the rows of its failed tasks alone and cannot
+-- be read again, counts none of its changes, and is metered on its own row
+-- alone. lectio_settled is the one of 000004 again and lectio_settle the one
+-- of 000002. The store of that version reads the queue with a statement of
+-- its own, so the function that reads it goes too.
 
 DROP FUNCTION IF EXISTS lectio_queue(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_usage(text);
@@ -17,11 +17,10 @@ DROP FUNCTION IF EXISTS lectio_changed();
 
 -- lectio_settled as 000004 wrote it. It moves a parse forward when one of
 -- its tasks reaches succeeded or failed, in the transaction that settled the
--- task. The graph of
--- a parse is fixed, so there is no edge to follow: prepare writes the page
--- tasks, the page that takes pages_open to 0 writes assemble, and assemble
--- ends the parse. p_settle is the settle the worker sent, or NULL when the
--- store failed the task itself.
+-- task. The graph of a parse is fixed, so there is no edge to follow:
+-- prepare writes the page tasks, the page that takes pages_open to 0 writes
+-- assemble, and assemble ends the parse. p_settle is the settle the worker
+-- sent, or NULL when the store failed the task itself.
 --
 -- prepare is where the pages of a parse are counted, so it is where the 2
 -- limits on pages hold: a parse that selects more than its allow lets one
