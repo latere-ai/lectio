@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.2.0 - 2026-10-04
+
 - Added: a key per tenant, in the durable server. `LECTIO_KEYS=endpoint`
   reads the pages of each group with a key an endpoint of yours issued
   for that group, so a gateway attributes each tenant's model spend to
