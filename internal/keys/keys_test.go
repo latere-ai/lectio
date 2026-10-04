@@ -561,7 +561,9 @@ func TestWhatIsHeldOfAGroupIsDroppedOnceItStandsNoLonger(t *testing.T) {
 // memory are members a formatter reaches, so the source prints as its kind.
 func TestAnEndpointSourcePrintsNothingItHolds(t *testing.T) {
 	p := newPlane(t)
-	options := Options{URL: p.URL, Token: reader.NewCredential(bearer), HTTP: p.Client()}
+	// The source runs on the stub's clock: the stub dates its keys by it,
+	// and against the wall clock they are expired from that date on.
+	options := Options{URL: p.URL, Token: reader.NewCredential(bearer), HTTP: p.Client(), Now: p.clock.now}
 	e := NewEndpoint(options)
 	key, err := e.Key(ctx, "acme", "org:acme", "prs_1")
 	if err != nil {
