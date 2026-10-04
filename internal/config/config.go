@@ -64,6 +64,10 @@ type Settings struct {
 	// FetchAllow lists the hosts a source URL may name whatever they
 	// resolve to.
 	FetchAllow []string // LECTIO_FETCH_ALLOW
+
+	// ConverterURL is where the conversion sidecar listens. Empty runs
+	// without one, and the formats that need conversion are refused.
+	ConverterURL string // LECTIO_CONVERTER_URL
 }
 
 // FromEnv reads the settings. getenv is os.Getenv, or a test's own. A
@@ -108,6 +112,7 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	s.DatabaseURL = strings.TrimSpace(getenv("LECTIO_DATABASE_URL"))
 	s.DatabasePoolURL = strings.TrimSpace(getenv("LECTIO_DATABASE_POOL_URL"))
 	text("LECTIO_CONFIG", &s.ConfigPath)
+	text("LECTIO_CONVERTER_URL", &s.ConverterURL)
 	if v := strings.TrimSpace(getenv("LECTIO_DEV")); v != "" {
 		dev, err := strconv.ParseBool(v)
 		if err != nil {

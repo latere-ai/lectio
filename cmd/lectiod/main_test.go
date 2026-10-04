@@ -12,8 +12,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +165,100 @@ func TestTheDevServerParsesAFile(t *testing.T) {
 	}
 }
 
+// parsed uploads a fixture, parses it, and returns the parse as it ended.
+func parsed(t *testing.T, base, fixture, name string) map[string]any {
+	t.Helper()
+	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, "dev", testfixtures.Read(t, fixture))
+	if status != http.StatusCreated {
+		t.Fatalf("upload of %s: %d %s", name, status, raw)
+	}
+	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=30")
+	if status != http.StatusOK {
+		t.Fatalf("parse of %s: %d %s", name, status, raw)
+	}
+	return parse
+}
+
+// TestTheDevServerReadsOfficeDocuments takes a Word document and a workbook
+// through the API: each is read from the file itself, with no model.
+func TestTheDevServerReadsOfficeDocuments(t *testing.T) {
+	base, _, _ := started(t, env("LECTIO_DEV", "true", "LECTIO_ADDR", "127.0.0.1:0"))
+
+	report := parsed(t, base, testfixtures.ReportDOCX, "report.docx")
+	if report["state"] != "succeeded" {
+		t.Fatalf("parse of a Word document: %v", report)
+	}
+	status, _, md := call(t, "GET", base+"/v1/parses/"+report["id"].(string)+"/document?format=markdown", "dev", nil)
+	for _, want := range []string{"# Field station report", "## Readings", "- Reset the float.", `<th colspan="2">Rain (mm), measured and corrected</th>`, `<td rowspan="2">Team A</td>`, "Gauges were read at 08:00 local time."} {
+		if status != http.StatusOK || !strings.Contains(string(md), want) {
+			t.Errorf("the document does not hold %q: %d\n%s", want, status, md)
+		}
+	}
+	status, page, raw := call(t, "GET", base+"/v1/parses/"+report["id"].(string)+"/pages/1", "dev", nil)
+	if status != http.StatusOK || page["source"] != "native" || page["reader"] != nil || len(page["blocks"].([]any)) != 15 {
+		t.Fatalf("its page: %d %s", status, raw)
+	}
+
+	ledger := parsed(t, base, testfixtures.LedgerXLSX, "ledger.xlsx")
+	if progress := ledger["progress"].(map[string]any); ledger["state"] != "succeeded" || progress["pages_total"] != 3.0 {
+		t.Fatalf("parse of a workbook: %v", ledger)
+	}
+	status, _, md = call(t, "GET", base+"/v1/parses/"+ledger["id"].(string)+"/document?format=markdown&pages=1", "dev", nil)
+	for _, want := range []string{"# Rainfall", "2026-03-02", "28.6%", "Total of March"} {
+		if status != http.StatusOK || !strings.Contains(string(md), want) {
+			t.Errorf("the first sheet does not hold %q: %d\n%s", want, status, md)
+		}
+	}
+
+	// A legacy spreadsheet is refused where it is uploaded.
+	status, body, raw := call(t, "POST", base+"/v1/files?name=ledger.xls", "dev", []byte("\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1 a compound file"))
+	if status != http.StatusUnsupportedMediaType || body["error"].(map[string]any)["code"] != "unsupported_media_type" || !strings.Contains(string(raw), ".xlsx") {
+		t.Fatalf("upload of a legacy spreadsheet: %d %s", status, raw)
+	}
+}
+
+// TestTheDevServerConvertsThroughAConverter stands a converter up beside
+// the server: a presentation is sent to it, and its answer, a PDF, is what
+// the pages are read from. A server with no converter refuses the same
+// file when the parse is prepared.
+func TestTheDevServerConvertsThroughAConverter(t *testing.T) {
+	var asked []string
+	var mu sync.Mutex
+	converter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked = append(asked, r.Method+" "+r.URL.Path+" "+r.Header.Get("Content-Type")+" to "+r.Header.Get("Accept"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", r.Header.Get("Accept"))
+		_, _ = w.Write(testfixtures.Read(t, testfixtures.MultipagePDF))
+	}))
+	t.Cleanup(converter.Close)
+
+	base, _, _ := started(t, env("LECTIO_DEV", "true", "LECTIO_ADDR", "127.0.0.1:0", "LECTIO_CONVERTER_URL", converter.URL))
+	deck := parsed(t, base, testfixtures.PPTX, "deck.pptx")
+	if progress := deck["progress"].(map[string]any); deck["state"] != "succeeded" || progress["pages_total"] != 3.0 {
+		t.Fatalf("parse of a presentation: %v", deck)
+	}
+	status, page, raw := call(t, "GET", base+"/v1/parses/"+deck["id"].(string)+"/pages/3", "dev", nil)
+	if status != http.StatusOK || page["source"] != "reader" || page["reader"] != "stub" {
+		t.Fatalf("a page of the conversion: %d %s", status, raw)
+	}
+	mu.Lock()
+	want := []string{"POST /v1/convert application/vnd.openxmlformats-officedocument.presentationml.presentation to application/pdf"}
+	if !slices.Equal(asked, want) {
+		t.Fatalf("the converter was asked %q, want %q", asked, want)
+	}
+	mu.Unlock()
+
+	bare, logs, _ := started(t, env("LECTIO_DEV", "true", "LECTIO_ADDR", "127.0.0.1:0"))
+	refused := parsed(t, bare, testfixtures.PPTX, "deck.pptx")
+	if failure, _ := refused["error"].(map[string]any); refused["state"] != "failed" || failure["code"] != "unsupported_media_type" || refused["progress"].(map[string]any)["pages_total"] != 0.0 {
+		t.Fatalf("a presentation with no converter: %v", refused)
+	}
+	if !strings.Contains(logs.String(), "LECTIO_CONVERTER_URL is not set") {
+		t.Fatalf("the log does not say that nothing converts:\n%s", logs.String())
+	}
+}
+
 func TestTheServerIsConfiguredByItsEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	config := `
@@ -211,6 +307,7 @@ func TestTheServerDoesNotStartOnWhatItCannotRun(t *testing.T) {
 		"a configuration that is not there": {nil, env("LECTIO_DEV", "true", "LECTIO_CONFIG", "/nonexistent/lectio"), "config:"},
 		"an address that is taken":          {nil, env("LECTIO_DEV", "true", "LECTIO_ADDR", taken.Addr().String()), "address already in use"},
 		"an argument":                       {[]string{"serve"}, env("LECTIO_DEV", "true"), `unknown argument "serve"`},
+		"a converter it cannot reach":       {nil, env("LECTIO_DEV", "true", "LECTIO_CONVERTER_URL", "converter:8090"), "LECTIO_CONVERTER_URL"},
 	} {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := serve(ctx, tc.args, tc.getenv, io.Discard, io.Discard, nil)

@@ -25,7 +25,7 @@ func TestSettingsHaveDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Addr != ":8080" || s.BasePath != "/v1" || s.Dev || s.DevToken != "dev" || s.MaxFileBytes != 256<<20 || s.MaxPages != 3000 ||
-		s.Workers != 8 || s.Attempts != 5 || s.MaxDeadline != time.Hour || s.Grace != 25*time.Second || !s.ModelKey.IsZero() || s.FetchAllow != nil {
+		s.Workers != 8 || s.Attempts != 5 || s.MaxDeadline != time.Hour || s.Grace != 25*time.Second || !s.ModelKey.IsZero() || s.FetchAllow != nil || s.ConverterURL != "" {
 		t.Fatalf("defaults: %+v", s)
 	}
 }
@@ -37,6 +37,7 @@ func TestSettingsAreReadFromTheEnvironment(t *testing.T) {
 		"LECTIO_CONFIG", "/etc/lectio", "LECTIO_MODEL_KEY", " sk-live ",
 		"LECTIO_MAX_FILE_BYTES", "1024", "LECTIO_MAX_PAGES", "10", "LECTIO_WORKERS", "2", "LECTIO_TASK_ATTEMPTS", "4",
 		"LECTIO_MAX_DEADLINE", "10m", "LECTIO_SHUTDOWN_GRACE", "5s", "LECTIO_FETCH_ALLOW", " Store.Internal , ,minio:9000",
+		"LECTIO_CONVERTER_URL", " unix:///run/lectio/convert.sock ",
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +45,8 @@ func TestSettingsAreReadFromTheEnvironment(t *testing.T) {
 	if s.Addr != "127.0.0.1:9000" || s.BasePath != "/api/parsing" || !s.Dev || s.DevToken != "t0" ||
 		s.DatabaseURL != "postgres://db.example/lectio" || s.DatabasePoolURL != "postgres://pooler.example/lectio" || s.ConfigPath != "/etc/lectio" ||
 		s.ModelKey.Reveal() != "sk-live" || s.MaxFileBytes != 1024 || s.MaxPages != 10 || s.Workers != 2 || s.Attempts != 4 ||
-		s.MaxDeadline != 10*time.Minute || s.Grace != 5*time.Second || strings.Join(s.FetchAllow, "|") != "store.internal|minio:9000" {
+		s.MaxDeadline != 10*time.Minute || s.Grace != 5*time.Second || strings.Join(s.FetchAllow, "|") != "store.internal|minio:9000" ||
+		s.ConverterURL != "unix:///run/lectio/convert.sock" {
 		t.Fatalf("settings: %+v", s)
 	}
 }

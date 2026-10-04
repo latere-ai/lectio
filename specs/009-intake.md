@@ -430,10 +430,12 @@ Remaining:
   uploads, and a parse of one fails with `unsupported_media_type`.
 - The bytes of a picture in a `.docx`. A figure of a native page has no
   image.
-- Conversion. The step takes a converter and none is built, so the
-  formats that need one are refused. The sidecar and its isolation are
-  to build together: a converter with a network is not an
-  intermediate step.
+- The conversion sidecar. `internal/convert` holds the client a
+  pipeline converts through, which a server reaches by
+  `LECTIO_CONVERTER_URL` ([[016-distribution]]); nothing answers it
+  yet, so the formats that need conversion are still refused in
+  practice. The sidecar and its isolation are to build together: a
+  converter with a network is not an intermediate step.
 - The working copy on disk and its cache. The steps hold the file in
   memory.
 

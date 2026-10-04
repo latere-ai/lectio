@@ -24,7 +24,10 @@ import (
 	"syscall"
 	"time"
 
+	"latere.ai/x/pkg/otel"
+
 	"latere.ai/x/lectio/internal/config"
+	"latere.ai/x/lectio/internal/convert"
 	"latere.ai/x/lectio/internal/fetch"
 	"latere.ai/x/lectio/internal/httpapi"
 	"latere.ai/x/lectio/internal/intake/pages"
@@ -85,9 +88,21 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	log.WarnContext(ctx, "LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")
 
 	limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
+	pipeline := &parse.Pipeline{Limits: limits, Renderer: render.NewPages()}
+	if s.ConverterURL != "" {
+		// A conversion is what the pages are then read from, so it is held
+		// to the size a file is.
+		converter, err := convert.New(convert.Config{URL: s.ConverterURL, MaxBytes: s.MaxFileBytes, Trace: otel.Transport})
+		if err != nil {
+			return fmt.Errorf("LECTIO_CONVERTER_URL: %w", err)
+		}
+		pipeline.Converter = converter
+	} else {
+		log.InfoContext(ctx, "LECTIO_CONVERTER_URL is not set: a format that needs conversion is refused")
+	}
 	st := store.NewMemory()
 	runner := &run.Runner{
-		Store: st, Pipeline: &parse.Pipeline{Limits: limits, Renderer: render.NewPages()},
+		Store: st, Pipeline: pipeline,
 		Readers: readers.Readers, Chain: readers.Chain, Workers: s.Workers, Attempts: s.Attempts,
 		Describers: readers.Describers, DescribeChain: readers.DescribeChain,
 		Credential: func(string) reader.Credential { return s.ModelKey },

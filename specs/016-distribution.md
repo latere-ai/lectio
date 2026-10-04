@@ -47,6 +47,7 @@ reader/layout/            the adapter for a layout engine behind its own HTTP co
 reader/stub/              a deterministic reader and extractor that make no call
 internal/assemble/        the document-wide passes and the views
 internal/config/          settings from the environment; Reader and Policy documents
+internal/convert/         conversion: the client a pipeline converts through
 internal/fault/           the error codes
 internal/fetch/           a source URL fetched with the address check
 internal/httpapi/         the routes, held to the contract by its tests
@@ -142,6 +143,7 @@ whether the binary reads the variable today.
 | `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | no |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
 | `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | no |
+| `LECTIO_CONVERTER_URL` | none: formats that need conversion are refused | [[009-intake]] | yes |
 | `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] | no |
 | `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
 | `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
@@ -154,6 +156,10 @@ whether the binary reads the variable today.
 A value that does not parse is an error that names its variable and
 never its value: a variable may hold a secret by mistake.
 `LECTIO_FETCH_ALLOW` is a comma-separated list of hosts.
+`LECTIO_CONVERTER_URL` is where the conversion sidecar listens:
+`http://host:port`, or `unix:///path/to/socket` for a sidecar that has
+no network and listens on a socket in a directory it shares with the
+server.
 
 `LECTIO_DEV=true` runs one process with the memory store, the owner
 scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
