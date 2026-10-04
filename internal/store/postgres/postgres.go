@@ -341,6 +341,7 @@ type config struct {
 	ScopeByGroup      bool     `json:"scope_by_group"`
 	ReadChain         []string `json:"read_chain"`
 	ExtractChain      []string `json:"extract_chain"`
+	DescribeChain     []string `json:"describe_chain"`
 	Pools             []pool   `json:"pools"`
 }
 
@@ -362,7 +363,8 @@ func configOf(s tasks.Settings) config {
 		ScopeByGroup: s.KeysPerGroup,
 		// An empty chain is written as an empty array, never as null.
 		ReadChain: append([]string{}, s.ReadChain...), ExtractChain: append([]string{}, s.ExtractChain...),
-		Pools: []pool{},
+		DescribeChain: append([]string{}, s.DescribeChain...),
+		Pools:         []pool{},
 	}
 	for _, p := range s.Pools {
 		c.Pools = append(c.Pools, pool{Reader: p.Reader, MaxInFlight: p.MaxInFlight, Cost: p.Cost})
@@ -600,8 +602,9 @@ func (s *Store) Cancel(ctx context.Context, parseID string) error {
 // parse that assemble ended with a failed page. One that has not ended is
 // refused with not_terminal, and one with nothing to read again with
 // conflict: it has no failed page, it ended before its pages were all read,
-// its task rows are no longer there, or its retention has ended. The parse
-// stays in its group and is held to the group's bounds as they stand: a
+// its task rows are no longer there, its retention has ended, or an
+// extraction or a figure of it is queued or running. The parse stays in its
+// group and is held to the group's bounds as they stand: a
 // group that holds max_queued parses that have not ended is refused with
 // queue_full, and one whose day does not hold the failed pages with
 // budget_exhausted.
@@ -615,6 +618,8 @@ func (s *Store) Retry(ctx context.Context, owner, parseID string) error {
 		return fault.New(fault.ParseNotFound, "no parse %s", parseID)
 	case "not_terminal":
 		return fault.New(fault.NotTerminal, "parse %s has not ended", parseID)
+	case "busy":
+		return fault.New(fault.Conflict, "an extraction or a figure of parse %s is queued or running, and a retry writes again the pages it reads: retry once it has ended", parseID)
 	case "nothing":
 		return fault.New(fault.Conflict, "parse %s has no failed page to read again", parseID)
 	case "unassembled":
@@ -680,6 +685,12 @@ type Parse struct {
 	// Events counts the changes of the parse's state and progress. It is
 	// the sequence the events of the parse are numbered from.
 	Events int64 `json:"events"`
+
+	// Fields is how many extractions were asked of the parse, and Described
+	// how many of its figures hold a description. A parse with neither has
+	// nothing more to read than its pages.
+	Fields    int `json:"fields"`
+	Described int `json:"described"`
 }
 
 // Terminal reports whether the parse has ended.
