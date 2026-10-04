@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.1.0 - 2026-10-04
+
 - Changed: `lectiod` verifies its callers and asks who decides. The
   durable server no longer takes the token of `LECTIO_DEV_TOKEN`: a
   process that serves the API needs `LECTIO_OIDC_ISSUERS`, verifies each
