@@ -68,8 +68,14 @@ type PDF struct {
 	// holds its own memory. Zero takes 4.
 	Instances int
 
-	// Timeout bounds the rendering of one page. Zero takes 30 seconds.
+	// Timeout bounds the rendering of one page, and the reading of one
+	// page's text. Zero takes 30 seconds.
 	Timeout time.Duration
+
+	// TextChars and TextObjects bound what is read of one page's own text
+	// (TextPDF): the characters copied out of the engine, and the painted
+	// objects visited. Zero takes 50,000 of each.
+	TextChars, TextObjects int
 
 	once  sync.Once
 	slots chan *slot
