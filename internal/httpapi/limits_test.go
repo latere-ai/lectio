@@ -41,14 +41,20 @@ type bounded struct {
 func holding(t *testing.T) *bounded {
 	t.Helper()
 	durably(t, false)
-	rec, calls := &recorder{}, &atomic.Int64{}
+	rec, calls, release := &recorder{}, &atomic.Int64{}, make(chan struct{})
 	defaults := authorizer.Limits{MaxFileBytes: 4096, MaxPages: 100, MaxPriority: 2, Retention: time.Hour}
 	e := serve(t, func(s *Server, r *run.Runner) {
 		s.Authz = access.NewAuthorizer(rec, defaults, access.FileRetention(30*time.Minute))
 		s.Limits.MaxBytes, s.FileRetention = 4096, 30*time.Minute
 		counted := &stub.Reader{Fail: func(reader.Page) error { calls.Add(1); return nil }}
-		r.Readers = map[string]reader.Reader{"stub": counted, "other": &stub.Reader{}}
+		// The reader "other" holds every page it is given until the test
+		// ends, so a parse that pins it stays open for as long as a case
+		// needs.
+		held := &stub.Reader{Fail: func(reader.Page) error { <-release; return nil }}
+		r.Readers = map[string]reader.Reader{"stub": counted, "other": held}
 	})
+	// Registered after the server, so it runs before the server stops.
+	t.Cleanup(func() { close(release) })
 	return &bounded{env: e, rec: rec, st: storeOf(t, e), calls: calls}
 }
 
@@ -205,25 +211,22 @@ func TestEachMemberOfAnAllowChangesTheOutcome(t *testing.T) {
 			}
 		},
 		"MaxQueued": func(t *testing.T) {
-			// A parse that waits holds the group's one place: its deadline
-			// is an hour off and no reader is configured for it.
+			// A parse that has not ended holds the group's one place: the
+			// reader it pins does not answer until the test ends.
 			h.with(`{"group": "full", "max_queued": 1}`)
-			waiting := h.do("POST", "/parses", `{"source":{"file":"`+tiff+`"},"reuse":false,"reader":"other","pages":"1"}`)
-			if waiting.status != http.StatusAccepted && waiting.status != http.StatusOK {
+			waiting := h.do("POST", "/parses", `{"source":{"file":"`+scan+`"},"reuse":false,"reader":"other"}`)
+			if waiting.status != http.StatusAccepted {
 				t.Fatalf("the first parse: %d %s", waiting.status, waiting.body)
 			}
-			if waiting.status == http.StatusOK {
-				t.Skip("the first parse ended before the second was submitted")
-			}
 			second := h.do("POST", "/parses", `{"source":{"file":"`+scan+`"},"reuse":false}`)
-			if state := h.row(waiting.json(t)["id"].(string)).State; state == "queued" || state == "running" {
-				if second.status != http.StatusTooManyRequests || second.code(t) != "queue_full" {
-					t.Errorf("a second parse of a group that may hold 1: %d %s", second.status, second.body)
-				}
+			if second.status != http.StatusTooManyRequests || second.code(t) != "queue_full" {
+				t.Errorf("a second parse of a group that may hold 1: %d %s", second.status, second.body)
 			}
+			// The same 2 submits with no bound named are both admitted.
 			h.with(`{"group": "roomy"}`)
-			for i := range 3 {
-				if r := h.do("POST", "/parses", `{"source":{"file":"`+scan+`"},"reuse":false}`); r.status != http.StatusAccepted && r.status != http.StatusOK {
+			for i := range 2 {
+				options := []string{`,"reader":"other"`, ``}[i]
+				if r := h.do("POST", "/parses", `{"source":{"file":"`+scan+`"},"reuse":false`+options+`}`); r.status != http.StatusAccepted && r.status != http.StatusOK {
 					t.Errorf("with no bound named, parse %d: %d %s", i+1, r.status, r.body)
 				}
 			}
