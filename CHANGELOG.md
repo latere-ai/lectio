@@ -27,7 +27,8 @@ refused before it is pushed.
   of the API: the events are read from stored rows. The server polls a
   parse once a second, sends a comment line after 15 seconds of
   silence, and ends a stream it has held for 5 minutes, so a client
-  connects again with the last id it saw.
+  connects again with the last id it saw. A page that was read before
+  this version was installed has no event.
 - Added: `GET /usage`, in the durable server: the pages read, the model
   calls made for them and their input and output tokens, summed by
   `group`, `owner` or `reader` over hours or days in UTC. The meters
