@@ -3,9 +3,17 @@
 
 // Package httpapi serves the HTTP API that api/openapi.yaml describes. The
 // contract is that file; this package is held to it by a test that walks
-// both. A route the contract marks planned is routed, authenticated, and
-// answers 501, so a client written against the contract finds every address
-// from the first version on. The design is specs/003-api.md.
+// both. A route the contract marks planned is routed, authenticated, asks
+// its action, and answers 501, so a client written against the contract
+// finds every address from the first version on. The design is
+// specs/003-api.md.
+//
+// Every route is written the same way
+// (specs/012-identity-and-authorization.md): the caller is authenticated,
+// the resource is built from the request and from the stored object, the
+// route's action is asked, and the handler acts within the decision. Which
+// action a route asks is the row of access.Routes for it, and a test walks
+// the contract with an authorizer that records what it is asked.
 package httpapi
 
 import (
@@ -375,10 +383,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		code, p = fault.Internal, problems[fault.Internal]
 	}
 	details := map[string]any{"retryable": p.retryable}
-	switch {
-	case code == fault.Internal:
+	switch code {
+	case fault.Internal:
 		s.log().ErrorContext(r.Context(), "request failed", "method", r.Method, "path", r.URL.Path, "error", err)
-	case code == fault.AuthorizerUnavailable:
+	case fault.AuthorizerUnavailable:
 		// The error underneath may name the endpoint. It is logged, and
 		// the caller is told the fixed detail alone.
 		s.log().WarnContext(r.Context(), "the authorizer gave no decision", "method", r.Method, "path", r.URL.Path, "error", err)

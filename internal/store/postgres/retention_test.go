@@ -155,7 +155,7 @@ func TestAParseIsKeptForItsRetentionAndThenListed(t *testing.T) {
 // old it is. When its time is over the sweep begins its delete: the file
 // is gone for every caller, and its row stays until its object is.
 func TestAFileIsKeptForItsRetentionPastItsLastParse(t *testing.T) {
-	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
 		ctx := context.Background()
 		w := h.worker()
 		idle := h.kept("alice", "fil_idle", "aa", 24*time.Hour)
