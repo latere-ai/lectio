@@ -85,12 +85,29 @@ below.
 ```
 
 `width` and `height` are in points (1/72 inch) for paged formats and in
-pixels for images. `source` is `reader` when a model read the page and
-`native` when the format carried its own structure ([[009-intake]]).
-`reader` and `model` are absent on a native page. `usage` is what
-reading the page consumed: `pages`, `input_tokens`, `output_tokens`,
-and `cost` with `currency` only when the model endpoint reported a
-cost.
+pixels for images. `usage` is what reading the page consumed: `pages`,
+`input_tokens`, `output_tokens`, and `cost` with `currency` only when
+the model endpoint reported a cost.
+
+`source` says who produced the page's blocks, and is one of 3:
+
+| Source | Meaning | `reader` | `model` | A block's `box` |
+|---|---|---|---|---|
+| `reader` | a model read the page from its image | the reader's name | what the endpoint says answered | where the reader placed it |
+| `native` | the format carried its own structure ([[009-intake]]) | absent | absent | `null` |
+| `text_layer` | the blocks were built from the text the file carries for the page, with the place and the type of every word, and no model was called ([[008-readers]]) | the reader's name | absent | from the positions in the file |
+
+`text_layer` was added on 2026-10-04 with the reader that reads a
+page's own text ([[017-agent-driven-parsing]]). Neither earlier value
+is true of such a page: no model read it, so `reader` would tell a
+caller that the characters are a model's transcription, and its format
+carries no structure, so `native` would tell a caller that the kinds
+and the reading order are the file's own. Its characters are the
+file's, exact, and its structure is what the positions show. A caller
+that weighs a result by how it came to be needs to tell the 3 apart,
+and one that does not reads the page as any other: every other member
+means what it means on a page a model read, and its `usage` is one page
+and no token.
 
 `state` is one of four:
 
@@ -313,8 +330,8 @@ these objects ([[003-api]]), and retention ([[014-sources-and-retention]]).
 Built:
 
 - The `document` package: every object above as a Go type with its
-  JSON form, the closed set of kinds, box repair and validation, block
-  numbering and refs, and page validation.
+  JSON form, the closed set of kinds, the 3 sources of a page, box
+  repair and validation, block numbering and refs, and page validation.
 - `internal/id`: prefixed ULIDs that keep their order within one
   millisecond.
 - `internal/store`: a memory store for files, parses, pages, page

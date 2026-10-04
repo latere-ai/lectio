@@ -1118,7 +1118,7 @@ components:
         height: { type: number }
         rotation: { type: integer }
         state: { type: string, enum: [pending, succeeded, failed, skipped], description: "`skipped`: the parse ended, canceled or out of time, before the page was read." }
-        source: { type: string, enum: [reader, native], description: Whether a model read the page or the format carried its own structure. }
+        source: { type: string, enum: [reader, native, text_layer], description: "Who produced the page's blocks. `reader`: a model read the page from its image. `native`: the format carried its own structure. `text_layer`: the blocks were built from the text the file carries for the page, with no model call; the page names its `reader` and no `model`." }
         reader: { type: string }
         model: { type: string }
         attempts: { type: integer }
@@ -1134,7 +1134,7 @@ components:
       properties:
         number: { type: integer }
         state: { type: string, enum: [pending, succeeded, failed, skipped] }
-        source: { type: string, enum: [reader, native] }
+        source: { type: string, enum: [reader, native, text_layer] }
         blocks: { type: integer, description: How many blocks the page holds. }
         error: { $ref: "#/components/schemas/Problem" }
 
