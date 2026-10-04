@@ -118,6 +118,13 @@ func (m *textModel) calls() int {
 	return len(m.asked)
 }
 
+// requests is a copy of the calls the model was sent, in order.
+func (m *textModel) requests() []reader.ExtractRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.asked)
+}
+
 // invoiceSchema is the schema of the cases, and partiesSchema a second one
 // over the same document.
 const (
@@ -338,9 +345,11 @@ func TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain(t *testing.T) {
 // document as they were.
 func TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails(t *testing.T) {
 	bad := reader.ExtractResult{Data: json.RawMessage(`{"number":42}`), Model: "text-model", Usage: document.Usage{InputTokens: 100, OutputTokens: 10}}
-	stubborn := false
+	var stubborn atomic.Bool
 	model := &textModel{}
-	model.answers = func(n int, _ reader.ExtractRequest) (reader.ExtractResult, bool) { return bad, stubborn || n == 1 }
+	model.answers = func(n int, _ reader.ExtractRequest) (reader.ExtractResult, bool) {
+		return bad, stubborn.Load() || n == 1
+	}
 	e, _ := extracting(t, model, nil)
 	pid := e.invoice()
 	document := e.do("GET", "/parses/"+pid+"/document", nil).body
@@ -351,11 +360,11 @@ func TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails(t *testing.T) {
 		at(repaired, "data", "number") != "INV-0042" {
 		t.Fatalf("the repaired extraction: %v", repaired)
 	}
-	if repair := model.asked[1]; !strings.Contains(repair.Previous, `"number":42`) || len(repair.Problems) != 1 || repair.Text != model.asked[0].Text {
-		t.Fatalf("the repair was asked %+v", repair)
+	if asked := model.requests(); !strings.Contains(asked[1].Previous, `"number":42`) || len(asked[1].Problems) != 1 || asked[1].Text != asked[0].Text {
+		t.Fatalf("the repair was asked %+v", asked[1])
 	}
 
-	stubborn = true
+	stubborn.Store(true)
 	e.ask(pid, "failed", invoiceSchema)
 	failed := e.filled(pid, "failed", "")
 	if failed["state"] != "failed" || at(failed, "error", "code") != "schema_not_satisfied" || failed["data"] != nil || failed["attempts"] != 3.0 ||
@@ -398,7 +407,7 @@ func TestALongDocumentIsExtractedInWindowsThroughTheAPI(t *testing.T) {
 	if at(got, "usage", "input_tokens") != 100*got["windows"].(float64) {
 		t.Fatalf("the windows used %v", got["usage"])
 	}
-	for _, req := range model.asked {
+	for _, req := range model.requests() {
 		if len(req.Text) > 22 {
 			t.Fatalf("a call was given %d bytes: %q", len(req.Text), req.Text)
 		}

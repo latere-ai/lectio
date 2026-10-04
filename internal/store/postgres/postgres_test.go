@@ -414,6 +414,15 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 		"InsertFile":    func() error { _, _, err := h.store.InsertFile(ctx, file("acme", "fil_1", "aa")); return err },
 		"DeleteFile":    func() error { _, err := h.store.DeleteFile(ctx, "acme", "fil_1"); return err },
 		"ForgetFile":    func() error { return h.store.ForgetFile(ctx, "fil_1") },
+		"CreateField": func() error {
+			return h.store.CreateField(ctx, postgres.FieldRequest{Parse: "prs_a", Name: "invoice", Request: asked, Deadline: time.Hour})
+		},
+		"Field":  func() error { _, _, err := h.store.Field(ctx, "prs_a", "invoice"); return err },
+		"Fields": func() error { _, err := h.store.Fields(ctx, "prs_a"); return err },
+		"StartFigures": func() error {
+			return h.store.StartFigures(ctx, postgres.FigureStart{Parse: "prs_a", Deadline: time.Hour})
+		},
+		"Figures": func() error { _, _, err := h.store.Figures(ctx, "prs_a"); return err },
 	} {
 		if err := call(); err == nil || fault.CodeOf(err) != fault.Internal {
 			t.Errorf("%s on a closed store = %v", name, err)
