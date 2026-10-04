@@ -238,10 +238,10 @@ out of memory and out of one reply.
 |---|---|---|
 | File metadata, parse state, progress, usage | Postgres | `files`, `parses` |
 | Tasks, leases, queue accounting, pools | Postgres | [[004-durable-tasks]], [[006-fairness-and-priority]], [[007-model-capacity]] |
-| Source snapshot | object store | `sources/<owner key>/<sha256>`, the owner key a hash of the owner ([[014-sources-and-retention]]) |
-| Working copy after conversion | object store | `parses/<parse>/work/source.<ext>` |
-| Page image | object store | `parses/<parse>/pages/<n>.<token>.png`, raw image bytes |
-| Page result | object store | `parses/<parse>/pages/<n>.<token>.json` |
+| Source snapshot | object store | `sources/<owner key>/<sha256>/<file>`, the owner key a hash of the owner ([[014-sources-and-retention]]) |
+| Working copy after conversion | object store | `parses/<parse>/work/source.<token>.<ext>` |
+| Page image | object store | `parses/<parse>/pages/<n>.<token>.png`, raw image bytes; `.jpg` when the reader takes JPEG |
+| Page result | object store | `parses/<parse>/pages/<n>.<token>.json`; `<n>.a<token>.json` for a page `assemble` wrote again |
 | Document index | object store | `parses/<parse>/document.<token>.json`: page list with each page's key, spans, outline, usage, without blocks |
 | Field | object store | `parses/<parse>/fields/<name>.<token>.json` |
 
@@ -321,6 +321,19 @@ Built:
   images, document indexes, the page results and figure descriptions
   kept for reuse, and the run that describes a parse's figures. It
   holds everything in the process and nothing survives a restart.
+- `internal/blob`: the object store behind one interface, put, get,
+  delete and list by prefix, with three implementations held to one
+  conformance suite: memory, a local directory that several processes
+  on one machine may share, and an S3 bucket over the shared client. The
+  suite runs against a fake S3 server on every run and against a real
+  one in a container where a container runtime answers. The key layout
+  of the table above is `internal/blob/keys.go`. Three keys carry more
+  than the first draft of the table gave them. A source's key ends in
+  its file's id, so the delete of a file and an upload of the same bytes
+  at the same instant never meet on one object. The working copy's key
+  carries the token of the `prepare` that wrote it, as every other
+  output does. A page's image is named for what it is, `.png` or
+  `.jpg`.
 - A block's `figure` member, filled when a figure is described, and a
   block's image as a cut of its page's image.
 - Reuse by page, in the in-process runner over the memory store.
