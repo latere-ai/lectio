@@ -133,7 +133,7 @@ func (s *Server) Routes() []Route {
 		{"GET", "/parses/{parse}/fields", true, s.plannedOnParse},
 		{"GET", "/parses/{parse}/fields/{name}", true, s.plannedOnParse},
 		{"GET", "/readers", false, s.listReaders},
-		{"GET", "/usage", true, s.plannedUsage},
+		{"GET", "/usage", false, s.getUsage},
 		{"GET", "/queue", true, s.plannedQueue},
 	}
 }
@@ -149,15 +149,6 @@ func errPlanned() error {
 // not on the day the operation is built.
 func (s *Server) plannedOnParse(_ http.ResponseWriter, r *http.Request, c call) error {
 	if _, _, err := s.parse(r, c); err != nil {
-		return err
-	}
-	return errPlanned()
-}
-
-// plannedUsage answers the planned read of the meters. The read names no
-// owner and no group yet, so the question carries neither.
-func (s *Server) plannedUsage(_ http.ResponseWriter, r *http.Request, c call) error {
-	if _, err := s.allowed(r, c, access.Usage("", "")); err != nil {
 		return err
 	}
 	return errPlanned()

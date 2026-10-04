@@ -593,6 +593,19 @@ func (b *Backend) Document(ctx context.Context, p store.Parse) (document.Documen
 	return doc, true, nil
 }
 
+// Usage reads the meter the task store writes as tasks settle.
+func (b *Backend) Usage(ctx context.Context, q store.UsageQuery) ([]store.UsageSum, error) {
+	sums, err := b.Store.Usage(ctx, postgres.UsageQuery(q))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.UsageSum, len(sums))
+	for i, sum := range sums {
+		out[i] = store.UsageSum(sum)
+	}
+	return out, nil
+}
+
 // Figures is not built over the durable control plane: describing figures
 // is a task of its own there, and that task does not exist yet.
 func (b *Backend) Figures(context.Context, store.Parse, run.FigureOptions) error {

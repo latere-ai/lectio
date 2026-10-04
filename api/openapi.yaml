@@ -625,16 +625,41 @@ paths:
     get:
       tags: [operations]
       operationId: getUsage
-      x-lectio-status: planned
       summary: Read usage
-      description: Read what was consumed, summed by a key over fixed intervals.
+      description: |
+        Read what was consumed, summed by a key over fixed intervals.
+
+        The meters count the pages that were read, the model calls made
+        for them, and the tokens those calls took in and gave out. A call
+        that failed or was told to wait is counted as the call it was, so
+        the sums are what was spent and not only what was useful. A page
+        counts in the hour it was read in, under the reader that read
+        it; a page of a format that needs no reader counts under the
+        reader with no name.
+
+        The intervals are hours or days in UTC. `from` is moved back to
+        the beginning of its interval and `to` on to the end of its own,
+        and the answer says the span it covers. With no `to` the read
+        ends now, and with no `from` it goes back 24 hours, or 30 days
+        for `interval=day`. A read spans at most 1000 intervals. An
+        interval with nothing in it has no sum.
+
+        The answer holds what the caller may see: its own usage, unless
+        the authorizer lets it see more. `owner` and `group` ask for one
+        owner's or one group's, which the authorizer may refuse.
+
+        A development server keeps no meter and answers `501
+        not_implemented`.
       parameters:
-        - { name: by, in: query, schema: { type: string, enum: [group, owner, reader, model], default: group } }
+        - { name: by, in: query, description: The key the sums are grouped by., schema: { type: string, enum: [group, owner, reader], default: group } }
         - { name: interval, in: query, schema: { type: string, enum: [hour, day], default: hour } }
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: owner, in: query, description: Limits the read to one owner., schema: { type: string } }
+        - { name: group, in: query, description: Limits the read to one group., schema: { type: string } }
       responses:
-        "200": { description: The sums., content: { application/json: { schema: { type: object } } } }
+        "200": { description: The sums., content: { application/json: { schema: { $ref: "#/components/schemas/UsageReport" } } } }
+        "400": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
 
   /queue:
@@ -870,6 +895,30 @@ components:
         output_tokens: { type: integer, format: int64 }
         cost: { type: string, description: Present only when the model endpoint reported a cost. }
         currency: { type: string }
+
+    UsageReport:
+      type: object
+      required: [by, interval, from, to, sums]
+      properties:
+        by: { type: string, enum: [group, owner, reader] }
+        interval: { type: string, enum: [hour, day] }
+        from: { type: string, format: date-time, description: The beginning of the first interval the read covers. }
+        to: { type: string, format: date-time, description: The end of the last interval the read covers. }
+        sums:
+          type: array
+          description: One per key and interval that has usage, by interval and then by key.
+          items: { $ref: "#/components/schemas/UsageSum" }
+
+    UsageSum:
+      type: object
+      required: [key, start, pages, calls, input_tokens, output_tokens]
+      properties:
+        key: { type: string, description: "The group, the owner or the reader the sum is of. Empty for the pages no reader read, when the key is the reader." }
+        start: { type: string, format: date-time, description: The beginning of the interval. }
+        pages: { type: integer, format: int64, description: Pages read. }
+        calls: { type: integer, format: int64, description: "Model calls, those that failed or were told to wait included." }
+        input_tokens: { type: integer, format: int64 }
+        output_tokens: { type: integer, format: int64 }
 
     Kind:
       type: string

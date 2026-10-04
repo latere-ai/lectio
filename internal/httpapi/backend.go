@@ -84,6 +84,11 @@ type Backend interface {
 	// parse has one, which every parse that ended does.
 	Document(ctx context.Context, p store.Parse) (doc document.Document, ok bool, err error)
 
+	// Usage reads the meters: what was read and what it cost, summed by a
+	// key over fixed intervals, in the order of the intervals and then of
+	// the keys.
+	Usage(ctx context.Context, q store.UsageQuery) ([]store.UsageSum, error)
+
 	// Figures starts a run that describes the figures of a parse, and
 	// FigureRun returns the run of a parse when one was started.
 	// WaitFigures returns when the run has ended, when d has passed, or
@@ -165,20 +170,26 @@ func (m *Memory) Cancel(_ context.Context, owner, id string) (store.Parse, error
 // undurable is the answer of an operation that is built over the task
 // store, which a development server does not have.
 func undurable(what string) error {
-	return fault.New(fault.NotImplemented, "a development server keeps no task store, and %s is built over it", what)
+	return fault.New(fault.NotImplemented, "a development server keeps no task store, and %s is built over one", what)
 }
 
 // Retry is not built in a development server: its runner drives a parse
 // once, from its file to its document, and keeps nothing of one that ended
 // to queue again.
 func (m *Memory) Retry(context.Context, string, string) (store.Parse, error) {
-	return store.Parse{}, undurable("reading failed pages again")
+	return store.Parse{}, undurable("a retry")
 }
 
 // Events is not built in a development server: the events of a parse are
 // read from the rows of the task store, which number its changes.
 func (m *Memory) Events(context.Context, string, int64, int) (store.Events, error) {
-	return store.Events{}, undurable("following a parse as events")
+	return store.Events{}, undurable("the event stream")
+}
+
+// Usage is not built in a development server: the meters are written by
+// the task store as tasks settle.
+func (m *Memory) Usage(context.Context, store.UsageQuery) ([]store.UsageSum, error) {
+	return nil, undurable("the meter")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

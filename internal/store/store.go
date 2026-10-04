@@ -174,6 +174,35 @@ type Events struct {
 	Pages []PageEvent
 }
 
+// UsageQuery says which sums of the meters are read
+// (specs/013-limits-and-usage.md): by which key, over which intervals, in
+// which span of time, and for whom.
+type UsageQuery struct {
+	// By is the key the sums are grouped by: group, owner or reader.
+	By string
+	// Interval is the length of one interval: hour or day, in UTC.
+	Interval string
+	// From and To bound the read: an interval is in the answer when it
+	// begins at or after From and before To.
+	From time.Time
+	To   time.Time
+	// Owners and Groups narrow the read to those owners and those groups.
+	// Nil is every one, and an empty list is none.
+	Owners []string
+	Groups []string
+}
+
+// UsageSum is what one key used in one interval: the pages read, and the
+// model calls and the tokens they cost, the calls that failed included.
+type UsageSum struct {
+	Key          string
+	Start        time.Time
+	Pages        int64
+	Calls        int64
+	InputTokens  int64
+	OutputTokens int64
+}
+
 // Terminal reports whether the parse has ended.
 func (p Parse) Terminal() bool {
 	return p.State == StateSucceeded || p.State == StateFailed || p.State == StateCanceled
