@@ -1,5 +1,5 @@
 ---
-title: "Intake: detect the type, unwrap, convert, extract natively, count and render pages"
+title: "Intake: detect the type, unwrap, convert, extract natively, count and render pages, and hand over a page's own text"
 status: validated
 track: core
 depends_on:
@@ -16,12 +16,13 @@ author: changkun
 
 ## Overview
 
-Intake is everything that happens to a file before a model sees a
+Intake is everything that happens to a file before a reader sees a
 page. It decides what the file is, turns it into something with pages,
-reads the pages that need no model, and produces the image of each
-page that does. It runs in two places: the `prepare` task does the
-document-wide steps once, and each page task renders its own page
-([[005-parse-graph]]).
+reads the pages that need no reader, and produces what a reader is
+given of each page that does: its image, and for a page of a PDF the
+text the file carries for it. It runs in 2 places: the `prepare`
+task does the document-wide steps once, and each page task renders its
+own page ([[005-parse-graph]]).
 
 ## Current state
 
@@ -99,14 +100,14 @@ declare millions.
 
 | Input | Path | Page source |
 |---|---|---|
-| PDF | rendered page by page | `reader` |
+| PDF | rendered page by page, each page with the text the file carries for it | `reader`, or `text_layer` |
 | JPEG, PNG, WebP | one page | `reader` |
 | TIFF | one page per frame | `reader` |
 | `.docx` | native: one page of blocks, tables kept as tables | `native` |
 | `.xlsx`, `.xlsm`, `.csv` | native: one page per sheet, each a table | `native` |
 | text, Markdown, HTML, XML | native | `native` |
 | `.doc` | converted to `.docx`, then native | `native` |
-| `.pptx`, `.ppt`, `.rtf`, `.key`, `.odt`, `.odp` | converted to PDF, then rendered | `reader` |
+| `.pptx`, `.ppt`, `.rtf`, `.key`, `.odt`, `.odp` | converted to PDF, then as a PDF | `reader`, or `text_layer` |
 | `.p7m` | unwrapped, then as the document inside | either |
 | `.xls` | refused with `unsupported_media_type`, with a detail that says to save the workbook as `.xlsx` | |
 | anything else | refused with `unsupported_media_type` | |
@@ -114,12 +115,16 @@ declare millions.
 A `native` page task copies blocks that `prepare` already produced and
 calls no model. Its blocks have `box: null` ([[002-object-model]]).
 
-A PDF is always read by a reader in the first version, including one
-with a text layer. Reading the text layer directly would be cheaper
-and exact for the text, and gives no layout, no tables and no reading
-order across columns, which are what a caller comes for. Using the
-text layer to check or correct the reader's transcription is noted
-under Not in this spec.
+A page of a PDF is read by a reader of the routing policy's chain
+([[008-readers]]). Which one is the chain's to say, page by page: a
+chain that begins with a reader of the `text` adapter reads a page from
+the text the file carries for it, with no model call, and the page's
+source is `text_layer`; a page that reader declines, a scan or a page
+that is mostly a figure, goes to the next reader and its source is
+`reader`. The file's manifest says `reader` either way: it says that
+the pages are read one by one, and each page says by what. Intake's
+part is to hand the page's own text over, under bounds, which is
+[A page's own text](#a-pages-own-text) below.
 
 ### Reading a zipped office package
 
@@ -430,6 +435,111 @@ is fetched once per worker into a cache directory bounded by
 and mapped, so a page task's memory is still one page image whatever
 the document's size.
 
+### A page's own text
+
+A typeset PDF holds the text of each page: every character with the
+Unicode it maps to, where it is drawn and in what font. The engine that
+renders a page reads that too, with no model and no bitmap. A reader
+that asks for it in its description is handed it beside the page's
+image ([[008-readers]]).
+
+```go
+package parse
+
+// A renderer that holds a PDF engine is one.
+type PDFTexter interface {
+    TextPDF(ctx context.Context, data []byte, n int) (reader.PageText, error)
+}
+```
+
+```go
+package reader
+
+type PageText struct {
+    Width, Height float64 // the page's size in points, as it is shown
+    Words    []Word       // in the order the file draws them
+    Rects    []Rect       // the upright rectangles the page paints
+    Drawings []Rect       // the boxes around everything else it paints
+    Partial  bool         // the page holds more than is read of one page
+}
+
+type Word struct {
+    Text         string  // as the file maps it to Unicode; U+FFFD where it maps to nothing
+    Box          Rect    // across: its glyphs; down: the line of type, ascent to descent
+    Baseline     float64
+    Size         float64 // of its type, in points, as drawn
+    Bold, Italic bool    // what the font's name and flags say
+    Hidden       bool    // drawn with no fill and no stroke
+    Turned       bool    // does not run from left to right along the page
+    Unmapped     int     // characters the file maps to no Unicode character
+}
+
+type Rect struct{ X0, Y0, X1, Y1 float64 }
+```
+
+What each member is, and why a reader needs it:
+
+- **One coordinate space.** Every position is in points from the top
+  left of the page as it is shown, after the page's rotation and its
+  crop. The engine is asked where 3 points of the page's own space land
+  on the page it draws, and the map is taken from its answers, so a
+  position lies where the page's image shows it, to a hundredth of a
+  point. A position over the page's size is a block's box
+  ([[002-object-model]]).
+- **Words.** A word is the characters between 2 pieces of white space.
+  The engine adds a space where the file leaves a gap and writes none,
+  and a character that is not drawn beside the one before it begins a
+  word of its own. A word's box spans its glyphs across the page and the
+  line of type down it, so the words of one line share their extent
+  whatever letters they hold. Its size is the size it is drawn at: the
+  size the font is set at times what the matrix it is placed with makes
+  of it. A word the page's crop leaves outside is not handed over.
+- **Type.** Bold and italic come from the font's name and the flags of
+  its descriptor. A font's weight as a number is not read: a file that
+  states none has one derived from the width of the font's stems, which
+  puts a regular serif face above a bold sans one.
+- **What cannot be read as text.** `Unmapped` counts the characters a
+  font gives no Unicode for, or the engine reports as mapped wrongly.
+  `Hidden` marks text that is in the file and not on the page, which is
+  what a recognition pass lays under a scan. `Turned` marks text set at
+  an angle.
+- **What the page paints beside its text.** A path made of upright lines
+  alone is reported as rectangles: a filled rectangle as it is, a
+  stroked line as a rectangle as thick as its stroke, a frame as its 4
+  sides. That is what ruling and backgrounds are made of, and a reader
+  finds a table's cells in them. Everything else, an image, a shading, a
+  curve, a slanted line, a filled shape that is no rectangle, a path of
+  more than 16 segments, is reported as the box around it: a reader sees
+  from those how much of the page is picture. A fill or a stroke in the
+  paper's color, and a path that only cuts a clip, paint nothing and are
+  left out. Shapes inside a form are placed by the form's own matrix.
+
+The text is read by an engine instance of its own, under every bound a
+render is held to. 4 more bound what is copied out of the engine and
+how many calls are made into it:
+
+| Bound | Value | Past it |
+|---|---|---|
+| characters read of one page | 50,000 | the reading stops and the page is `Partial` |
+| painted objects visited on one page, inside forms too | 50,000 | the walk stops and the page is `Partial` |
+| forms inside forms | 8 deep | the form is one drawing |
+| segments read of one path | 16 | the path is one drawing |
+| memory, time | as a render: 512 MiB, 30 seconds | `document_corrupt` |
+
+A dense page of print holds under 10,000 characters and paints a few
+thousand objects. A page of 50,000 characters is read in under a second
+and one of 50,000 objects in under 3. A page that is `Partial` was
+written to be drawn many times over; a reader that needs the whole page
+declines it. A page whose text the engine cannot get through within its
+memory and its time is not a failed page, since it rendered: the
+pipeline hands the reader no text, a reader that needs it declines the
+page, and one that reads the image reads it.
+
+Not read: text an annotation or a form field shows, which the renderer
+does not draw either; whether a clip or a shape painted over a word
+hides it; and the document's structure tree, which says what a tagged
+PDF's author meant each run of text to be.
+
 ### Blank pages
 
 A rendered page whose pixels are uniform within a tolerance is written
@@ -441,13 +551,11 @@ scan at its first mark.
 
 ## Not in this spec
 
-A PDF page's own text. Most PDFs carry it, the engine that renders a
-page can hand it over with the position of every character, and
-reading it costs no model call. Using it, as a reader of its own tried
-before any model and as exact text handed to a model, is the largest
-cost lever this design has and is the subject of
-[[017-agent-driven-parsing]]. This spec still sends every PDF page to a
-reader as an image.
+A PDF page's own text as exact text handed to a model that reads the
+page's image, so that the model transcribes nothing and only says what
+each run of text is. The text is handed to any reader that asks for
+it; no reader that calls a model asks yet
+([[017-agent-driven-parsing]]).
 
 Legacy spreadsheets (`.xls`); audio and video; archives; e-mail
 messages with attachments; recovering a damaged PDF. Optical cleanup
@@ -485,6 +593,8 @@ Built:
   re-encoding and the blank check; and the PDF renderer with every
   bound of the table above, which also counts a PDF's pages for
   `prepare`.
+- A page's own text: `TextPDF` of the PDF renderer, with its 4 bounds,
+  and `ReadPage` of `internal/parse` handing it to a reader that asks.
 
 Remaining:
 
@@ -555,3 +665,9 @@ a test:
 | One conversion runs at a time, and a call that stops waiting was never started | `TestOneConversionRunsAtATime` |
 | Every type the detector routes to conversion is one the sidecar converts, and a real suite converts the fixture of each | `TestEveryConvertedTypeHasAConversion`; `TestLiveConverter`, run by hand |
 | A blank page costs no reader call | a test with a counting stub reader |
+| A word of a page's own text comes with its place, its baseline, the size it is drawn at and what its font says of it, and text that is hidden, turned or mapped to no Unicode character says so | `TestAPagesWordsComeWithTheirPlaceAndTheirType`, `TestCharactersWithNoMappingAreCountedAndWordsOffThePageAreLeftOut` |
+| Every mark on a page's rendering lies in a word, a rectangle or a drawing of its text, and each of those has a mark in it, for a page turned by each quarter, cropped, and with a box that does not begin at 0 | `TestAPositionLiesWhereTheRenderingShowsIt` |
+| A filled rectangle, a stroked line and a frame are rectangles; a curve, a triangle, an image and a path of more than 16 segments are drawings; a fill in the paper's color and a clip are nothing; a shape in a form lies where the form puts it | `TestWhatAPagePaintsIsRectanglesAndDrawings`, `TestFormsAreWalkedToADepth` |
+| A file of under 4 kilobytes whose page holds 200,000 characters, and one of under 8 whose page paints 60,600 objects, each come back `Partial` with no more than the bound read | `TestAPageOfMoreCharactersThanTheBoundIsPartial`, `TestAPageOfMoreObjectsThanTheBoundIsPartial`, with the bounds set to 600 and 150 |
+| The text of the page of under 2 kilobytes that asks the engine for gigabytes is refused with `document_corrupt`, allocates under 128 MiB on the heap, returns within a second of its context ending or its time running out, and the engine reads the next page | `TestThePageWrittenToExhaustTheEngineHasItsTextRefusedWithinTheBounds` |
+| A reader that asks for a page's own text is handed it beside the image; one that does not ask, a format that carries none, and a page whose text could not be read within the bounds get none | `TestAReaderThatAsksIsHandedThePagesOwnText` |

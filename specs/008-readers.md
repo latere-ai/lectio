@@ -17,10 +17,11 @@ author: changkun
 
 ## Overview
 
-A reader turns one page image into blocks, and an extractor turns a
+A reader turns one page into blocks, and an extractor turns a
 document's text into an object in the shape of a schema. The package
-that holds the two interfaces is the only part of Lectio that knows a
-model exists. This spec defines the interfaces, the adapters the first
+that holds the interfaces is the only part of Lectio that knows a
+model exists, and one of its readers calls none: it reads a page from
+the text its file carries. This spec defines the interfaces, the adapters the first
 version ships, what a model is asked and what its reply must look
 like, how a reply is checked, and how a page is assigned a reader.
 Swapping the model, or adding a second one for hard pages, is
@@ -67,6 +68,7 @@ type Description struct {
     Boxes   bool            // whether each block comes back with a position
     Kinds   []document.Kind // the kinds the reader can return; empty is any
     Version string          // names what in the configuration changes a result; empty makes no promise
+    Text    bool            // whether the reader is handed the text the file carries for the page
 }
 
 type ImageSpec struct {
@@ -81,6 +83,7 @@ type Page struct {
     MediaType     string
     Width, Height int        // pixels; zero for a PDF
     Languages     []string   // hints, may be empty
+    Text          *PageText  // the page's own text, for a reader that asks; nil when there is none
     Credential    Credential // the key this call is made with
 }
 
@@ -89,6 +92,7 @@ type Result struct {
     Model     string           // what the endpoint says answered
     Usage     document.Usage   // tokens, and cost and currency when the endpoint reports them
     Truncated bool             // the reply ended at the model's output limit
+    TextLayer bool             // the blocks were built from Page.Text alone, with no model call
 }
 
 type Extractor interface {
@@ -130,6 +134,16 @@ long edge, in this format. A reader that returns text and no position
 still fits: `Boxes` is false and its blocks have `box: null`. A reader
 that takes a one-page PDF and not an image says so in `Accepts`.
 
+A reader that sets `Text` is handed `Page.Text` beside the image: the
+words the file carries for the page, each with its place and its type,
+and where the page paints anything else ([[009-intake]]). It is nil for
+a format that carries no text of its own, such as an image, and for a
+page whose text could not be read within the bounds a page is held to.
+A reader that built its blocks from that text alone says so with
+`Result.TextLayer`, and the page's `source` is then `text_layer`
+([[002-object-model]]). The image is rendered either way: it is what a
+caller of the result sees the page as, and what a figure is cut from.
+
 `Version` names everything in a reader's configuration that changes
 what it returns for the same page. Two readers with the same version
 read a page the same way, which is what lets a page that was read once
@@ -141,6 +155,7 @@ into it is the adapter's to decide:
 |---|---|
 | `chat` | the model, the page prompt as this reader asks it (the template, the kinds, the box convention), whether the reply is constrained, the temperature when one is set, and the image's resolution, long edge and format |
 | `layout` | the endpoint and the image's resolution, long edge and format; which model the engine runs is the engine's to say, in each reply |
+| `text` | a revision of its rules, every bound it judges a page by, and the image's resolution, long edge and format |
 | `stub` | a constant |
 
 The first draft had a hand-raised number, `PromptVersion`, that
@@ -239,11 +254,18 @@ error body.
 | `RateLimited` | the endpoint is describing its own capacity | waits, for `RetryAfter` when the endpoint said, and spends no attempt |
 | `Budget` | the key's budget is spent | fails the page at once, `budget_exhausted`; says nothing about the reader |
 | `Permanent` | this page will never be read by this reader: the image is too large for it, or in a form it does not take | fails the page at once, `page_unreadable` |
-| `Refused` | the model, or a filter in front of it, declined the content of this page; the reader is healthy | moves the page to the next reader in the chain, with no limit on how far; with no next reader, the page fails `page_unreadable` |
+| `Refused` | the reader declined this page and is healthy: a model, or a filter in front of it, declined the page's content, or a reader that reads a page from the text its file carries found none it can read the page from | moves the page to the next reader in the chain, with no limit on how far; with no next reader, the page fails `page_unreadable` |
 | `Misconfigured` | the endpoint rejected the request itself: a parameter it does not take, a model it does not have, a key it does not know | moves the page to the next reader in the chain, with no limit on how far; with no next reader, the page fails `reader_unavailable` |
 
 A reader a page moves to gets attempts of its own. A parse that named
 its reader has a chain of one, so its pages never move.
+
+The `text` adapter declines with `Refused` and adds no class. What it
+says is what the class already meant to the code that schedules pages:
+this reader cannot be the one to read this page, nothing is wrong with
+the reader, and another reader may. The page then moves down the chain
+with no limit on how far, spends no attempt, and says nothing against
+the reader's health, which is what a page with no text needs.
 
 `Refused` and `Misconfigured` are new. The first draft folded both into
 `Permanent`, which failed the page as `page_unreadable`. A model that
@@ -273,7 +295,7 @@ the reply carries a refusal or ended on a content filter.
 ### Adapters
 
 An adapter is an implementation of one or both interfaces over one
-wire format. The module ships three, and an adapter for another engine
+wire format. The module ships 4, and an adapter for another engine
 lives outside the module and needs only the `reader` and `document`
 packages.
 
@@ -281,6 +303,7 @@ packages.
 |---|---|---|
 | `chat` | Reader, Extractor | any endpoint that speaks OpenAI-compatible chat completions with image input |
 | `layout` | Reader | an OCR or layout engine someone runs themselves, behind a small HTTP contract |
+| `text` | Reader | nothing: it reads a page from the text its file carries |
 | `stub` | Reader, Extractor | nothing: its output is a function of its input |
 
 **`chat`** sends one user message holding the instruction and the page
@@ -346,6 +369,20 @@ engine holds its own prompt: an engine built on a model that was
 trained on one exact instruction keeps that instruction, and Lectio
 sends it a page and nothing to say about how to read it.
 
+**`text`** reads a page from `Page.Text` and calls nothing. It builds
+paragraphs, headings where the size and the weight of the type say so,
+list items, tables whose ruling closes every cell, and a figure where
+the page paints one, with the words inside it as its text and no
+description. Its characters are the file's own. It reads no meaning: a
+formula is the characters the file holds, and a running header and a
+page number are text, which assembly tells from the pages around them
+([[010-assembly]]). What it cannot read without guessing it declines,
+and the page goes to the next reader. A page it declines costs one
+call to that reader, and a page it reads wrongly costs the result, so
+every rule leans toward declining. The rules, each bound with what it
+trades, and what the reader loses are in
+[[017-agent-driven-parsing]].
+
 **`stub`** returns the same three blocks for every page: a title
 naming the page, a line holding a digest of the page's bytes, and a
 page number. A test that knows the bytes knows the blocks, and a
@@ -359,7 +396,7 @@ apiVersion: lectio.latere.ai/v1
 kind: Reader
 metadata: { name: default }
 spec:
-  adapter: chat                             # chat, layout or stub
+  adapter: chat                             # chat, layout, text or stub
   endpoint: https://gateway.example/v1      # any OpenAI-compatible base URL
   model: some-model                         # passed through; Lectio assigns it no meaning
   timeout: 120s
@@ -381,12 +418,35 @@ engine that scales to zero may load its model on the first call.
 `maxOutputTokens` are the `chat` adapter's; a `layout` reader takes an
 endpoint, an image and a timeout.
 
+A `text` reader takes an image and nothing else of its own, and needs
+no key:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: own }
+spec:
+  adapter: text
+  image: { dpi: 160, longEdge: 2048, format: png }   # the defaults
+```
+
+The image is the one a result holds of a page this reader read, at the
+defaults of a `chat` reader, so that a page looks the same whichever
+reader read it. A document that names an `endpoint` or a `model` for a
+`text` reader is refused: it expects a model to read the page. Such a
+reader can describe no figure, so naming it in `describe.chain` is an
+error.
+
 Two members belong to the control plane. `maxInFlight` bounds a
 reader's calls in flight across the fleet ([[007-model-capacity]]).
 `cost`, default 1, is the fairness charge of one call to the reader: a
 weight between readers, not a price, so an operator who configures a
 small model for pages and a large one for escalation says how much more
-a call to the second weighs ([[006-fairness-and-priority]]). `cost` is
+a call to the second weighs ([[006-fairness-and-priority]]). A `text`
+reader's `maxInFlight` defaults to 64 and every other reader's to 8.
+The bound protects an endpoint's capacity, and a `text` reader has no
+endpoint; it stands first in a chain, where every page passes it, so
+held to the slots of one worker process it would hold a fleet to them. `cost` is
 read and, like `maxInFlight`, not applied by the in-process runner,
 which says so at start. `requestsPerMinute` was in the first draft and
 is gone from the design and from the configuration: spacing calls to a
@@ -516,7 +576,9 @@ no other:
 
 - its reader returned two invalid replies. This moves a page once: a
   page that the next reader also cannot answer usably fails there;
-- its reader declined it (`Refused`);
+- its reader declined it (`Refused`): a model declined the page's
+  content, or the `text` reader found no text it can read the page
+  from;
 - its reader's endpoint rejects the request (`Misconfigured`).
 
 The last two move a page as far down the chain as it takes, since
@@ -525,11 +587,12 @@ attempts of its own, and a parse that named its reader never moves.
 
 That is the whole of quality routing in the first version. It rests on
 signals that exist: a reply that fails a check, a refusal, a rejected
-request. A valid reply that transcribes the page wrongly is not caught
-by any of them, and that is a known limit, not an oversight: routing on
-a quality score needs a reader that supplies one, or a second source
-for the page's text to compare against, which is the text-layer path
-under Open below.
+request, a page with no text of its own. A valid reply that transcribes
+the page wrongly is not caught by any of them, and that is a known
+limit, not an oversight: routing on a quality score needs a reader that
+supplies one, or a second source for the page's text to compare
+against. The page's own text is that second source, and comparing a
+model's transcription with it is not built.
 
 ### Routing policy
 
@@ -538,11 +601,18 @@ apiVersion: lectio.latere.ai/v1
 kind: Policy
 metadata: { name: default }
 spec:
-  read:     { chain: [default, strong] }    # readers tried in order
+  read:     { chain: [own, default, strong] } # readers tried in order
   extract:  { chain: [text] }               # for structured extraction
   describe: { chain: [vision] }             # for describing figures
   escalate: { onInvalid: 2, max: 1 }
 ```
+
+A chain that begins with a `text` reader reads every page that carries
+its text with no model call, and gives the reader after it the pages
+that reader declines: scans, pages that are mostly a figure, tables set
+without ruling. A parse that names its reader gets that reader alone,
+whichever it is: one that names a `text` reader has the pages that
+reader declines fail with `page_unreadable`.
 
 `describe.chain` names Reader documents whose adapter can describe a
 figure: the same document gives a reader and a describer under one
@@ -639,15 +709,12 @@ These are decisions for the owner. None is designed here.
   one template today, varied by the box convention. A profile would let
   a Reader document name a template of its own, loaded with the
   configuration. Prompt tuning is out of the first version.
-- **A text-layer path.** Most PDFs carry their own text with positions,
-  and the renderer can read it at no model cost. Three parts: the
-  page's own text and positions handed to a reader as `Page.Text`; a
-  reader that builds blocks from it and calls no model; and the routing
-  policy trying that reader first, with a page that has no usable text
-  layer moving down the chain as a declined page does. It is the
-  largest cost lever in the design, and it is also the second source of
-  a page's text that a quality check needs. It is the subject of
-  [[017-agent-driven-parsing]].
+- **A page's own text for a reader that calls a model.** `Page.Text`
+  is handed to any reader that asks, and the `text` adapter is the one
+  that does. A `chat` reader that asked could be told the page's exact
+  text and be left to say what each run of it is, and a check could
+  compare a model's transcription with it. Neither is built
+  ([[017-agent-driven-parsing]]).
 - **A batch form of the reader.** `ReadPage` is one synchronous call.
   An endpoint that takes many pages and answers hours later, at a lower
   price, does not fit it. The batch class is where it would be used.
@@ -672,6 +739,9 @@ Built:
   `Version`, `Credential`, the seven error classes with `FromStatus`
   and `FromTransport`, `Normalize`, `KindOf`, `TableFromHTML` and
   `Check`.
+- A page's own text: `Description.Text`, `Page.Text` with `PageText`,
+  `Result.TextLayer`, and `reader/text` (Reader), which reads a page
+  from it and declines with `Refused`.
 - `Describer`, with `reader/chat` and `reader/stub` adapters, the
   figure prompt, the Policy's `describe.chain`, and the run that
   describes a parse's figures in the in-process runner.
@@ -683,7 +753,8 @@ Built:
   and Extractor).
 - `internal/config`: Reader and Policy documents from a file or a
   directory, strict, refused whole on any error. A Reader document's
-  `boxes`, `temperature` and `outputLimitParam` are read and applied.
+  `boxes`, `temperature` and `outputLimitParam` are read and applied,
+  and one of the `text` adapter names no endpoint and no model.
 - `internal/prompts`: the three prompts as template files, rendered per
   call, each with a test that holds its full text, and a test that
   holds the page prompt's definitions to the set of kinds.
@@ -725,6 +796,10 @@ Remaining:
 | Changing `model` or `endpoint` in a Reader document and sending `SIGHUP` changes which model reads the next page, with no restart and no lost task | an end-to-end test with two stub endpoints |
 | Each validation row has a fixture reply that triggers it and the stated effect | a table test |
 | A reader that fails validation twice sends the page to the next reader once, and a pinned parse never escalates | an end-to-end test |
+| A page the `text` reader cannot read is declined with `Refused` and a fixed sentence that holds nothing of the page, and a canceled read is `Retryable` | `TestAPageWhoseTextCannotBeReadIsDeclined`, `TestAPageReadFromItsOwnTextSaysSo` |
+| A chain of the `text` reader and a second reader calls the second for the pages the first declines and for no other; a parse that names the `text` reader fails those pages with `page_unreadable`; a second parse takes what the first read, and one with a `text` reader of another version does not | `TestAChainReadsAPageWithTheFirstReaderThatCan`, in one process; `TestAFileOf300PagesThatCarriesItsTextIsParsedWithNoModelCall`, through the durable server |
+| A Reader document of the `text` adapter names no endpoint, no model and no key, is refused when it names one, describes no figure, and has a pool of 64 | `TestAReaderOfAPagesOwnTextNeedsNoEndpoint` |
+| 2 `text` readers that differ in their image differ in `Version`, and 2 that differ in name do not | `TestTheReaderDescribesItself` |
 | A page its reader declines, and a page whose reader's endpoint rejects the request, move down the chain as far as it takes; with no reader left the first fails `page_unreadable` and the second `reader_unavailable` | a runner test counting each reader's calls |
 | A credential does not appear in any formatted, logged or marshaled form of a page, a request or an error | a unit test over every such form |
 | An engine that answers the `layout` contract reads a page with no change to Lectio | an adapter test against a recorded engine reply |
