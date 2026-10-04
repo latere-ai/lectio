@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Latere AI
 // SPDX-License-Identifier: Apache-2.0
 
-// Command lectiod serves the Lectio API.
+// Command lectiod serves the Lectio API and runs its parses.
 //
-// This build runs in one mode, LECTIO_DEV=true: one process, files and
-// results in memory, pages read by an in-process runner, one token. It is
+// It runs in two modes. With LECTIO_DEV=true it is one process with files
+// and results in memory, pages read by an in-process runner, and one token:
 // the whole parsing path and the whole API with nothing that survives a
-// restart, for a laptop and for tests. The durable server, with its tasks
-// in Postgres and its bytes in an object store, is specs/004 and is not
-// built; without LECTIO_DEV the command says so and exits.
+// restart, for a laptop and for tests. Without it, it is the durable server
+// of specs/004-durable-tasks.md and specs/016-distribution.md: its work is
+// rows in Postgres, its bytes are in an object store, and LECTIO_ROLE says
+// whether the process serves the API, runs the tasks, or does both.
 package main
 
 import (
@@ -67,11 +68,8 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 		return err
 	}
 	log := slog.New(slog.NewJSONHandler(logs, nil))
-	if !s.Dev {
-		if s.DatabaseURL == "" {
-			return errors.New("LECTIO_DATABASE_URL is not set. The durable server keeps its work in a database; LECTIO_DEV=true runs without one and keeps nothing")
-		}
-		return errors.New("the durable server is not built yet: this build runs with LECTIO_DEV=true only")
+	if !s.Dev && s.DatabaseURL == "" {
+		return errors.New("LECTIO_DATABASE_URL is not set. The durable server keeps its work in a database; LECTIO_DEV=true runs without one and keeps nothing")
 	}
 
 	readers := config.Stub()
@@ -82,10 +80,6 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	} else {
 		log.WarnContext(ctx, "LECTIO_CONFIG is not set: pages are read by the stub reader, which calls no model and describes the page it was given")
 	}
-	for _, what := range append(readers.RunnerUnapplied, readers.Unapplied...) {
-		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
-	}
-	log.WarnContext(ctx, "LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")
 
 	limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
 	pipeline := &parse.Pipeline{Limits: limits, Renderer: render.NewPages()}
@@ -100,6 +94,13 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	} else {
 		log.InfoContext(ctx, "LECTIO_CONVERTER_URL is not set: a format that needs conversion is refused")
 	}
+	if !s.Dev {
+		return serveDurable(ctx, s, readers, pipeline, log, ready)
+	}
+	for _, what := range append(readers.RunnerUnapplied, readers.Unapplied...) {
+		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
+	}
+	log.WarnContext(ctx, "LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")
 	st := store.NewMemory()
 	runner := &run.Runner{
 		Store: st, Pipeline: pipeline,
