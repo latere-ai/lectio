@@ -195,10 +195,10 @@ func TestATableKeepsItsCellsSpansAndHeaderRows(t *testing.T) {
 	table := `<w:tbl>` +
 		`<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblLook w:firstRow="1"/></w:tblPr>` +
 		`<w:tblGrid><w:gridCol w:w="100"/><w:gridCol w:w="100"/><w:gridCol w:w="100"/><w:tblGridChange w:id="1"><w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid></w:tblGridChange></w:tblGrid>` +
-		// A header row, its first cell over two columns.
+		// A header row, its first cell over 2 columns.
 		`<w:tr><w:trPr><w:tblHeader/></w:trPr>` +
 		cellOf(`<w:gridSpan w:val="2"/>`, para("", "Region")) + cellOf("", para("", "Total")) + `</w:tr>` +
-		// A cell merged down two rows, and a raised run in a cell.
+		// A cell merged down 2 rows, and a raised run in a cell.
 		`<w:tr><w:tblPrEx><w:jc w:val="left"/></w:tblPrEx>` +
 		cellOf(`<w:vMerge w:val="restart"/>`, para("", "North")+para("", "and east")) +
 		cellOf("", `<w:p><w:r><w:t>km</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:t>2</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="subscript"/></w:rPr><w:t>i</w:t><w:t>j</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="baseline"/></w:rPr><w:t>.</w:t></w:r></w:p>`) +
@@ -256,7 +256,7 @@ func TestATableKeepsItsCellsSpansAndHeaderRows(t *testing.T) {
 	few := limits
 	few.cells = 2 * maxSpan
 	if _, err := readDOCX(context.Background(), docxOf(t, wide), few); fault.CodeOf(err) != fault.FileTooLarge {
-		t.Fatalf("a table of three rows by a thousand columns against a bound of two thousand cells: %v", err)
+		t.Fatalf("a table of 3 rows by 1,000 columns against a bound of 2,000 cells: %v", err)
 	}
 }
 
@@ -281,7 +281,7 @@ func TestFiguresTextBoxesAndNotes(t *testing.T) {
 		`<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>` +
 		`<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:t>not a note</w:t></w:r></w:p></w:footnote>` +
 		`<w:footnote w:id="1">` + para("", "A note nothing cites.") + `</w:footnote>` +
-		`<w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Second, in two</w:t></w:r></w:p>` + para("", "paragraphs.") + `</w:footnote>` +
+		`<w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Second, in 2</w:t></w:r></w:p>` + para("", "paragraphs.") + `</w:footnote>` +
 		`<w:footnote w:type="normal" w:id="3">` + para("", "Third.") + `<w:p ` + drawingNS + `><w:r><w:pict><v:imagedata/></w:pict></w:r></w:p></w:footnote>` +
 		`</w:footnotes>`
 	endnotes := `<w:endnotes ` + wordNS + `><w:endnote w:id="1">` + para("", "An endnote.") + `</w:endnote></w:endnotes>`
@@ -292,7 +292,7 @@ func TestFiguresTextBoxesAndNotes(t *testing.T) {
 		"figure:", "figure:",
 		"text:Claims and sources",
 		"text:The current markup.",
-		"footnote:Third.", "footnote:Second, in two\nparagraphs.", "footnote:An endnote.",
+		"footnote:Third.", "footnote:Second, in 2\nparagraphs.", "footnote:An endnote.",
 	}
 	if got := shape(p); !reflect.DeepEqual(got, want) {
 		t.Fatalf("blocks:\n got %q\nwant %q", got, want)

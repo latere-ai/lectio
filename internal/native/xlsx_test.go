@@ -85,7 +85,7 @@ func workbookPages(t *testing.T, data []byte) []document.Page {
 }
 
 const ledgerStyles = `<styleSheet ` + sheetNS + `>` +
-	`<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\-mm\-dd\ hh:mm:ss"/><numFmt numFmtId="nine" formatCode="0%"/></numFmts>` +
+	`<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\-mm\-dd\ hh:mm:ss"/><numFmt numFmtId="x" formatCode="0%"/></numFmts>` +
 	`<cellStyleXfs count="2"><xf numFmtId="14"/><xf numFmtId="14"/></cellStyleXfs>` +
 	`<cellXfs count="5"><xf numFmtId="0"><alignment><xf numFmtId="14"/></alignment></xf><xf numFmtId="14"/><xf numFmtId="10"/><xf numFmtId="164"/><xf numFmtId="20"/><xf/></cellXfs>` +
 	`</styleSheet>`
@@ -153,7 +153,7 @@ func TestAWorkbookIsOnePagePerSheet(t *testing.T) {
 }
 
 func TestASheetIsReadWhateverOrderItsCellsAreIn(t *testing.T) {
-	// Cells out of order, two for one position, fixed references, and a
+	// Cells out of order, 2 for one position, fixed references, and a
 	// workbook that counts its days from 1904.
 	sheet := worksheet("Mixed", rowsOf(
 		`<row r="3"><c r="$C$3"><v>33</v></c><c r="B3"><v>32</v></c></row>`+
@@ -230,7 +230,7 @@ func TestWhatASheetDeclaresIsNeverAllocatedFor(t *testing.T) {
 	}{
 		"a dimension of every cell a sheet can have": {
 			workbookOf(t, []tab{worksheet("S", `<dimension ref="A1:XFD1048576"/>`+one)}), fault.FileTooLarge, "declares 17179869184 cells"},
-		"two cells at opposite corners": {
+		"2 cells at opposite corners": {
 			workbookOf(t, []tab{worksheet("S", rowsOf(`<row r="1"><c r="A1"><v>1</v></c></row><row r="1048576"><c r="XFD1048576"><v>2</v></c></row>`))}), fault.FileTooLarge, "cells"},
 		"more shared strings than the part can hold": {
 			workbookOf(t, []tab{worksheet("S", one)}, entry{"xl/sharedStrings.xml", `<sst ` + sheetNS + ` count="2" uniqueCount="4000000000"><si><t>a</t></si><si><t>b</t></si></sst>`}),
@@ -274,17 +274,17 @@ func TestAWorkbookOverThePageLimitIsRefusedBeforeASheetIsRead(t *testing.T) {
 	}
 	data := workbookOf(t, tabs)
 	if _, err := Pages(context.Background(), data, TypeXLSX, 4); fault.CodeOf(err) != fault.TooManyPages {
-		t.Fatalf("five sheets against a limit of four: %v", err)
+		t.Fatalf("5 sheets against a limit of 4: %v", err)
 	}
 	if _, err := Pages(context.Background(), data, TypeXLSX, 5); fault.CodeOf(err) != fault.DocumentCorrupt {
-		t.Fatalf("five sheets with no parts, within the limit: %v", err)
+		t.Fatalf("5 sheets with no parts, within the limit: %v", err)
 	}
 	// With no limit on pages, a workbook holds no more sheets than a
 	// package may hold entries.
 	few := limits
 	few.entries = 4
 	if _, err := readXLSX(context.Background(), data, 0, few); fault.CodeOf(err) != fault.FileTooLarge && fault.CodeOf(err) != fault.TooManyPages {
-		t.Fatalf("five sheets against a bound of four entries: %v", err)
+		t.Fatalf("5 sheets against a bound of 4 entries: %v", err)
 	}
 }
 

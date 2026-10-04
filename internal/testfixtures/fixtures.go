@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package testfixtures embeds the real document files the intake tests read:
-// one file per format intake accepts, two signed containers, and the office
+// one file per format intake accepts, 2 signed containers, and the office
 // documents the native readers are held to. Embedding them keeps those tests
 // hermetic, with no network access and no path that depends on the working
 // directory. README.md records where each file comes from, and the test file
@@ -25,7 +25,7 @@ const (
 	DOCX         = "files/sample.docx"
 	XLSX         = "files/sample.xlsx"
 	ReportDOCX   = "files/report.docx" // generated: headings, a list, a table with spans, a picture, a footnote
-	LedgerXLSX   = "files/ledger.xlsx" // generated: three sheets, one hidden, one empty
+	LedgerXLSX   = "files/ledger.xlsx" // generated: 3 sheets, one hidden, one empty
 	LedgerXLSM   = "files/ledger.xlsm" // LedgerXLSX with the part a macro project is stored in
 	// ReportDOCX and LedgerXLSX as an office suite wrote them back out.
 	ReportSuiteDOCX = "files/report-libreoffice.docx"

@@ -94,7 +94,7 @@ func New(cfg Config) (*Client, error) {
 
 // Convert returns data, of media type from, as media type to.
 //
-// A failure is one of four things. The sidecar refused the pair, the file
+// A failure is one of 4 things. The sidecar refused the pair, the file
 // is past a size limit, or the suite could not convert the file within its
 // bounds: each comes back with the code the sidecar gave it, and is the
 // file's. Anything else, a sidecar that cannot be reached, does not answer

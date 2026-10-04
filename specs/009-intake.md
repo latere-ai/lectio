@@ -140,7 +140,7 @@ reading is held to the same bound, because a statement can be false.
 | a part that inflates past the size its entry declares | | `document_corrupt` |
 | elements open at once | 256 | `document_corrupt` |
 | tokens of markup, over all parts that are read | 33,554,432 | `file_too_large` |
-| bytes between two opening angle brackets: one tag, or one run of text | 1 MiB | `document_corrupt` |
+| bytes from one opening angle bracket to the next: one tag, or one run of text | 1 MiB | `document_corrupt` |
 | a document type declaration | none | `document_corrupt` |
 | blocks on one page | 500,000 | `file_too_large` |
 | cells over all tables of a file, as rows times columns | 1,048,576 | `file_too_large` |
@@ -151,12 +151,12 @@ reading is held to the same bound, because a statement can be false.
 | paragraph styles, cell formats | 65,536 | `file_too_large` |
 
 A size is `file_too_large` and a file that contradicts itself or its
-format is `document_corrupt`, as for an image and a PDF. Four points
-make the bounds hold:
+format is `document_corrupt`, as for an image and a PDF. 4 points make
+the bounds hold:
 
 - The directory is read through a budget. The archive reader holds
   every entry it lists, at several times the entry's bytes, so a
-  directory of half a million entries is refused once the budget is
+  directory of 500,000 entries is refused once the budget is
   spent and is never held whole.
 - A part is refused for the size its entry declares, before a byte is
   inflated, and a part that inflates past that size is refused as it is
@@ -165,7 +165,7 @@ make the bounds hold:
   decoder defines no entity from a document type and fetches nothing one
   names; a part that declares one is refused outright, since the format
   forbids it. A start tag is decoded whole, one value per attribute,
-  which is why the distance between two brackets is bounded.
+  which is why the distance from one bracket to the next is bounded.
 - Nothing is read through a relationship but a part of the same
   package. A target that says it is external, and one whose path climbs
   out of the package, are passed over. An error's detail names a part
@@ -224,7 +224,7 @@ block with the sheet's name, and the sheet's cells as one `table`.
   no text when it stored none.
 - A number is written as the shortest decimal that is the same number,
   which is `2.3` for a stored `2.2999999999999998`. Its format is read
-  for two things only. A date or time format makes it an ISO 8601 date,
+  for 2 things only. A date or time format makes it an ISO 8601 date,
   time, or both, with seconds only when the format shows them. A
   percent format makes it the number times 100 with a percent sign.
   Separators, currency signs, rounding and padding a format would add
@@ -281,7 +281,7 @@ with `unsupported_media_type`.
 The sidecar is `lectio-convert` ([[016-distribution]]), and the call is
 one HTTP request: a POST of the file to `/v1/convert`, with the file's
 media type as `Content-Type` and the type wanted as `Accept`. It
-converts seven pairs and no other: `.doc` to `.docx`, and `.pptx`,
+converts 7 pairs and no other: `.doc` to `.docx`, and `.pptx`,
 `.ppt`, `.odp`, `.key`, `.rtf` and `.odt` to PDF. The answer is the
 conversion, or a status with a body of `{"error": {"code", "detail"}}`:
 
@@ -293,14 +293,14 @@ conversion, or a status with a body of `{"error": {"code", "detail"}}`:
 | `422` | the suite did not convert the file within its time and its memory | `document_corrupt` |
 | any other status, no answer, or none within 5 minutes | the sidecar failed | `internal` |
 
-The first three are the file's, as a page that does not render within
+The first 3 are the file's, as a page that does not render within
 its bounds is. The last is not the file's and not its caller's. The
 client follows no redirect, so a sidecar cannot send a file on, and it
 holds a conversion to the size a file is held to. `prepare` then reads
 the conversion as it reads any file, so a conversion that is not the
 type it was asked for fails as a corrupt file does.
 
-What the sidecar does for the four rules, and what it leaves to whoever
+What the sidecar does for the 4 rules, and what it leaves to whoever
 runs it:
 
 - **Network.** The sidecar cannot take the network from itself. It is
@@ -317,7 +317,7 @@ runs it:
   updated on load. The filter that reads the file is named for its
   type, so the suite does not choose one from what the bytes look like.
 - **Credentials.** The sidecar holds none and is given none. The suite
-  is started with an environment of two variables, its home and its
+  is started with an environment of 2 variables, its home and its
   directory for temporary files, both inside the conversion's scratch
   directory. The scratch directory holds the file, the profile and
   everything the suite writes, and is removed when the conversion ends,
@@ -475,7 +475,7 @@ Built:
 - `internal/convert`, `cmd/lectio-convert` and `deploy/converter`: the
   client a pipeline converts through, the sidecar that answers it, and
   the sidecar's image, with the suite, as a user that is not root. Run
-  by hand, with no network, on a socket: all seven conversions through
+  by hand, with no network, on a socket: all 7 conversions through
   LibreOffice 25.2, a conversion past its time limit killed with
   nothing left running or on disk, and a suite under a memory limit too
   small for it refused. `make live-convert` repeats the conversions
@@ -499,7 +499,7 @@ Remaining:
   run with no network when they are told to; the manifests that tell
   them to (`deploy/`, [[016-distribution]]) are not, and no test in the
   gate runs a container. The test with a counting server is not built
-  either: run by hand with a network, three documents that name an
+  either: run by hand with a network, 3 documents that name an
   outside resource were converted by this suite without one fetch, with
   the profile and without it, so the profile's effect has not been
   observed.
@@ -538,12 +538,12 @@ a test:
 | A TIFF of more than 100,000 directories is refused with `too_many_pages`, and reading one frame of a 16 MiB file allocates no copy of it | `TestCountFramesStopsAtABoundOnDirectories`, `TestFramePNGDoesNotCopyTheFile` |
 | A page that holds one short word is not blank | `TestAPageWithOneSmallMarkIsNotBlank` |
 | A package whose entry declares more than a part may inflate to is refused with `file_too_large` before it is inflated, and one whose entry inflates past what it declares is refused with `document_corrupt` within 8 MiB of allocation | `TestAPartThatDeclaresMoreThanItsBoundIsRefusedBeforeItIsInflated`, `TestAPartThatInflatesPastWhatItDeclaresIsRefused` |
-| A package of more than 10,000 entries is refused, and a directory of half a million entries is refused within 64 MiB of allocation | `TestAPackageOfTooManyEntriesIsRefused` |
+| A package of more than 10,000 entries is refused, and a directory of 500,000 entries is refused within 64 MiB of allocation | `TestAPackageOfTooManyEntriesIsRefused` |
 | Markup nested past 256 elements, a tag of over 1 MiB, and tokens past their bound are each refused | `TestMarkupIsHeldToItsBounds` |
 | A part that declares a document type or an entity is refused, and nothing an entity names is read | `TestAPartThatDeclaresAnEntityIsRefused` |
 | A relationship whose target is outside the package is not followed, whatever the archive holds under that name | `TestARelationshipThatLeavesThePackageIsNotFollowed` |
 | A `.docx` keeps its headings with their levels, its list items, its tables with spans and header rows, its footnotes, and a figure for each picture | `TestAParagraphIsWhatItsStyleSays`, `TestATableKeepsItsCellsSpansAndHeaderRows`, `TestFiguresTextBoxesAndNotes` |
-| A sheet that declares every cell a sheet can have, two cells at opposite corners of one, a count of shared strings the part cannot hold, and one long string named by many cells are each refused within 16 MiB of allocation | `TestWhatASheetDeclaresIsNeverAllocatedFor` |
+| A sheet that declares every cell a sheet can have, 2 cells at opposite corners of one, a count of shared strings the part cannot hold, and one long string named by many cells are each refused within 16 MiB of allocation | `TestWhatASheetDeclaresIsNeverAllocatedFor` |
 | A workbook that lists more sheets than the limit on pages is refused with `too_many_pages` before a sheet is opened | `TestAWorkbookOverThePageLimitIsRefusedBeforeASheetIsRead` |
 | A workbook is one page per sheet with its merged cells as spans, its dates in ISO 8601, and its formulas as their stored values | `TestAWorkbookIsOnePagePerSheet`, `TestRender` |
 | Each office format read natively has a generated fixture and one an office suite wrote back out, and each comes out of `prepare` with the stated pages, blocks of each kind, table shape, spanned cells and texts | `TestOfficeFormatsAreReadFromTheirOwnStructure` |

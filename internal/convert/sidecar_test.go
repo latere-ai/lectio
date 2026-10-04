@@ -33,7 +33,7 @@ import (
 	"latere.ai/x/lectio/internal/testfixtures"
 )
 
-// TestMain lets the test binary stand in for the two programs a sidecar
+// TestMain lets the test binary stand in for both programs a sidecar
 // starts, so that the suite needs nothing on PATH: the sidecar's own
 // program under LimitArg, and the office suite. Which one it is, it reads
 // from its arguments, since the suite is started with no environment.
@@ -468,7 +468,7 @@ func TestOneConversionRunsAtATime(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Three conversions of 300ms each, one after another, end 900ms or
+	// 3 conversions of 300ms each, one after another, end 900ms or
 	// more after the first began.
 	first, last := spans[0][0], spans[0][1]
 	for _, span := range spans {
@@ -480,14 +480,14 @@ func TestOneConversionRunsAtATime(t *testing.T) {
 		}
 	}
 	if took := last.Sub(first); took < 900*time.Millisecond {
-		t.Fatalf("three conversions of 300ms took %s together: they ran at once", took)
+		t.Fatalf("3 conversions of 300ms took %s together: they ran at once", took)
 	}
 	raw, err := os.ReadFile(record)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runs := strings.Count(string(raw), "\n==\n"); runs != 3 {
-		t.Fatalf("the suite was started %d times, and three calls were served", runs)
+		t.Fatalf("the suite was started %d times, and 3 calls were served", runs)
 	}
 }
 

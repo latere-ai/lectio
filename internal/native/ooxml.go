@@ -36,7 +36,7 @@ type bounds struct {
 	// tokens the parts that are read may hold together.
 	depth  int
 	tokens int64
-	// runBytes is the most bytes between two opening angle brackets: the
+	// runBytes is the most bytes from one opening angle bracket to the next: the
 	// size of one tag or one run of text. A start tag is decoded whole,
 	// and its attributes cost many times their bytes.
 	runBytes int
@@ -185,7 +185,7 @@ func (p *pkg) charge(cells, text int64) error {
 // than max bytes pass without an opening angle bracket. The decoder returns
 // a start tag whole, with one value per attribute, so a tag of many
 // megabytes would cost many times its size; a bracket cannot occur inside a
-// tag, so the distance between two brackets bounds the tag.
+// tag, so the distance from one bracket to the next bounds the tag.
 type runs struct {
 	r   io.Reader
 	max int

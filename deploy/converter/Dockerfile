@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" \
     -o /out/lectio-convert ./cmd/lectio-convert
 
 # The suite without its graphical front end: the word processor and the
-# presentation program, which are the two the conversions need. With it,
+# presentation program, which are what the conversions need. With it,
 # the fonts a converted page is drawn with: the metric-compatible families,
 # so a page breaks where its author saw it break, and a CJK family, so text
 # in those scripts is not drawn as empty boxes. The directory for the

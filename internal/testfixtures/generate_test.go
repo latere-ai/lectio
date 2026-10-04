@@ -239,7 +239,7 @@ func reportDOCX() []part {
 	}
 }
 
-// ledger is a workbook of three sheets: one with a merged title, a header
+// ledger is a workbook of 3 sheets: one with a merged title, a header
 // row, dates, numbers, percentages, a boolean, and formulas with their
 // stored values; a hidden one with inline strings; and an empty one. With
 // macros it also holds the part a macro project is stored in, as a

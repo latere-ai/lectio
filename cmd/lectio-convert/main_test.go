@@ -23,7 +23,7 @@ import (
 	"latere.ai/x/lectio/internal/intake/detect"
 )
 
-// TestMain lets the test binary stand in for the two programs the sidecar
+// TestMain lets the test binary stand in for both programs the sidecar
 // starts: its own under the limit argument, which is the command's real
 // main, and the office suite, which here writes a fixed conversion.
 func TestMain(m *testing.M) {
@@ -128,7 +128,7 @@ func TestTheSidecarConvertsOverTheNetwork(t *testing.T) {
 func TestTheSidecarConvertsOverASocket(t *testing.T) {
 	dir, err := os.MkdirTemp("", "lc")
 	if err == nil && len(dir) > 80 {
-		// A socket's path is bounded at about a hundred bytes.
+		// A socket's path is bounded at about 100 bytes.
 		if err = os.RemoveAll(dir); err == nil {
 			dir, err = os.MkdirTemp("/tmp", "lc")
 		}

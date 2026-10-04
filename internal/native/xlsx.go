@@ -181,7 +181,7 @@ func (x *xlsx) readStrings(name string) error {
 	if err != nil {
 		return err
 	}
-	// The shortest string item is an empty element of five bytes.
+	// The shortest string item is an empty element of 5 bytes.
 	const shortest = int64(len("<si/>"))
 	if n, err := strconv.ParseUint(attr(root, "uniqueCount"), 10, 64); err == nil && n > uint64(m.size/shortest) {
 		return fault.New(fault.DocumentCorrupt, "the shared strings part declares %d strings, more than its %d bytes can hold", n, m.size)

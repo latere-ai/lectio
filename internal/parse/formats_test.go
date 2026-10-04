@@ -92,8 +92,8 @@ func TestOfficeFormatsAreReadFromTheirOwnStructure(t *testing.T) {
 		// content.
 		{testfixtures.ReportDOCX, detect.MIMEDOCX, []wantPage{report}},
 		{testfixtures.ReportSuiteDOCX, detect.MIMEDOCX, []wantPage{report}},
-		// A document written by a word processor: one heading and seven
-		// paragraphs, three of them in quotation styles.
+		// A document written by a word processor: one heading and 7
+		// paragraphs, 3 of them in quotation styles.
 		{testfixtures.DOCX, detect.MIMEDOCX, []wantPage{{
 			kinds:    map[document.Kind]int{document.KindHeading: 1, document.KindText: 7},
 			headings: []string{"heading2:Some block quotes, in different ways"},
@@ -102,8 +102,8 @@ func TestOfficeFormatsAreReadFromTheirOwnStructure(t *testing.T) {
 		{testfixtures.LedgerXLSX, detect.MIMEXLSX, []wantPage{rainfall, stations, spare}},
 		{testfixtures.LedgerXLSM, detect.MIMEXLSM, []wantPage{rainfall, stations, spare}},
 		{testfixtures.LedgerSuiteXLSX, detect.MIMEXLSX, []wantPage{rainfall, stations, spare}},
-		// A workbook written by a spreadsheet program: three sheets, the
-		// first with four strings and the others empty.
+		// A workbook written by a spreadsheet program: 3 sheets, the
+		// first with 4 strings and the others empty.
 		{testfixtures.XLSX, detect.MIMEXLSX, []wantPage{
 			{
 				kinds: map[document.Kind]int{document.KindTitle: 1, document.KindTable: 1}, headings: []string{"title1:Tabelle1"},

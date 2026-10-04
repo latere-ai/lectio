@@ -175,7 +175,7 @@ func TestNewRefusesAnAddressItCannotReach(t *testing.T) {
 }
 
 // socketDir is a directory short enough to hold a socket: a socket's path
-// is bounded at about a hundred bytes, which the directory a test is given
+// is bounded at about 100 bytes, which the directory a test is given
 // for temporary files can pass.
 func socketDir(t *testing.T) string {
 	t.Helper()
@@ -245,7 +245,7 @@ func TestEveryConvertedTypeHasAConversion(t *testing.T) {
 		}
 	}
 	if len(converted) != len(conversions) {
-		t.Errorf("%d fixtures need conversion and the sidecar does %d conversions; keep the two sets equal", len(converted), len(conversions))
+		t.Errorf("%d fixtures need conversion and the sidecar does %d conversions; keep both sets equal", len(converted), len(conversions))
 	}
 	for _, pair := range [][2]string{{detect.MIMEDOCX, detect.MIMEPDF}, {detect.MIMEDOC, detect.MIMEPDF}, {detect.MIMEPDF, detect.MIMEDOCX}, {"", ""}, {"a, b", detect.MIMEPDF}} {
 		if Converts(pair[0], pair[1]) {

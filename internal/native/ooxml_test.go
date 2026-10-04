@@ -179,7 +179,7 @@ func TestAPartThatInflatesPastWhatItDeclaresIsRefused(t *testing.T) {
 }
 
 // A package may list only so many entries, and its directory is read only
-// so far: a directory of half a million entries is refused without holding
+// so far: a directory of 500,000 entries is refused without holding
 // them.
 func TestAPackageOfTooManyEntriesIsRefused(t *testing.T) {
 	entries := make([]entry, limits.entries+1)
@@ -416,7 +416,7 @@ func TestTableOf(t *testing.T) {
 
 // The bound is on the bytes between one opening bracket and the next: a
 // tag and the text after it, together.
-func TestRunsBoundsTheBytesBetweenTwoBrackets(t *testing.T) {
+func TestRunsBoundsTheBytesBetweenBrackets(t *testing.T) {
 	for input, within := range map[string]bool{
 		"<a>abc</a>": true, "abc<a>": true, "abcdefg<a>": false, "<a>abcdef": false, "<a b='cdefg'>": false,
 	} {

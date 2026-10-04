@@ -203,7 +203,7 @@ func (f format) moment(v float64, date1904 bool) string {
 	return day + "T" + clock
 }
 
-// pad writes a count with at least two digits.
+// pad writes a count with at least 2 digits.
 func pad(n int) string {
 	if n < 10 {
 		return "0" + strconv.Itoa(n)

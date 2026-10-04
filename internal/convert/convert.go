@@ -3,7 +3,7 @@
 
 // Package convert is conversion from both ends: the client a pipeline
 // converts through, and the sidecar that holds the office suite and does
-// the converting. The two meet in one HTTP call, and nothing else of one is
+// the converting. They meet in one HTTP call, and nothing else of one is
 // known to the other. The design is specs/009-intake.md.
 //
 // The call is a POST of the file to Path. Content-Type is the file's media
