@@ -66,6 +66,9 @@ claimed for, straight into the row of its hour.
 | submits per minute | server setting, overridable by the allow | a fixed window per group, one row, one statement |
 | deadline | the request, capped by `LECTIO_MAX_DEADLINE`; a parse that names none takes the cap, so nothing waits without bound | the deadline sweep ([[004-durable-tasks]]) |
 | attempts, expiries | server settings | [[004-durable-tasks]] |
+| extractions per parse | a constant, 64 | at the request: `409 conflict` ([[011-structured-extraction]]) |
+| windows per extraction, repairs per window | constants, 32 and 2 | in the extraction's task: `too_many_pages`, `schema_not_satisfied` |
+| the time an extraction or a figure run has | `LECTIO_MAX_DEADLINE`, from when it is queued | the deadline sweep ([[004-durable-tasks]]) |
 | model tokens per parse | server setting, default off | the page task stops reading when the parse's recorded tokens pass it; `budget_exhausted` |
 
 A limit on pages cannot be enforced at submit, where the page count is
@@ -108,11 +111,31 @@ The two counts of [[006-fairness-and-priority]], queued parses and
 running tasks, are made under a lock on the group's row for the same
 reason.
 
+**What an extraction and a figure count against.** Neither reads a
+page, so neither is reserved against a group's day, and a group with no
+page left may still ask what a parsed document says. They are held to:
+
+- the group's `max_running`, since the claim counts a group's leased
+  tasks of every kind;
+- the `readers` of the request's allow, for an extractor or a describer
+  the request names;
+- the bounds of the table above, which are constants and no setting of
+  a group;
+- the budget of the key they are read with, at the gateway.
+
+`max_queued` does not hold them: it counts a group's parses that have
+not ended, and neither adds one. The alternative, a budget of calls a
+day beside the budget of pages, would be a second ledger for what the
+key's own budget already bounds where it is spent.
+
 ### Whose credential reads a page
 
 The key a reader call is made with decides who the model endpoint
 charges. Lectio resolves it per group through one interface, in
-`internal/keys`.
+`internal/keys`. What follows says a page. It holds for a figure and
+for each call of an extraction as it stands: they are tasks of the same
+parse, in the same group, and are read with the same key by the same
+rules.
 
 ```go
 type Source interface {
@@ -196,6 +219,10 @@ Content-Type: application/json
 | `402` | the group has no budget | fails at once with `budget_exhausted`, as a budget refusal of the reader's own endpoint does ([[008-readers]]) |
 | `403` | the group may not read with this operator's keys | fails at once with `reader_not_permitted` |
 | a transport error, a timeout, `5xx`, `429`, `401`, any other status, a body that does not parse, a body with no key or no expiry, an expiry that is past or less than 1 minute away | the endpoint is unavailable | waits, and does not fail |
+
+An extraction refused a key fails its field with the same 2 codes, and
+a figure is lost to its run with them ([[011-structured-extraction]],
+[[003-api]]).
 
 `402` and `403` are about the group and no wait changes them, so they
 are permanent failures of the page ([[004-durable-tasks]]): no attempt
@@ -290,7 +317,7 @@ CREATE TABLE usage (
   hour          timestamptz NOT NULL,        -- the start of the hour, in UTC, the work settled in
   group_id      text   NOT NULL,
   owner         text   NOT NULL,
-  kind          text   NOT NULL,             -- the kind of task: page
+  kind          text   NOT NULL,             -- the kind of task: page, extract or figure
   reader        text   NOT NULL DEFAULT '',  -- the reader the attempt was claimed for; '' for pages no reader read
   pages         bigint NOT NULL DEFAULT 0,   -- pages that were read
   calls         bigint NOT NULL DEFAULT 0,   -- model calls, the ones that failed or were told to wait included
@@ -322,6 +349,12 @@ and one reader. It holds counts and names, never content.
   every format.
 - **In the hour of the settle.** A parse that runs across the turn of
   an hour is metered in both hours, each with what settled in it.
+- **An extraction and a figure are calls and no page.** Each settle of
+  an extraction's task meters the one call its claim made, under the
+  kind `extract` and the extractor it was claimed for; a repair and a
+  window are a call each. A figure meters its call under the kind
+  `figure` and its describer, and one taken from an earlier description
+  meters nothing. Neither adds a page.
 
 The table grows with the hours a group, an owner and a reader were
 active in, and never with pages or parses: a group that reads a million
@@ -332,7 +365,10 @@ detail: the detail of one parse is on the parse.
 The meter and the parses agree. Every settle that adds to a parse's
 `calls`, tokens and `pages_done` adds the same to the meter in the same
 transaction, so the meter summed over a group and an owner equals their
-parses summed, for as long as the parses are there. A parse that is
+parses summed, for as long as the parses are there. That holds for what
+an extraction and a figure called too: their calls and tokens are added
+to their parse's `usage` as a page's are, and a field and a run say
+what they used themselves. A parse that is
 deleted takes its row with it and leaves the meter as it is.
 
 One thing is not metered here: a call whose worker died or was taken
@@ -368,7 +404,10 @@ Not in the meter: the model, and a cost. A settle carries the reader
 its attempt was claimed for and no model name, so the sums are by
 reader, and an operator who runs 2 models as 2 readers reads them
 apart. No endpoint's reported cost reaches a settle, so the meter
-holds none. An extraction, when it is built, meters under its own kind.
+holds none. The kind is a column of the meter and no key of `GET
+/usage`: a read by `reader` tells a text model's calls from a vision
+model's when they are 2 Reader documents, and not when one document
+serves both.
 
 ### What Lectio does not do
 
@@ -432,6 +471,11 @@ Built:
   allow's filter. No worker changed: the settle already carried the
   calls and the tokens.
 - A retry reserves its failed pages again, in `lectio_retry`.
+- An extraction and a figure, in the durable server
+  ([[011-structured-extraction]], [[003-api]]): read with the key of
+  the parse's group through the same code a page's is, metered by each
+  settle under their kind and their reader, and held to the bounds
+  above.
 
 Remaining:
 
@@ -476,4 +520,7 @@ Remaining:
 | In a run with workers killed, the meter holds no more calls than the endpoint saw, and fewer by at most the calls in flight at the kills, and it equals a recount of what the settles recorded on the parses | `TestAKilledWorkerLosesItsLeaseAndNotTheWork` of `cmd/lectiod`, on every run; `TestSoak`, with `LECTIO_SOAK=1`, over 1,000 parses and random kills |
 | Each settle meters what its attempt used under the reader it was claimed for: a failed call as the call it was, a page that moved to the next reader under both, a page with no call and a native page as pages read; the rows are one per hour, group, owner and reader | `TestTheMeterIsWrittenAsTasksSettle`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode: 10 pages of 3 owners in 2 groups over 2 hours are 5 rows |
 | The meter equals a recount of the parses after a failed page, a wait, a retry, a cancel with a call spent and a worker that died | `TestTheMeterEqualsARecountAfterEveryWayAParseEnds`; every case of the store ends with the check that no owner's meter holds less than its parses recorded |
+| With `LECTIO_KEYS=endpoint`, the figures and the extractions of 2 groups are read with the 2 keys their pages were read with, each key asked once, and no key is in a log, a row, an object or an answer | `TestExtractionsAndFiguresOfTwoGroupsAreReadWithTwoKeys` of `cmd/lectiod`: a stub gateway that answers a page, a figure and an extraction and records the key of each call |
+| A `402` from the key endpoint fails an extraction and the figures of its group with `budget_exhausted` and a `403` with `reader_not_permitted`, with no model called and no attempt spent; an endpoint that does not answer fails nothing, and the extraction is filled on its first attempt once it answers | `TestAGroupTheKeyEndpointRefusesFailsItsExtractionsAndItsFigures` of `cmd/lectiod`, with a worker that holds no key from the pages it did not read; `TestAnExtractionWithNoKeyWaitsOrFailsAndCallsNoModel` and `TestAFigureEndsForItsOwnReasonsWithNoCall` of `internal/worker` |
+| The meter of a group equals the gateway's own count of the calls made with its key, for its pages, its figures and its extractions, the calls a rate limit refused included, and the meter of every kind equals a recount of what the settles recorded on the parses, after a worker was killed in the middle | `TestExtractionsAndFiguresOfTwoGroupsAreReadWithTwoKeys` and `TestARateLimitPausesAnExtractionAndAFigureOfItsGroupAlone`, against the gateway's record; `TestAnExtractionOutlivesAKilledWorker` and `TestAFigureRunOutlivesAKilledWorker`, against a recount; `TestAnExtractionIsATaskOfItsParseOneCallAClaim` and `TestAFigureRunIsOneTaskPerFigure` at the store |
 | `GET /usage` sums by group, owner or reader over hours or days, equals what the caller's parses say they used, answers a caller its own usage and an admin everyone's, and refuses a parameter that is not the contract's | `TestUsageIsReadFromTheMeters` through the API over the durable backend, `TestAReadOfTheMetersIsCheckedAndNarrowed` |

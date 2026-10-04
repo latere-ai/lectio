@@ -110,11 +110,16 @@ the scope. Two consequences are the point of the design:
 - A slot is never shorter than the call. It lives as long as the task
   is leased and calling.
 
-A page task makes one call, and takes its slot when it is claimed.
-A task that makes several calls, an extraction over windows with its
-repairs, does not hold a slot for its whole lease: it asks for one
-before each call and gives it back after, through the worker's
-exchange, so a long task occupies a model only while it is calling it.
+A page task makes one call, and takes its slot when it is claimed. So
+does a figure. A task that makes several calls, an extraction over
+windows with its repairs, does not hold a slot for its whole life: it
+makes one call a claim, and between 2 calls it is back in the queue
+with what it has so far ([[004-durable-tasks]]). Each claim takes a
+slot and each settle gives it back, so a long task occupies a model
+only while it is calling it, and a slot is still only ever a leased row
+that is calling. The first draft had the task ask the exchange for a
+slot before each call and give it back after, inside one lease: a
+second way to take a slot, which had to be kept as exact as the claim.
 A page that escalates to the next reader ([[008-readers]]) moves its
 slot too: the settle that moves it gives back the one it held, and its
 next claim takes one in the next reader's pool.
@@ -130,8 +135,14 @@ fleet so every count below is exact:
    `max_in_flight`, the group's scope is not paused, and the scope's
    in-flight count is below what the scope admits now.
 2. The candidates of a task are its `pin`, or the routing policy's
-   chain ([[008-readers]]) from the position the task is at
-   ([[005-parse-graph]]). The task's reader is its first candidate that
+   chain of its kind ([[008-readers]]) from the position the task is at
+   ([[005-parse-graph]]): the `read` chain for a page, the `extract`
+   chain for an extraction, the `describe` chain for a figure. A pin
+   is the reader the parse named for its pages, the extractor an
+   extraction's request named, or the describer a figure run's request
+   named. A reader, a describer and an extractor of one name are one
+   Reader document and one pool: a model's capacity is one number
+   whoever calls it. The task's reader is its first candidate that
    is not passed over (Fallback, below). The task is eligible when that
    reader has room, and the fair queue chooses among eligible tasks
    ([[006-fairness-and-priority]]). A reader that is only full, its
@@ -178,6 +189,11 @@ For `LECTIO_POOL_RESUME` (default 10s) after `paused_until`, it admits
 a share of the ceiling that grows from one slot to all of it in
 proportion to the time passed. The share is computed from the clock in
 the claim; nothing is written.
+
+A rate-limit reply to an extraction's call, or to a figure's, is the
+same wait and pauses the same scope: the key is the group's whatever
+it is used for. An extraction waits between 2 of its calls with what
+it extracted so far kept.
 
 A key that cannot be obtained yet is a wait of the same kind. With a key
 per tenant, a worker that is handed no key for a task's group, because
@@ -308,10 +324,19 @@ endpoint that counts or limits, or an extraction, are not proven: the
 rows of the table below that name a stub endpoint, a counting stub or
 an end-to-end test.
 
-Remaining: a slot taken and given back per call, for an extraction
-([[004-durable-tasks]], step 5 of the exchange): a task holds the slot
-of its claim until it settles. A page that moves to the next reader
-settles and is claimed again, so it holds no slot between the two. In a development server nothing of this
+An extraction and a figure are admitted as a page is, each for the
+chain of its kind, and an extraction takes a slot per call by being
+claimed per call ([[004-durable-tasks]]). Proven at the store: with a
+pool of 1, an extraction of 6 calls and the pages of another group take
+the slot in turn, 1 call is in flight at a time, and none between 2
+calls of the extraction; with a pool of 3, a worker with 10 free slots
+is handed 3 extractions, however many wait, and pages take the rest.
+And through the durable server, with a stub gateway that limits one
+group's key: its extraction and its figures wait with no attempt spent
+while another group's are served, and complete when the limit lifts.
+
+Remaining: a page that moves to the next reader settles and is claimed
+again, so it holds no slot between the two. In a development server nothing of this
 spec applies. The in-process runner bounds the pages
 read at once by a fixed number of workers for all readers together,
 and a rate-limited page waits by itself for the delay the endpoint
@@ -332,7 +357,8 @@ applied ([[008-readers]]).
 | A ceiling driven to 1 returns to a `max_in_flight` of 200 within ten quiet recovery intervals | the same test |
 | While a pool is full, idle workers write no row | the write-count test of [[004-durable-tasks]] |
 | Three consecutive failures open the breaker for all replicas; exactly one trial call is made after the open period | a concurrency test |
-| An extraction over six windows never holds more than one slot, and holds none between its calls | a test with a counting stub |
+| An extraction over six windows never holds more than one slot, and holds none between its calls | `TestAnExtractionHoldsASlotOnlyWhileItCalls`, at the store, with a pool of 1 that the pages of another group wait for; `TestExtractionsNeverExceedTheirReadersPool` for a pool of 3 and 40 extractions |
+| A rate limit on one group's key pauses that group's extractions and figures and no other group's, and spends no attempt | `TestARateLimitPausesAnExtractionAndAFigureOfItsGroupAlone` of `cmd/lectiod`, through the durable server with a stub gateway |
 | With a chain of two readers and the first open, pages are read by the second and their results say so; with the reader pinned, pages wait and none is read by the second | an end-to-end test |
 | A budget refusal fails the parse with `budget_exhausted` after one call and leaves the breaker closed | `TestABudgetRefusalFailsTheParseWithBudgetExhausted` of `cmd/lectiod`, through the durable server with a stub gateway that answers one group's key with `402`; `TestAFailedParseSaysWhatItsPagesFailedWith` at the store, for a parse whose failed pages carry one code and for one whose pages carry several |
 | A read of the queue holds each pool's calls in flight against its bound, its breaker as `closed`, `open` or `trial`, and each scope a rate limit reached with its ceiling and its pause; a read of some groups counts their calls alone and lists their scopes and the shared one | `TestTheQueueIsReadAsItStands` and `TestAGroupsOwnKeyIsItsOwnScope`, at the store |

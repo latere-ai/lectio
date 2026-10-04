@@ -44,13 +44,13 @@ answered before it is a design.
 | [002](002-object-model.md) | Object model: file, parse, document, page, block, table, field, and where each is stored | medium | validated | 001 |
 | [003](003-api.md) | API: files, parses, pages, blocks, fields, events, and the errors a caller branches on | large | validated | 001, 002 |
 | [004](004-durable-tasks.md) | Durable tasks: the task table, the worker's lease and exchange, fencing, retry, cancel, and the sweeps | xlarge | in-progress | 001, 002 |
-| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails | large | in-progress | 002, 004 |
+| [005](005-parse-graph.md) | Parse graph: prepare, one task per page, assemble, extraction and figures on request, and what a parse keeps when part of it fails | large | in-progress | 002, 004 |
 | [006](006-fairness-and-priority.md) | Fairness and priority: groups and their projects, weights, the interactive and batch classes, and the order tasks are dispatched in | xlarge | in-progress | 004, 005 |
 | [007](007-model-capacity.md) | Model capacity: reader pools, slots held with the lease, rate limits, the breaker, and fallback | large | in-progress | 004, 006 |
 | [008](008-readers.md) | Readers: the interfaces a model sits behind, the adapters, the page contract, validation, and the routing policy | large | validated | 002, 005, 007 |
 | [009](009-intake.md) | Intake: detect the type, unwrap, convert, extract natively, count and render pages | large | validated | 002, 005 |
 | [010](010-assembly.md) | Assembly: from page results to one document, with running headers, tables across pages, an outline, and the views a result is read in | medium | validated | 002, 005 |
-| [011](011-structured-extraction.md) | Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from | large | validated | 008, 010 |
+| [011](011-structured-extraction.md) | Structured extraction: fields shaped by a caller's schema, each citing the blocks it was read from | large | in-progress | 008, 010 |
 | [012](012-identity-and-authorization.md) | Identity and authorization: verifying a caller, the action vocabulary, the question to the authorizer, limits on an allow, the owner policy | medium | in-progress | 001, 003 |
 | [013](013-limits-and-usage.md) | Limits and usage: what a parse and a group are held to, whose credential a page is read with, and the meters Lectio records | medium | in-progress | 005, 006, 012 |
 | [014](014-sources-and-retention.md) | Sources and retention: uploads, fetching by URL, the snapshot, origin, and when files and results are deleted | medium | in-progress | 002, 003, 004 |
@@ -89,9 +89,11 @@ The numbers are identifiers, not the order of work. The order is:
    and CSV, image rendering, and assembly with its views. Not built:
    PDF rendering, conversion, and native office formats.
 6. **Fields** (011), **telemetry** (015), and the first release. Built:
-   the extractor interface and its adapters; and for the release, the
-   2 images, the deploy tree and the workflow that publishes them,
-   which has not run. Not built: the rest.
+   extraction with a schema in the durable server, as a task that makes
+   one call a claim, and the run that describes figures there; and for
+   the release, the 2 images, the deploy tree and the workflow that
+   publishes them. Not built: extraction in a development server, and
+   telemetry.
 
 Steps 2 to 4 are where this system differs from a script that calls a
 model in a loop, and they come before breadth of formats on purpose.

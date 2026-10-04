@@ -260,7 +260,9 @@ out of memory and out of one reply.
 | Page image | object store | `parses/<parse>/pages/<n>.<token>.png`, raw image bytes; `.jpg` when the reader takes JPEG |
 | Page result | object store | `parses/<parse>/pages/<n>.<token>.json`; `<n>.a<token>.json` for a page `assemble` wrote again |
 | Document index | object store | `parses/<parse>/document.<token>.json`: page list with each page's key, spans, outline, usage, without blocks |
-| Field | object store | `parses/<parse>/fields/<name>.<token>.json` |
+| Field | object store | `parses/<parse>/fields/<name>.<token>.json`: the object and its citations. What its extraction read, `<name>.<token>.input.json`, and what it had between 2 calls, `<name>.<token>.progress.json`, lie beside it ([[011-structured-extraction]]) |
+| Figure description | object store | `parses/<parse>/figures/<ref>.<token>.json`, written onto the figure's block when the block is read ([[003-api]]) |
+| What an extraction was asked, where it stands, its error; a figure run and its figures | Postgres | `fields`, `figure_runs`, `figures`, `descriptions` |
 
 Renderings and chunks are not stored. They are views of the page
 results, made when a caller reads them with the options that caller

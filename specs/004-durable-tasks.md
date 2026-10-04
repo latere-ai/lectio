@@ -68,7 +68,7 @@ CREATE TABLE workers (
 
 CREATE TABLE tasks (
   parse_id      text     NOT NULL REFERENCES parses ON DELETE CASCADE,
-  task_id       text     NOT NULL,             -- prepare | page-<n> | assemble | extract-<name>
+  task_id       text     NOT NULL,             -- prepare | page-<n> | assemble | extract-<name> | figure-<ref>
   kind          text     NOT NULL,
   group_id      text     NOT NULL,
   project_id    text     NOT NULL DEFAULT '',  -- the group's project; '' is its own
@@ -95,7 +95,7 @@ CREATE TABLE tasks (
   scope         text,                          -- the key scope of that slot
   calling       boolean  NOT NULL DEFAULT false, -- holds the slot now
   charged       integer  NOT NULL DEFAULT 0,   -- fairness units charged at claim
-  output        text,                          -- object key of the result that won
+  output        text,                          -- object key of the result that won, or of what a task that goes on has so far
   result        jsonb,                         -- what the task said of its output, kept as it came
   calls         integer  NOT NULL DEFAULT 0,   -- model calls, over every attempt
   input_tokens  bigint   NOT NULL DEFAULT 0,
@@ -166,6 +166,7 @@ stateDiagram-v2
   leased --> queued: retryable failure, attempt + 1, backoff
   leased --> queued: the reader said to wait, attempt unchanged
   leased --> queued: the reader cannot read it, next reader of the chain, attempt reset
+  leased --> queued: it made a call and has another to make, attempt reset
   leased --> queued: its worker died, expiries + 1
   leased --> failed: permanent failure, attempts or expiries exhausted
   queued --> canceled: parse canceled
@@ -244,8 +245,13 @@ and at least once per third of the lease. In order, the exchange:
    claim carries what its task needs of its parse, the file for
    `prepare`, the manifest and the language hints for a page, so
    running a task costs a worker no statement of its own.
-5. **Takes and releases slots** for tasks that make more than one
-   model call ([[007-model-capacity]]).
+
+There is no fifth step. The first draft had one: a task that makes more
+than one model call asked the exchange for a slot before each call and
+gave it back after. Such a task now makes one call a claim (A task of
+several calls, below), so a slot is only ever taken by a claim and
+given back by a settle, and the exchange has no state of a call in the
+middle of a task.
 
 The whole exchange runs under one transaction-level advisory lock, so
 exchanges are serialized across the fleet. This makes every count in
@@ -315,6 +321,7 @@ An attempt ends in one of four ways:
 | retryable failure | a network error, a 5xx from the model endpoint, a timeout, a reply that fails validation | `attempt + 1`; `available_at = now() + backoff(attempt)`; `failed` at `LECTIO_TASK_ATTEMPTS` (default 5) |
 | permanent failure | a 4xx other than 408 and 429, a corrupt page, an unsupported input, a budget refusal | `failed` at once |
 | the reader said to wait | a rate-limit reply from the endpoint; a key endpoint that issued the group no key and no refusal ([[013-limits-and-usage]]) | `attempt` unchanged; `available_at` set to when the pool's pause ends ([[007-model-capacity]]) |
+| the task goes on | an extraction that made a call and has the next window to read, or a reply to repair ([[011-structured-extraction]]) | `queued` again at once; `attempt` and `invalid` at 0; `output` set to the key of what it has so far |
 | the worker died | the process was killed or stalled past its lease | `expiries + 1`; `attempt` unchanged; see below |
 
 Backoff is `min(cap, base * 2^(attempt-1))` with `base` 1s and `cap`
@@ -344,8 +351,9 @@ the cause, and at `LECTIO_TASK_EXPIRIES` (default 3) it is failed with
 touched stops after three workers, and the pages that shared a worker
 with it lose one lease period and nothing else. The code is the task's
 own: a `prepare` that ends its workers fails with `document_corrupt`,
-since the file is what intake could not open, and an `assemble` or an
-extraction with `internal`.
+since the file is what intake could not open, a figure with
+`figure_unreadable`, and an `assemble` or an extraction with
+`internal`.
 
 The worker says in each exchange whether it runs nothing at all, a task
 it was told it lost included. A task with `expiries > 0` is claimed
@@ -369,7 +377,8 @@ sweep in `sweeps` holds when it last ran.
   stall of the database expires nothing.
 - **Deadlines**: a parse past its deadline is failed with
   `deadline_exceeded` and its unsettled tasks canceled, in the cancel's
-  own statement.
+  own statement. The same sweep gives up the work on ended parses that
+  is out of time (Work on a parse that has ended, below).
 - **Settled tasks**: the task rows of a parse are deleted when it ends
   with every page read. The parse row keeps the counters, the document
   index the output keys, and one row beside the parse the change that
@@ -414,6 +423,79 @@ cancel at its next exchange, within one flush interval while it has
 work, and aborts the call; until then the call's slot is already free
 for others, which is a short overshoot of the pool and not a leak.
 Results already written stay readable until the parse is deleted.
+
+### A task of several calls
+
+A page is one call and one claim. An extraction is several calls: one
+for each window of a long document, and one for each repair of a reply
+that does not satisfy the schema ([[011-structured-extraction]]). It
+makes one of them a claim. A claim that has another call to make writes
+what the task has so far to the object store under its own token and
+settles with the outcome `continue`, which names that key. The store
+
+- returns the task to `queued` at once, in the lane it was in;
+- sets `attempt` and `invalid` to 0, as a task that moved to the next
+  reader has them: the call was answered, so the next one has attempts
+  of its own, and a step is no failure and waits no backoff;
+- records the key in `output`, and hands it to the next claim, whose
+  token is the next one.
+
+What follows is what the rest of this spec already gives a claim and a
+settle. Each call takes a slot in its reader's pool when it is claimed
+and gives it back when it settles, so the task holds a slot only while
+it calls ([[007-model-capacity]]). Each call is charged at its claim and
+takes its group's turn ([[006-fairness-and-priority]]). Each settle
+meters its call ([[013-limits-and-usage]]). A wait pauses the key scope
+with what was done kept. And a worker that dies in the task's fourth
+call loses that call: the sweep returns the task with `output` as the
+third step left it, and the worker that takes it over makes the calls
+that were not made. The fence covers the steps as it covers results:
+what a step kept is under the token of the claim that kept it, and the
+row names the one whose settle was accepted.
+
+The first draft held one lease over the whole extraction, with a slot
+taken and given back around each call by a step of the exchange. That
+kept the task's state in a worker's memory, so a restart, a rate limit
+or a worker's death in the last window began the extraction again and
+paid for every window 2 times, and it gave the exchange a second way to
+take a slot, apart from the claim, to keep exact.
+
+### Work on a parse that has ended
+
+An extraction and a figure are tasks of a parse that has ended
+([[003-api]], [[005-parse-graph]]). They are rows of the same table,
+claimed, fenced and settled as a page is, and they never move the
+parse: its state, its progress and its count of changes are as they
+were, and its usage grows by what they called. What each produced is on
+a row of its own, `fields` or `figures`, and the task's row is removed
+when the task ends, so the task table holds what is queued or running
+and nothing of these after.
+
+They exist only while the parse has ended. One asked while the parse
+runs has no task: the transaction that ends the parse queues it,
+whether the parse ends by its `assemble`, by a cancel or by its
+deadline. What ends such a task without a settle:
+
+- **Its deadline.** An extraction has `LECTIO_MAX_DEADLINE` from when
+  its task is queued, and a run that describes figures as long from its
+  start. The deadline sweep fails an extraction past it with
+  `deadline_exceeded`, loses the figures a run has not described to it
+  with `reader_unavailable`, and removes their tasks, a leased one
+  included: its worker is told it lost it, and its settle matches no
+  row.
+- **The delete of its parse, and the end of the parse's retention.**
+  Both take the lock the exchange takes, remove the tasks of the parse
+  that are queued or leased with their counters, and then remove the
+  parse, so a settle is wholly before the delete or refused by it.
+- **Not a cancel.** A cancel is of a parse that has not ended. A parse
+  that has ended answers `409 already_terminal`, and what was asked of
+  it runs.
+
+The functions that queue this work, `lectio_field_create` and
+`lectio_figures_start`, take the lock the exchange takes and then the
+parse's row. So each is wholly before or after the settle that ends the
+parse, a retry of it and its delete, and none waits on a row the
+exchange holds while holding one the exchange wants.
 
 ### Retry
 
@@ -466,7 +548,10 @@ that were read from the earlier read ([[005-parse-graph]]). The same
 holds for a parse that was stopped while a retry of it ran. A retry is
 also refused for a parse whose task rows are not all there, which one
 that ended before the rows were kept is, and for one past its
-retention, whose objects the retention sweep may be removing.
+retention, whose objects the retention sweep may be removing. And it is
+refused while an extraction or a figure of the parse is queued or
+running: a retry clears the document index and has `assemble` write the
+pages again, which is what that work reads.
 
 ### Behind a connection pooler
 
@@ -499,15 +584,14 @@ an attempt nor a lease period.
 
 ### What this leaves open for longer work
 
-A task here is one model call, or a few. Two hooks keep room for a
-kind of task that does more, such as a model working over a whole
-document, without designing it: the fairness charge is corrected at
-settle to what the task used ([[006-fairness-and-priority]]), and a
-task that makes several model calls holds a pool slot per call and not
-for its whole lease ([[007-model-capacity]]). What stays open is a task
-that holds a worker for minutes: the lease, the grace period at
-shutdown, and the rule that a page is the preemption point all assume
-seconds.
+A claim here is one model call. 2 things keep room for a kind of task
+that does more, such as a model working over a whole document, without
+designing it: the fairness charge is corrected at settle to what the
+claim used ([[006-fairness-and-priority]]), and a task of several calls
+makes one a claim and keeps what it has between them (A task of several
+calls, above). What stays open is a single call that holds a worker for
+minutes: the lease, the grace period at shutdown, and the rule that a
+claim is the preemption point all assume seconds.
 
 ## Not in this spec
 
@@ -541,12 +625,15 @@ Built:
   `lectio_retry`, the count of a parse's changes with the change that
   settled each page and `lectio_events`, the meter with `lectio_usage`,
   `lectio_queue`, and the rule that a parse with a failed page keeps
-  its rows. Step 5 of the exchange, a slot taken and
-  given back per call of a task that makes several, is not built: a
-  task holds the slot of its claim until it settles. The sweeps for
-  settled tasks past their retention and for orphaned outputs are not
-  built, so the rows of a parse that ended with a failed page or was
-  stopped stay until the parse is deleted.
+  its rows. A sixth holds the work on a parse that has ended: the
+  `fields`, `figure_runs`, `figures` and `descriptions` tables, the
+  kind `figure` and the policy's order of describers, the outcome
+  `continue`, `lectio_field_create` and `lectio_figures_start`, the
+  release of the extractions that waited when a parse ends, the
+  deadline of an extraction and of a run, and the delete that drops
+  their tasks. The sweeps for settled tasks past their retention and
+  for orphaned outputs are not built, so the rows of a parse that ended
+  with a failed page or was stopped stay until the parse is deleted.
 
 - `internal/store/postgres`: `Migrate` over the direct URL, refusing a
   schema that is dirty or newer than the binary, and a store with
@@ -649,8 +736,25 @@ Not proven: the row that blocks the database connection, which is
 proven at the store with a virtual clock and not with a connection that
 is cut, and the orphan sweep of the third row, which is not built.
 
+Proven for the work on an ended parse, at the store: an extraction is a
+task of its parse the moment it is asked, one call a claim, with what
+it has so far handed from claim to claim and no attempt spent between
+them; one asked while its parse runs is queued by whatever ends the
+parse; a worker that dies between 2 calls loses one; work past its
+deadline is given up and its worker's settle refused; a delete drops
+it with every counter equal to a recount; and the newest migration's
+down file leaves the schema the ones before it made, function by
+function and column by column. With processes: a worker killed in the
+middle of an extraction, and one killed in the middle of a run that
+describes figures, loses its lease and not the work.
+
 Remaining: the sweeps for settled tasks past their retention and for
-orphaned outputs, and step 5 of the exchange. A retry leaves the index
+orphaned outputs. What a step of an extraction kept, the cut of the
+document and each claim's progress, stays in the bucket until the parse
+is deleted, for the same reason. A delete lists the parse's objects and
+removes them before it removes the rows, so an object a worker writes
+for a task of the parse between the 2 is left for that sweep. A retry
+leaves the index
 and the rewritten pages of the run before it in the bucket until the
 parse is deleted, since the orphan sweep is not built. The store has no
 twin in memory, so `internal/run`, the in-process runner, still stands
@@ -677,3 +781,8 @@ durable and a restart loses every parse that had not ended.
 | The claim inside an exchange uses `tasks_runnable` and stays under 5 ms at one million queued rows | a benchmark with `EXPLAIN` assertions |
 | A retry returns the failed page rows of a parse to the queue under the tokens after their last, and no other row, in one transaction; several at once queue the pages once; the `assemble` that follows runs under the token after its last | `TestARetryQueuesAgainOnlyThePagesThatFailed` and `TestRetriesAtOnceQueueThePagesOnce`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode; `TestAPageThatFailsAgainCanBeReadAgain`, `TestARetriedParseHasItsTimeFromTheRetry` |
 | A worker killed with `SIGKILL` while it reads the pages of a retry loses them after one lease period, another worker reads them and the parse ends `succeeded`, and the pages that were read before the retry are not read again | `TestARetryOutlivesAKilledWorker`, a process-level test |
+| A task of several calls makes one a claim: a `continue` settle returns it to the queue with the key of what it has, no attempt spent and its attempts at 0, and the next claim carries the key under the next token | `TestAnExtractionIsATaskOfItsParseOneCallAClaim`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode; `TestAnExtractionFollowsTheClassOfItsExtractorsError` |
+| A worker killed with `SIGKILL` in the middle of an extraction of 6 calls loses the call in flight and no other: another worker makes the calls that were not made, the model is called 6 times plus at most once, and the field is filled once | `TestAnExtractionOutlivesAKilledWorker`, a process-level test; `TestAWorkerThatDiesMidExtractionLosesOneCall` at the store |
+| A worker killed with `SIGKILL` in the middle of a run that describes 3 figures loses its lease and not the run: every figure is described once, with at most the call in flight made 2 times | `TestAFigureRunOutlivesAKilledWorker`, a process-level test |
+| Work on an ended parse that is past its deadline is given up with its task removed, and a settle for it is refused; a delete of the parse and the end of its retention drop its work with every counter equal to a recount | `TestWorkOutOfTimeIsGivenUp` and `TestADeleteDropsTheWorkOnItsParse`, at the store |
+| A migration's down file leaves the schema the migrations before it made | `TestTheLastMigrationIsUndoneByItsDownFile`, which compares every function's definition, every column and every index, with tasks of the new kinds queued |

@@ -1,5 +1,5 @@
 ---
-title: "Parse graph: prepare, one task per page, assemble, extraction on request, and what a parse keeps when part of it fails"
+title: "Parse graph: prepare, one task per page, assemble, extraction and figures on request, and what a parse keeps when part of it fails"
 status: in-progress
 track: core
 depends_on:
@@ -54,6 +54,7 @@ flowchart LR
   prepare --> p1["page-1"] & p2["page-2"] & pn["page-n"]
   p1 & p2 & pn --> assemble
   assemble -. "on request" .-> e1["extract-invoice"] & e2["extract-parties"]
+  assemble -. "on request" .-> f1["figure-3.2"] & f2["figure-7.1"]
 ```
 
 | Task | Reads | Writes | Charge | Calls a model |
@@ -62,13 +63,32 @@ flowchart LR
 | `page-<n>` | the working copy, the manifest | the page's image and its result | its reader's `cost` | once, unless the page is blank |
 | `assemble` | every page result | the document index, and the page results whose running headers and footers it marked | 1 | no |
 | `extract-<name>` | the document | the field | its reader's `cost` per call | yes, a text model, once per window and per repair |
+| `figure-<ref>` | the figure's page and its image | the figure's description | its describer's `cost` | once, unless a description of the same figure was kept |
 
 An `extract-<name>` task is not part of what a submit creates. It is
 added when a caller asks for a field ([[011-structured-extraction]]),
-needs only an assembled document, and holds nothing else back: a parse
+needs only a parse that has ended, and holds nothing else back: a parse
 ends whether or not anyone asks it a question, and a question asked
 later reads no page again. It takes a slot in its reader's pool for
-each call it makes and is charged for each ([[007-model-capacity]]).
+each call it makes and is charged for each ([[007-model-capacity]]): it
+makes one call a claim, and returns to the queue between 2 of them with
+what it has so far ([[004-durable-tasks]]).
+
+A `figure-<ref>` task is added the same way, by a request to describe
+the figures of a parse that has ended ([[003-api]]): one task a figure,
+written with the run in one transaction. It cuts the figure from the
+image of its page and has a describer say what it shows.
+
+Neither is an edge of the graph, and neither moves the parse. A field
+asked while the parse runs is a row with no task, and the transaction
+that ends the parse, by `assemble`, by a cancel or by its deadline,
+queues it. A parse that ended without `assemble` has no index: its
+extraction reads the pages its task rows name, as a read of its
+document does. Both are tasks in the parse's group and project, in its
+class and at its priority. An extraction sits behind the parse's own
+`prepare` and `assemble` and ahead of the group's pages of that
+priority, and the figures of a run take the order of the run, beside
+the pages of other parses.
 
 The charge is what the fair queue adds to the tenant's virtual time
 ([[006-fairness-and-priority]]). No task is free. `prepare` and
@@ -195,7 +215,11 @@ Work a tenant paid for is never discarded because a later page failed.
 
 A failed `prepare` or `assemble` fails the parse. A failed
 `extract-<name>` fails its field and leaves the parse as it was
-([[011-structured-extraction]]).
+([[011-structured-extraction]]), and a failed `figure-<ref>` is a
+figure its run lost ([[003-api]]). The table of reader errors above
+holds for both with their own codes: where a page gives up with
+`page_unreadable`, a figure gives up with `figure_unreadable` and an
+extraction with `schema_not_satisfied`.
 
 ### The steps as code
 
@@ -328,13 +352,19 @@ Built:
   key is kept per owner in the database and looked up in the claim.
 - Proven with processes ([[004-durable-tasks]]): the third, fourth and
   eighth rows of the table below.
+- `extract-<name>` and `figure-<ref>` tasks, as rows, as the worker
+  runs them, and through the API ([[003-api]],
+  [[011-structured-extraction]]): added on request to a parse that has
+  ended, queued by the end of a parse for a field that waited, and
+  recorded on rows of their own.
 
 Remaining:
 
 - In a development server nothing is a row: the runner keeps its queue
   in memory, so a restart loses every parse that had not ended
   ([[004-durable-tasks]]).
-- `extract-<name>` tasks.
+- In a development server an extraction is not built, and a figure is
+  a job of the in-process runner and no task.
 - In a development server a parse that fails for its pages says
   `page_unreadable` whatever they failed with, and has no retry
   ([[003-api]]).
@@ -366,4 +396,7 @@ Remaining:
 | A parse of pages 1 to 3 followed by one of pages 1 to 10 calls the reader for seven pages | the same test |
 | A page that failed, or whose reply was cut, is read again by the next parse | the same test |
 | Peak worker memory for a 500-page parse is within 10% of the peak for a 5-page parse of the same page size | a memory test |
+| An extraction and a figure are tasks of a parse that has ended and never move it: its state, its progress and its count of changes are as they were, and its usage grows by what they called | `TestAnExtractionIsATaskOfItsParseOneCallAClaim` and `TestAFigureRunIsOneTaskPerFigure`, store tests |
+| An extraction asked while its parse runs has no task until the parse ends, and is queued by the transaction that ends it, by `assemble`, a cancel or its deadline | `TestAnExtractionAskedWhileItsParseRunsWaitsForItsEnd`, a store test; `TestAnExtractionOfAParseWithNoIndexReadsWhatWasRead` of `internal/worker`, for a parse that ended without `assemble` |
+| Each row of the table of reader errors holds for an extraction and for a figure, with `schema_not_satisfied` and `figure_unreadable` where a page gives up with `page_unreadable` | `TestAnExtractorsErrorDecidesWhatTheExtractionDoesNext` and `TestADescribersErrorDecidesWhatTheFigureDoesNext`, table tests of the worker |
 | A parse fails with the code its failed pages carry when they all carry one, and with `page_unreadable` when they differ | `TestAFailedParseSaysWhatItsPagesFailedWith`, a store test; `TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce` and `TestABudgetRefusalFailsTheParseWithBudgetExhausted` through the durable server |
