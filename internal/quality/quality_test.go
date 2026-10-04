@@ -429,11 +429,23 @@ func TestSelectKeepsWhatItsPagesStillHold(t *testing.T) {
 		t.Fatalf("outline = %+v", got.Outline)
 	}
 
-	// A span that loses a part is no span, and a page the truth does not
-	// have is a blank one.
+	// A span that loses a part is no span, a page the truth does not have
+	// is a blank one, and the headings that are left begin at the top.
 	got = truth.Select(2, 3, 7)
-	if len(got.Pages) != 3 || len(got.Pages[2].Blocks) != 0 || len(got.Spans) != 0 || len(got.Outline) != 1 || got.Outline[0].Ref != "1.1" {
+	if len(got.Pages) != 3 || len(got.Pages[2].Blocks) != 0 || len(got.Spans) != 0 {
 		t.Fatalf("a part of the truth: %+v", got)
+	}
+	if len(got.Outline) != 1 || got.Outline[0] != (document.Heading{Ref: "1.1", Level: 1, Text: "2 Results", Page: 1}) {
+		t.Fatalf("its outline = %+v", got.Outline)
+	}
+	deep := Truth{
+		Pages: []Page{{}, {Blocks: []Block{{Kind: document.KindHeading, Text: "2.1 Record"}, {Kind: document.KindHeading, Text: "3 Discussion"}, {Kind: document.KindHeading, Text: "3.1.1 Sensor"}}}},
+		Outline: []document.Heading{
+			{Ref: "2.1", Level: 3, Text: "2.1 Record", Page: 2}, {Ref: "2.2", Level: 2, Text: "3 Discussion", Page: 2}, {Ref: "2.3", Level: 4, Text: "3.1.1 Sensor", Page: 2},
+		},
+	}
+	if got := deep.Select(2).Outline; len(got) != 3 || got[0].Level != 2 || got[1].Level != 1 || got[2].Level != 3 || got[0].Ref != "1.1" {
+		t.Fatalf("levels 3, 2 and 4 come onto 2, 1 and 3: %+v", got)
 	}
 }
 

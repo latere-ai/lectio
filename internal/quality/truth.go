@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"latere.ai/x/lectio/document"
@@ -121,8 +122,10 @@ func (t Truth) block(ref string) (Block, bool) {
 // the order given: the pages renumbered from 1, and the spans and the
 // outline kept where every block they address is still there. A span that
 // loses a part is dropped, since what is left of it is one table or a join
-// the truth never stated. numbers counts from 1, and a number the truth
-// does not have selects a blank page.
+// the truth never stated. The levels of the headings that are left are
+// brought onto 1, 2, 3 in order, as an outline has no gap and begins at the
+// top whatever its document holds. numbers counts from 1, and a number the
+// truth does not have selects a blank page.
 func (t Truth) Select(numbers ...int) Truth {
 	out := Truth{Source: t.Source, Pages: make([]Page, 0, len(numbers))}
 	renumbered := map[int]int{}
@@ -152,11 +155,19 @@ func (t Truth) Select(numbers ...int) Truth {
 			out.Spans = append(out.Spans, kept)
 		}
 	}
+	var levels []int
 	for _, h := range t.Outline {
 		if ref, ok := move(h.Ref); ok {
 			page, _, _ := document.ParseRef(ref)
 			out.Outline = append(out.Outline, document.Heading{Ref: ref, Level: h.Level, Text: h.Text, Page: page})
+			if !slices.Contains(levels, h.Level) {
+				levels = append(levels, h.Level)
+			}
 		}
+	}
+	slices.Sort(levels)
+	for i := range out.Outline {
+		out.Outline[i].Level = slices.Index(levels, out.Outline[i].Level) + 1
 	}
 	return out
 }
