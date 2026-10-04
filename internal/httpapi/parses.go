@@ -484,3 +484,18 @@ func (s *Server) cancelParse(w http.ResponseWriter, r *http.Request, c call) err
 	httpjson.Write(w, http.StatusOK, viewParse(p))
 	return nil
 }
+
+// retryParse reads again the pages of a parse that failed. The pages that
+// were read are kept and not read again, and the answer is the parse as the
+// retry left it: running, with the failed pages open.
+func (s *Server) retryParse(w http.ResponseWriter, r *http.Request, c call) error {
+	p, _, err := s.parse(r, c)
+	if err != nil {
+		return err
+	}
+	if p, err = s.Backend.Retry(r.Context(), p.Owner, p.ID); err != nil {
+		return err
+	}
+	httpjson.Write(w, http.StatusAccepted, viewParse(p))
+	return nil
+}

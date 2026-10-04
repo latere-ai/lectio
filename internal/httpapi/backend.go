@@ -50,6 +50,12 @@ type Backend interface {
 	// Cancel stops an owner's parse and returns it. One that has ended is
 	// refused with already_terminal.
 	Cancel(ctx context.Context, owner, id string) (store.Parse, error)
+	// Retry queues again the pages of an owner's parse that failed and
+	// returns the parse as that leaves it: running, with only those pages
+	// open. One that has not ended is refused with not_terminal, one with
+	// no failed page to read again with conflict, and one whose group has
+	// no room for it with queue_full or budget_exhausted.
+	Retry(ctx context.Context, owner, id string) (store.Parse, error)
 	// DeleteParse removes an owner's parse and everything it wrote. One
 	// that has not ended is refused with not_terminal.
 	DeleteParse(ctx context.Context, owner, id string) error
@@ -149,6 +155,19 @@ func (m *Memory) Cancel(_ context.Context, owner, id string) (store.Parse, error
 	}
 	m.Runner.Cancel(p.ID)
 	return p, nil
+}
+
+// undurable is the answer of an operation that is built over the task
+// store, which a development server does not have.
+func undurable(what string) error {
+	return fault.New(fault.NotImplemented, "a development server keeps no task store, and %s is built over it", what)
+}
+
+// Retry is not built in a development server: its runner drives a parse
+// once, from its file to its document, and keeps nothing of one that ended
+// to queue again.
+func (m *Memory) Retry(context.Context, string, string) (store.Parse, error) {
+	return store.Parse{}, undurable("reading failed pages again")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

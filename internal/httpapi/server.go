@@ -111,7 +111,7 @@ func (s *Server) Routes() []Route {
 		{"GET", "/parses/{parse}", false, s.getParse},
 		{"DELETE", "/parses/{parse}", false, s.deleteParse},
 		{"POST", "/parses/{parse}/cancel", false, s.cancelParse},
-		{"POST", "/parses/{parse}/retry", true, s.plannedOnParse},
+		{"POST", "/parses/{parse}/retry", false, s.retryParse},
 		{"GET", "/parses/{parse}/events", true, s.plannedOnParse},
 		{"GET", "/parses/{parse}/document", false, s.getDocument},
 		{"GET", "/parses/{parse}/pages", false, s.listPages},

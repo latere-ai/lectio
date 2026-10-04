@@ -284,6 +284,16 @@ func (b *Backend) Cancel(ctx context.Context, owner, id string) (store.Parse, er
 	return b.Parse(ctx, id)
 }
 
+// Retry queues again the pages of an owner's parse that failed, in one
+// transaction: the parse is running again when it returns, and its workers
+// read those pages and no other.
+func (b *Backend) Retry(ctx context.Context, owner, id string) (store.Parse, error) {
+	if err := b.Store.Retry(ctx, owner, id); err != nil {
+		return store.Parse{}, err
+	}
+	return b.Parse(ctx, id)
+}
+
 // DeleteParse removes an owner's parse that has ended: every object under
 // its prefix first, then its rows, so a delete that stops halfway leaves a
 // row to delete again and never an object nothing names.

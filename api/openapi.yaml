@@ -217,14 +217,29 @@ paths:
     post:
       tags: [parses]
       operationId: retryParse
-      x-lectio-status: planned
       summary: Retry failed pages
       description: |
         Read again the pages that failed.
 
-        Pages that succeeded are not read again.
+        Pages that succeeded are not read again. The answer is the parse
+        as the retry left it: `running`, with the failed pages open and
+        its other pages readable as before. It has as long from the retry
+        as its submit gave it, and when its pages have settled it is
+        assembled again and ends.
+
+        A parse that has not ended is `not_terminal`. One with nothing to
+        read again is `conflict`: no page of it failed, or it ended
+        before its pages were all read, by a cancel, its deadline or a
+        file that could not be prepared. Submit such a file again. The
+        parse stays in its group: a group that already holds as many
+        parses that have not ended as it may is `queue_full`, and one
+        whose day does not hold the failed pages is `budget_exhausted`.
+
+        A development server does not read pages again and answers `501
+        not_implemented`.
       responses:
         "202": { description: Queued again., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "402": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
