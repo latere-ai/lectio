@@ -31,6 +31,25 @@ func TestSettingsHaveDefaults(t *testing.T) {
 		s.Workers != 8 || s.Attempts != 5 || s.MaxDeadline != time.Hour || s.Grace != 25*time.Second || !s.ModelKey.IsZero() || s.FetchAllow != nil || s.ConverterURL != "" {
 		t.Fatalf("defaults: %+v", s)
 	}
+	if s.FileRetention != 24*time.Hour || s.ParseRetention != 30*24*time.Hour {
+		t.Fatalf("a file is kept for %s and a parse for %s, want 24 hours and 30 days", s.FileRetention, s.ParseRetention)
+	}
+}
+
+// TestTheRetentionsAreSettings: how long a file and a parse are kept are
+// durations above zero, each read from its own variable.
+func TestTheRetentionsAreSettings(t *testing.T) {
+	s, err := FromEnv(env("LECTIO_FILE_RETENTION", "90m", "LECTIO_PARSE_RETENTION", "168h"))
+	if err != nil || s.FileRetention != 90*time.Minute || s.ParseRetention != 7*24*time.Hour {
+		t.Fatalf("the retentions: %s and %s, %v", s.FileRetention, s.ParseRetention, err)
+	}
+	for _, name := range []string{"LECTIO_FILE_RETENTION", "LECTIO_PARSE_RETENTION"} {
+		for _, value := range []string{"30 days", "0h", "-1h"} {
+			if _, err := FromEnv(env(name, value)); err == nil || !strings.Contains(err.Error(), name) || strings.Contains(err.Error(), value) {
+				t.Errorf("%s=%q: %v", name, value, err)
+			}
+		}
+	}
 }
 
 func TestSettingsAreReadFromTheEnvironment(t *testing.T) {

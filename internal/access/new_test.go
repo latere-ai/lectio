@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"latere.ai/x/pkg/authkit/issuertest"
 	"latere.ai/x/pkg/authz/stub"
@@ -103,9 +104,79 @@ func TestSettingsBuiltByHandAreChecked(t *testing.T) {
 }
 
 func TestTheDefaultsAreTheServersLimits(t *testing.T) {
-	s := settings(t, "LECTIO_MAX_FILE_BYTES", "1024", "LECTIO_MAX_PAGES", "10")
-	if got, want := access.Defaults(s), (authorizer.Limits{MaxFileBytes: 1024, MaxPages: 10}); !reflect.DeepEqual(got, want) {
+	s := settings(t, "LECTIO_MAX_FILE_BYTES", "1024", "LECTIO_MAX_PAGES", "10", "LECTIO_PARSE_RETENTION", "48h")
+	if got, want := access.Defaults(s), (authorizer.Limits{MaxFileBytes: 1024, MaxPages: 10, Retention: 48 * time.Hour}); !reflect.DeepEqual(got, want) {
 		t.Errorf("the defaults are %+v, want %+v", got, want)
+	}
+}
+
+// What a server cannot hold a request to follows from what it keeps its
+// work in. The durable server holds every member of the limits. A
+// development server holds no bound of a group, no budget and no
+// retention, and refuses the allow that sets one. An upload is kept for
+// the server's retention of a file, and a parse for that of a parse.
+func TestWhatEachServerHoldsARequestTo(t *testing.T) {
+	iss := issuertest.New(t)
+	s := endpoint(t)
+	limits := map[string]any{"group": "acme", "max_running": 2, "max_queued": 5, "max_pages": 10, "pages_per_day": 500, "retention_seconds": 3600}
+	s.Allow(stub.Rule{Action: authorizer.ActionParseCreate, Limits: limits})
+	token := iss.Mint(issuertest.Claims{Sub: "alice", Aud: issuertest.StringList{audience}})
+	ask := func(pairs ...string) (access.Decision, error) {
+		t.Helper()
+		pairs = append(pairs, "LECTIO_OIDC_ISSUERS", iss.URL(), "LECTIO_AUTHORIZER_URL", s.URL(), "LECTIO_AUTHORIZER_TOKEN", s.Token())
+		a, err := access.New(settings(t, pairs...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := bearing(t, token)
+		c, err := a.Authenticator.Authenticate(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.Authorizer.Authorize(t.Context(), c, access.Ask(r, authorizer.ActionParseCreate, access.Parse{}.Resource()))
+	}
+
+	d, err := ask()
+	if err != nil || d.Limits.MaxRunning != 2 || d.Limits.MaxQueued != 5 || d.Limits.MaxPages != 10 || d.Limits.PagesPerDay != 500 || d.Limits.Retention != time.Hour {
+		t.Errorf("the durable server holds the request to %+v, %v", d.Limits, err)
+	}
+	_, err = ask("LECTIO_DEV", "true")
+	if fault.CodeOf(err) != fault.CapabilityUnsupported {
+		t.Fatalf("a development server was handed bounds of a group and a budget: %v", err)
+	}
+	for _, member := range []string{"max_running", "max_queued", "pages_per_day", "retention_seconds"} {
+		if !strings.Contains(fault.DetailOf(err), member) {
+			t.Errorf("the refusal %q does not name %s", fault.DetailOf(err), member)
+		}
+	}
+	if strings.Contains(fault.DetailOf(err), "max_pages") {
+		t.Errorf("a development server holds the pages of one parse, and refused them: %q", fault.DetailOf(err))
+	}
+	// What a development server does hold, it is handed.
+	s.SetRules()
+	s.Allow(stub.Rule{Action: authorizer.ActionParseCreate, Limits: map[string]any{"group": "acme", "weight": 4, "max_pages": 10, "max_priority": 3, "max_queued": 0}})
+	if d, err := ask("LECTIO_DEV", "true"); err != nil || d.Limits.MaxPages != 10 || d.Limits.MaxPriority != 3 {
+		t.Errorf("a development server holds the request to %+v, %v", d.Limits, err)
+	}
+
+	// The two retentions, each lowered by the allow of its own action.
+	s.SetRules()
+	a, err := access.New(settings(t, "LECTIO_OIDC_ISSUERS", iss.URL(), "LECTIO_FILE_RETENTION", "2h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := bearing(t, token)
+	c, err := a.Authenticator.Authenticate(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload, err := a.Authorizer.Authorize(t.Context(), c, access.Ask(r, authorizer.ActionFileCreate, access.File{}.Resource()))
+	if err != nil || upload.Limits.Retention != 2*time.Hour {
+		t.Errorf("an upload is kept for %s, %v, want the server's 2h", upload.Limits.Retention, err)
+	}
+	submit, err := a.Authorizer.Authorize(t.Context(), c, access.Ask(r, authorizer.ActionParseCreate, access.Parse{}.Resource()))
+	if err != nil || submit.Limits.Retention != config.DefaultParseRetention {
+		t.Errorf("a parse is kept for %s, %v, want the server's default", submit.Limits.Retention, err)
 	}
 }
 

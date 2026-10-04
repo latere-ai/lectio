@@ -87,27 +87,28 @@ func New(s config.Settings) (*Access, error) {
 	} else {
 		a.decider, a.Authorization = &OwnerPolicy{Admins: s.AdminSubjects}, AuthorizationOwnerPolicy
 	}
-	a.Authorizer = NewAuthorizer(a.decider, Defaults(s), Unenforced(unenforced(s)...))
+	a.Authorizer = NewAuthorizer(a.decider, Defaults(s), FileRetention(s.FileRetention), Unenforced(unenforced(s)...))
 	return a, nil
 }
 
 // unenforced are the limits the server these settings start cannot hold a
 // request to, by their wire names. An allow that sets one is refused with
-// capability_unsupported. The durable server holds every bound of the
-// fair queue. A development server has one queue for every caller and no
-// group, so it holds no bound of a group either.
+// capability_unsupported. The durable server holds every member of the
+// limits. A development server keeps everything in its process and has one
+// queue for every caller: it has no group to bound and no day to budget,
+// and nothing it holds expires.
 func unenforced(s config.Settings) []string {
-	out := []string{"max_pages", "pages_per_day", "retention_seconds"}
 	if s.Dev {
-		out = append(out, "max_running", "max_queued")
+		return []string{"max_running", "max_queued", "pages_per_day", "retention_seconds"}
 	}
-	return out
+	return nil
 }
 
 // Defaults are the limits a server is configured with, which an allow
-// lays its own over and the owner policy applies as they are.
+// lays its own over and the owner policy applies as they are. Retention is
+// a parse's; a file's is laid under the allow of an upload.
 func Defaults(s config.Settings) authorizer.Limits {
-	return authorizer.Limits{MaxFileBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
+	return authorizer.Limits{MaxFileBytes: s.MaxFileBytes, MaxPages: s.MaxPages, Retention: s.ParseRetention}
 }
 
 // Warm reads every issuer's key set once, so the first request does not

@@ -65,6 +65,14 @@ type Settings struct {
 	// resolve to.
 	FetchAllow []string // LECTIO_FETCH_ALLOW
 
+	// FileRetention is how long a file is kept from an upload of it, and
+	// past the end of the last parse that read it. ParseRetention is how
+	// long a parse and what it wrote are kept after it ended. An allow
+	// lowers either and never raises it
+	// (specs/014-sources-and-retention.md).
+	FileRetention  time.Duration // LECTIO_FILE_RETENTION
+	ParseRetention time.Duration // LECTIO_PARSE_RETENTION
+
 	// Role is what the durable server runs: the API, the worker, or both in
 	// one process. InternalAddr is where it serves its probes.
 	Role         string // LECTIO_ROLE
@@ -124,6 +132,7 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 		Addr: ":8080", BasePath: "/v1", DevToken: "dev",
 		MaxFileBytes: 256 << 20, MaxPages: 3000, Workers: 8, Attempts: tasks.DefaultAttempts,
 		MaxDeadline: time.Hour, Grace: 25 * time.Second,
+		FileRetention: DefaultFileRetention, ParseRetention: DefaultParseRetention,
 		Role: RoleAll, InternalAddr: ":8081",
 		Lease: tasks.DefaultLease, Expiries: tasks.DefaultExpiries, SweepInterval: tasks.DefaultSweepInterval,
 		Flush: 200 * time.Millisecond, Poll: time.Second,
@@ -185,6 +194,8 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	s.MaxPages, s.Workers, s.Attempts = int(pagesMax), int(workers), int(attempts)
 	duration("LECTIO_MAX_DEADLINE", &s.MaxDeadline)
 	duration("LECTIO_SHUTDOWN_GRACE", &s.Grace)
+	duration("LECTIO_FILE_RETENTION", &s.FileRetention)
+	duration("LECTIO_PARSE_RETENTION", &s.ParseRetention)
 	truth := func(name string, into *bool) {
 		if v := strings.TrimSpace(getenv(name)); v != "" {
 			b, err := strconv.ParseBool(v)
@@ -231,6 +242,14 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	errs = append(errs, s.readIdentity(getenv)...)
 	return s, errors.Join(errs...)
 }
+
+// How long what is stored is kept when no setting says otherwise.
+const (
+	// DefaultFileRetention is a file's: 24 hours.
+	DefaultFileRetention = 24 * time.Hour
+	// DefaultParseRetention is a parse's: 30 days.
+	DefaultParseRetention = 30 * 24 * time.Hour
+)
 
 // The roles of the durable server.
 const (
