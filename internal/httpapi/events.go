@@ -184,6 +184,13 @@ func (s *Server) streamParse(w http.ResponseWriter, r *http.Request, c call) err
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+	// The bound on a write is the stream's own. The connection may carry
+	// another request after it, which a deadline left behind would cut.
+	defer func() {
+		if err := out.rc.SetWriteDeadline(time.Time{}); err != nil && ctx.Err() == nil {
+			s.log().WarnContext(ctx, "an event stream left its write deadline on its connection", "parse", p.ID, "error", err)
+		}
+	}()
 	// From here on the answer is the stream: an error ends it, and the
 	// client connects again.
 	err = out.write("retry: %d\n\n", poll.Milliseconds())

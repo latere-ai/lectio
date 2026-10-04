@@ -572,3 +572,56 @@ func TestWhatEndsAStream(t *testing.T) {
 		t.Errorf("a client that left was logged: %s", logged.String())
 	}
 }
+
+// deadlined is a response whose write deadlines are recorded, and whose
+// writes fail when a case says so.
+type deadlined struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+	broken    bool
+}
+
+func (d *deadlined) SetWriteDeadline(at time.Time) error {
+	d.deadlines = append(d.deadlines, at)
+	return nil
+}
+
+func (d *deadlined) Write(b []byte) (int, error) {
+	if d.broken {
+		return 0, errors.New("the connection is gone")
+	}
+	return d.ResponseRecorder.Write(b)
+}
+
+// TestAStreamBoundsItsWritesAndLeavesNoDeadlineBehind: each write of a
+// stream is bounded, and the bound is lifted when the stream ends, so the
+// next request on the connection is not cut by it. A write that fails ends
+// the stream and is logged.
+func TestAStreamBoundsItsWritesAndLeavesNoDeadlineBehind(t *testing.T) {
+	done := store.Parse{ID: "prs_1", Owner: "alice", State: store.StateSucceeded, Stage: store.StageDone, PagesTotal: 1, PagesDone: 1}
+	for name, broken := range map[string]bool{"a stream that ends": false, "a stream whose write fails": true} {
+		var logged bytes.Buffer
+		backend := &scripted{Memory: &Memory{Store: store.NewMemory()}, parse: done, steps: []func() (store.Events, error){
+			func() (store.Events, error) {
+				return store.Events{Parse: done, Seq: 4, Pages: []store.PageEvent{{Seq: 3, Page: 1, State: "succeeded"}}}, nil
+			},
+		}}
+		s := &Server{Backend: backend, Auth: callers, Authz: ownerPolicy(), Log: slog.New(slog.NewTextHandler(&logged, nil))}
+		rec := &deadlined{ResponseRecorder: httptest.NewRecorder(), broken: broken}
+		req := httptest.NewRequest("GET", "/v1/parses/prs_1/events", nil)
+		req.Header.Set("Authorization", "Bearer alice-token")
+		s.Handler().ServeHTTP(rec, req)
+
+		n := len(rec.deadlines)
+		if n < 2 || !rec.deadlines[n-1].IsZero() || rec.deadlines[0].IsZero() || time.Until(rec.deadlines[0]) > eventsWrite {
+			t.Errorf("%s: the write deadlines were %v", name, rec.deadlines)
+		}
+		body := rec.Body.String()
+		if !broken && (!strings.Contains(body, "id: 9\nevent: page\n") || !strings.Contains(body, "id: 13\nevent: progress\n") || !strings.HasSuffix(body, "id: 14\nevent: state\ndata: {\"state\":\"succeeded\"}\n\n")) {
+			t.Errorf("%s: the stream was %q", name, body)
+		}
+		if said := strings.Contains(logged.String(), "the connection is gone"); said != broken {
+			t.Errorf("%s: the log is %q", name, logged.String())
+		}
+	}
+}
