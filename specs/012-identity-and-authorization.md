@@ -38,10 +38,31 @@ meaning is not: the tenant now comes from the authorizer's answer.
 
 `latere.ai/x/pkg/authkit/jwt` verifies every bearer: signature against
 the issuer's published keys, `iss` among `LECTIO_OIDC_ISSUERS`, `aud`
-among `LECTIO_OIDC_AUDIENCE` (a comma list, the first entry primary),
-`exp` and `nbf` with skew. The subject is rendered once as
+among `LECTIO_OIDC_AUDIENCE` (a comma list, the first entry primary,
+`lectio` when the variable is unset), `exp` and `nbf` with 30 seconds
+of skew. A token that carries `iat` is also held to the shared
+verifier's age bound of 24 hours. The subject is rendered once as
 `<iss>|<sub>` and is what `owner` fields, events and the authorizer
-request carry.
+request carry. Two issuers that agree on a `sub` are two subjects.
+
+A request with no bearer is `401 missing_token`. A bearer that is
+refused is `401 invalid_token`, and its `details.reason` carries the
+shared verifier's word for why: `audience`, `expired`, `issuer`,
+`signature` and the others of its table. No part of a token is ever
+in an error or a log line.
+
+The verifier reads an issuer's discovery document and its key set and
+calls the issuer for nothing else. It reads them when the first token
+of that issuer arrives, or at start when the server warms it, and an
+issuer that does not answer then is named.
+
+A token may carry grants: a personal access token is narrowed by its
+holder to some actions on some resources, in the claim
+`authorization_details`. The verifier admits such a token and hands
+the grants on with every other claim. They are applied where the
+decision is made: an authorizer built on
+`latere.ai/x/pkg/authz/server` narrows its answer by them, and so does
+the owner policy below.
 
 ### The vocabulary
 
@@ -221,6 +242,10 @@ Built, as a library the server does not call yet:
 - `authorizer`: the vocabulary and the fields each action sends, held
   equal to the table above by a test, and `Limits`, `WireLimits`,
   `DecodeLimits` and `Over`.
+- `internal/access`: the two interfaces a handler depends on, one that
+  turns a request's bearer into a caller and one that answers a
+  question with a decision; the resources a question is about; and the
+  verifier.
 
 A stand-in, in the server:
 
@@ -235,15 +260,17 @@ A stand-in, in the server:
   That is the owner policy's rule for one subject, without admin
   subjects.
 
-Remaining: the verifier, the authorizer client, the owner policy with
-its admin subjects, the action asked by each route, and service callers
-naming an owner.
+Remaining: the authorizer client, the owner policy with its admin
+subjects, the action asked by each route, and service callers naming an
+owner.
 
 ## Acceptance criteria
 
 | Criterion | Proven by |
 |---|---|
-| The verifier passes the shared conformance suite | `authkit/conformance` |
+| The verifier passes the shared conformance suite | `TestVerifierConformance`, which runs `authkit/conformance` |
+| A verified token becomes a caller whose subject is `<iss>\|<sub>` and whose claims are the token's, verbatim; two issuers that agree on a `sub` are two subjects | `TestAVerifiedTokenBecomesACaller`, `TestTwoIssuersAreTwoSubjects` |
+| A token for another audience, of an issuer that is not listed, expired or not yet valid past the skew, or with a signature that does not check out is `invalid_token` with the reason, and the error never repeats the token | `TestWhatTheVerifierRefuses`, `TestTheSkewOnExpAndNbf` |
 | Every route asks exactly the action in the table of [[003-api]], with the resource fields above | a test that records the authorizer's requests for each route |
 | The authorizer client passes the contract's conformance suite: cache, retry, fail closed | `authz/conformance` |
 | The constants of `authorizer` are the vocabulary table above: the same actions in the same order, each on its kind with its fields | `TestTheVocabularyIsTheSpecs` |
