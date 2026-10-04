@@ -276,17 +276,21 @@ flowchart LR
   replaced serves the same parse. At the store, invariants 4 and 5 hold
   and are proven by its tests: the tenant is chosen before the task,
   and a task with no room is not claimed and writes nothing.
+- The durable server verifies its callers against the issuers and asks
+  the authorizer or the owner policy
+  ([[012-identity-and-authorization]]), and a worker reads a page with
+  the key its key source gives the page's group
+  ([[013-limits-and-usage]]).
 
-Remaining: the issuer, the authorizer and the key source, and with
-them invariant 9: the durable server takes one static token until they
-are wired in ([[012-identity-and-authorization]]). Invariant 7: a
-worker holds a working copy and the image of each page it reads in
-heap, and `assemble` holds every page of its document; an upload is
-held whole by the API. The start-up criterion below holds for the
-database and the bucket and for no setting of an issuer or a model
-endpoint, and the memory criterion is not measured. A development
-server keeps the in-process runner. Each is the subject of the spec
-linked above.
+Remaining: invariant 7: a worker holds a working copy and the image of
+each page it reads in heap, and `assemble` holds every page of its
+document; an upload is held whole by the API. The start-up criterion
+below holds for the database, the bucket and the issuer. With no
+authorizer the owner policy decides, with no reader configured the stub
+reads, and with no key source named every page is read with one key, so
+none of the 3 stops a start. The memory criterion is not measured. A
+development server keeps the in-process runner. Each is the subject of
+the spec linked above.
 
 ## Not in this spec
 

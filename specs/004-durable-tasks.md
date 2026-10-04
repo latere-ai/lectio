@@ -311,7 +311,7 @@ An attempt ends in one of four ways:
 |---|---|---|
 | retryable failure | a network error, a 5xx from the model endpoint, a timeout, a reply that fails validation | `attempt + 1`; `available_at = now() + backoff(attempt)`; `failed` at `LECTIO_TASK_ATTEMPTS` (default 5) |
 | permanent failure | a 4xx other than 408 and 429, a corrupt page, an unsupported input, a budget refusal | `failed` at once |
-| the reader said to wait | a rate-limit reply from the endpoint | `attempt` unchanged; `available_at` set to when the pool's pause ends ([[007-model-capacity]]) |
+| the reader said to wait | a rate-limit reply from the endpoint; a key endpoint that issued the group no key and no refusal ([[013-limits-and-usage]]) | `attempt` unchanged; `available_at` set to when the pool's pause ends ([[007-model-capacity]]) |
 | the worker died | the process was killed or stalled past its lease | `expiries + 1`; `attempt` unchanged; see below |
 
 Backoff is `min(cap, base * 2^(attempt-1))` with `base` 1s and `cap`

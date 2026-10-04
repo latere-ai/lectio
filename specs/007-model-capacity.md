@@ -80,8 +80,10 @@ The scope is where a rate limit applies. With one key from
 configuration it is the empty scope and there is one per reader. With a
 key per tenant it is the group, so one tenant reaching its limit
 pauses that tenant and no other. A scope has a row only once it has
-been limited; a scope with no row is unpaused at the full ceiling, so
-the table grows with tenants that hit limits and not with tenants.
+been limited, or once its key could not be obtained
+([[013-limits-and-usage]]); a scope with no row is unpaused at the full
+ceiling, so the table grows with tenants that hit limits and not with
+tenants.
 
 The endpoint's health is the reader's and not a key's: the breaker and
 `max_in_flight` are on the pool.
@@ -173,6 +175,13 @@ For `LECTIO_POOL_RESUME` (default 10s) after `paused_until`, it admits
 a share of the ceiling that grows from one slot to all of it in
 proportion to the time passed. The share is computed from the clock in
 the claim; nothing is written.
+
+A key that cannot be obtained yet is a wait of the same kind. With a key
+per tenant, a worker that is handed no key for a task's group, because
+the key endpoint did not answer, ends the attempt as a wait for the
+time until the endpoint is asked again ([[013-limits-and-usage]]). The
+statement above pauses the group's scope for that long, and no call
+was made, so nothing is metered and the breaker hears nothing.
 
 An operator who knows the endpoint's limit sets `max_in_flight` on the
 reader. A limit in requests per minute is not enforced here: the
@@ -278,10 +287,14 @@ one trial after the open period. The second row of the table below is
 proven by the soak of [[004-durable-tasks]]: its pool was as wide as
 the fleet's 64 slots, 29 workers were killed while they called, and
 every page was read, which a slot leaked at each kill would have
-stopped. The criteria that need a stub endpoint
-that counts or limits, or an extraction, are not proven: the rows of
-the table below that name a stub endpoint, a counting stub or an
-end-to-end test.
+stopped. The third row's first half is proven through the durable
+server, with `LECTIO_KEYS=endpoint`, a stub key endpoint and a stub
+gateway that limits one group's key: the other group is read while the
+first is paused, and the limited pages spend no attempt
+([[013-limits-and-usage]]). The other criteria that need a stub
+endpoint that counts or limits, or an extraction, are not proven: the
+rows of the table below that name a stub endpoint, a counting stub or
+an end-to-end test.
 
 Remaining: a slot taken and given back per call, for an extraction
 ([[004-durable-tasks]], step 5 of the exchange): a task holds the slot
@@ -300,7 +313,7 @@ applied ([[008-readers]]).
 |---|---|
 | With `max_in_flight` 8 and 32 workers across 4 processes, a stub endpoint never observes more than 8 concurrent calls | a concurrency test with a counting stub |
 | A worker killed mid-call frees its slots after one lease period with no other action | a process-level test |
-| With keys per tenant, a `429` on one group's key pauses that group's calls to the reader and no other group's; with one static key it pauses the reader for all | a test with a stub endpoint that limits one key |
+| With keys per tenant, a `429` on one group's key pauses that group's calls to the reader and no other group's; with one static key it pauses the reader for all | per tenant: `TestARateLimitOnOneGroupsKeyPausesThatGroupAlone` of `cmd/lectiod`, through the durable server with a stub gateway that limits one group's key, and `TestARateLimitPausesItsKeyAndNoOther` at the store. With one static key: at the store alone |
 | One `429` with `Retry-After: 7` stops every worker's calls in that scope for 7 seconds and no task's `attempt` changes | a test with a stub endpoint and a virtual clock |
 | Forty calls in flight that all return `429` in one second halve the ceiling once, from 40 to 20 | the same test |
 | After a pause ends, the calls admitted in the first second do not exceed a tenth of the ceiling, and the whole ceiling is admitted after `LECTIO_POOL_RESUME` | the same test, with a counting stub |
