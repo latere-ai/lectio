@@ -6,6 +6,57 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: extraction with a schema, in the durable server.
+  `POST /parses/{parse}/fields` takes a `name`, a JSON Schema of draft
+  2020-12 whose root is an object, and optional `instructions`, and
+  answers `202` with the extraction, `pending`. A text model fills an
+  object in the shape of the schema from the document's text, and each
+  value cites the blocks it was read from; `GET
+  /parses/{parse}/fields/{name}?resolve=true` returns each citation
+  with its page and its box. A value the document does not state is
+  left out and never made up. An object that does not satisfy the
+  schema is sent back to the model with what was wrong, up to 2 times,
+  and the extraction then fails with `schema_not_satisfied`; its parse
+  is not affected. A schema that does not compile, is over 64 KiB,
+  nests deeper than 16 levels or refers to anything outside itself is
+  `400 invalid_schema`. A document longer than the extractor's input
+  is read in windows, at most 32, and the replies are merged. An
+  extraction may be asked while its parse runs and waits for the parse
+  to end. A parse holds at most 64 extractions. A development server
+  answers `501` for the 3 routes.
+- Added: describing figures, in the durable server. `POST
+  /parses/{parse}/figures` answered `501` there and now starts a run,
+  as it does in a development server: each figure is one task, queued
+  with the pages of every parse in the parse's group, and its
+  description is on the figure's block wherever the block is read. A
+  figure that was described from the same bytes by the same describers
+  is taken from that description by a later run of the same owner.
+- Added: an extraction and a figure are read with the key of their
+  parse's group, as a page is. With `LECTIO_KEYS=endpoint`, a `402` from
+  the key endpoint fails them with `budget_exhausted`, a `403` with
+  `reader_not_permitted`, and an endpoint that does not answer leaves
+  them waiting. A rate limit pauses the group's key and spends no
+  attempt. Every call is in the meters of `GET /usage`, under its
+  group, its owner and its reader.
+- Added: a Reader document of the `chat` adapter gives an extractor
+  under the reader's name, as it gives a describer, and takes
+  `maxInput`, the most text one extraction call is given, in bytes;
+  400,000 unless set. The Policy's `extract.chain` is applied: it was
+  read and reported as not applied. With no `extract` chain an
+  extraction runs only when its request names an `extractor`, and with
+  no `describe` chain a run only when its request names a `describer`.
+- Changed: `POST /parses/{parse}/retry` is `409 conflict` while an
+  extraction or a figure of the parse is queued or running. A retry
+  writes again the pages that work reads.
+- Changed: `GET /parses/{parse}/fields/{name}` lists `400` for a
+  `resolve` that is not `true` or `false`, and a citation of a field is
+  a ref, or with `resolve=true` an object of `ref`, `page` and `box`.
+- Operators: the durable server's schema moves to version 6 when the
+  API starts. Roll the workers with the API: a worker of an earlier
+  version fails an extraction or a figure it is handed with `internal`.
+  An extraction and a figure run have as long as `LECTIO_MAX_DEADLINE`
+  from when they are queued.
+
 ## v0.3.0 - 2026-10-04
 
 - Added: `POST /parses/{parse}/retry`, in the durable server. It reads

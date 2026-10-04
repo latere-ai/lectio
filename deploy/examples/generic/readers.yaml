@@ -7,7 +7,10 @@
 # key of it at start, in name order. A change takes a new roll to reach
 # the Pods.
 #
-# One Reader and one Policy, with example values. The endpoint is any
+# One Reader and one Policy, with example values. The Policy names the one
+# reader for a page, for a figure and for an extraction: without a describe
+# chain or an extract chain, a request to describe figures or to extract
+# runs only when it names its describer or its extractor. The endpoint is any
 # that speaks chat completions with image input, a gateway included, and
 # the model is a name that endpoint knows. The key the endpoint is called
 # with is not here: it is LECTIO_MODEL_KEY, in the Secret lectiod-model,
@@ -49,3 +52,5 @@ data:
     metadata: { name: default }
     spec:
       read: { chain: [default] }
+      describe: { chain: [default] }
+      extract: { chain: [default] }

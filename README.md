@@ -27,9 +27,11 @@ way past another.
 > holds a parse to the limits it is given. It reads again the pages of
 > a parse that failed, streams a parse's pages and progress as events,
 > meters what each group, owner and reader read by the hour, and shows
-> what waits and what runs per group; the development server answers
-> `501` for those 4. Not built yet in the durable server, and answered
-> `501`: extraction with a schema and describing figures.
+> what waits and what runs per group. It extracts an object in the
+> shape of a schema from a parsed document, each value citing the
+> blocks it was read from, and describes a parse's figures on request.
+> The development server describes figures too, and answers `501` for
+> the other 5: it keeps no task store.
 
 ## Run it
 
@@ -75,6 +77,16 @@ serves it at `/v1/openapi.yaml`.
 A reader that finds a figure says where it is. Describing figures is a
 second request against the same parse: each figure is cut from its page
 and described alone, and no page is read again.
+
+Extracting an object in the shape of a schema is a request against a
+parse too, in the durable server. Each value cites the blocks it was
+read from, and a value the document does not state is left out:
+
+```sh
+curl -s -H "$auth" -H 'Content-Type: application/json' -X POST "$api/parses/prs_.../fields" \
+  -d '{"name":"invoice","schema":{"type":"object","properties":{"number":{"type":"string"},"total":{"type":"number"}}}}'
+curl -s -H "$auth" "$api/parses/prs_.../fields/invoice?resolve=true"
+```
 
 To read pages with a model, declare a reader and point `LECTIO_CONFIG`
 at the file. Any endpoint that speaks the OpenAI chat completions API
@@ -233,8 +245,6 @@ transaction-mode pooler in front of the database, name the pooler in
 `LECTIO_DATABASE_POOL_URL` and keep the direct address in
 `LECTIO_DATABASE_URL`. Every setting is in
 [`specs/016-distribution.md`](specs/016-distribution.md).
-
-The durable server does not describe figures yet.
 
 ## Build and deploy it
 

@@ -206,6 +206,108 @@ authorizer, `usage.read` and `queue.read` are asked of it, with the
 The development server answers `501` for these 4 routes: they are built
 over the task store.
 
+## Extracting an object, and describing figures
+
+Both are requests against a parse, and neither reads a page again.
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "http://127.0.0.1:8080/v1/parses/prs_.../fields" \
+  -d '{"name":"invoice","schema":{"type":"object","required":["number"],
+       "properties":{"number":{"type":"string"},"total":{"type":"number"}}}}'
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8080/v1/parses/prs_.../fields/invoice?resolve=true"
+```
+
+The first answers `202` with the extraction, `pending`. The second
+reads it: `succeeded` with `data` in the shape of the schema and, for
+each value, the blocks it was read from, or `failed` with why. A value
+the document does not state is left out, so an object that lacks a
+member the schema requires fails with `schema_not_satisfied` and is
+never filled with a guess. An extraction may be asked while the parse
+still runs: it waits for the parse to end.
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Prefer: wait=30' \
+  "http://127.0.0.1:8080/v1/parses/prs_.../figures"
+```
+
+This describes every figure of a parse that has ended that has a place
+on a page read from an image and no description yet. The description
+is on the figure's block from then on, in the document's Markdown and
+text and in `GET /parses/{parse}/figures`.
+
+Which model does either is the Policy's to say. A Reader document of
+the `chat` adapter reads pages, describes figures and extracts, under
+one name and with one bound on its calls in flight. One document serves
+all 3:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: default }
+spec:
+  adapter: chat
+  endpoint: https://gateway.example/v1
+  model: your-model
+---
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: default }
+spec:
+  read:     { chain: [default] }
+  describe: { chain: [default] }
+  extract:  { chain: [default] }
+```
+
+Or one document each, for a model that reads pages, one that describes
+figures and a text model that extracts:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: pages }
+spec: { adapter: chat, endpoint: https://gateway.example/v1, model: your-vision-model }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: figures }
+spec: { adapter: chat, endpoint: https://gateway.example/v1, model: your-other-vision-model }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: text }
+spec: { adapter: chat, endpoint: https://gateway.example/v1, model: your-text-model, maxInput: 200000 }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: default }
+spec:
+  read:     { chain: [pages] }
+  describe: { chain: [figures] }
+  extract:  { chain: [text] }
+```
+
+No document holds a key: every call is made with `LECTIO_MODEL_KEY`, or
+with the key of the parse's group (below). `maxInput` is the most text
+one extraction call is given, in bytes, 400,000 unless set; a longer
+document is read in windows of that size, at most 32, and the replies
+are merged. With no `extract` chain an extraction runs only when its
+request names an `extractor`, and with no `describe` chain a run only
+when its request names a `describer`.
+
+An extraction and a figure are tasks of the parse's group, as its pages
+are: they take the group's turn, are held to its `max_running`, wait
+for room in their reader's pool, and are in `/usage` and `/queue`. They
+count no page against a group's pages for a day. A parse holds at most
+64 extractions, and an extraction or a run that has not ended after
+`LECTIO_MAX_DEADLINE` from when it was queued is given up. A retry of a
+parse is answered `409` while an extraction or a figure of it is queued
+or running.
+
+The development server describes figures, in its own process, and
+answers `501` for the 3 routes of an extraction.
+
 ## Whose key reads a page
 
 The key a model endpoint is called with decides who it charges. With
@@ -244,13 +346,18 @@ Content-Type: application/json
 |---|---|
 | `200` with `{"key": "...", "expires_at": "<RFC 3339>"}` | are read with the key. A worker holds it in memory, never writes it down, and asks again 1 minute before it expires, so a key has to be good for more than 1 minute when it is issued |
 | `402` | fail with `budget_exhausted`: the group has no budget |
-| `403` | fail with `reader_unavailable`: the group is issued no key |
+| `403` | fail with `reader_not_permitted`: the group is issued no key |
 | anything else, or nothing | wait in the queue. No page fails and none spends an attempt. The worker asks again after 1 second, then after twice as long each time, up to 30 seconds |
 
 One request per group is in flight at a time, and a refusal is asked
 again after 5 seconds. A worker whose key service is down stays ready.
 With a key per group, a rate limit of the model endpoint pauses the
 calls of the group whose key was limited and no other group's.
+
+A figure and an extraction are read with the same key as the pages of
+their parse, by the same rules: a `402` fails them with
+`budget_exhausted`, a `403` with `reader_not_permitted`, and a service
+that does not answer leaves them waiting.
 
 ## Signing in and deciding
 
