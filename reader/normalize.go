@@ -4,6 +4,7 @@
 package reader
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -78,6 +79,9 @@ func Normalize(raws []Raw, grid Grid) []document.Block {
 		case document.KindFormula:
 			b.Level = 0
 			b.Text = mathBody(b.Text)
+		case document.KindListItem:
+			b.Level = 0
+			b.Text = listBody(b.Text)
 		case document.KindFigure:
 			b.Level = 0
 			// Only a figure has a description: for any other kind the
@@ -131,6 +135,21 @@ func headingMarks(text string) (marks int, rest string, ok bool) {
 		return 0, text, false
 	}
 	return marks, strings.TrimSpace(rest), true
+}
+
+// listMarker is what an engine that writes text as Markdown, or that copies
+// what is printed, puts before a list item: a bullet character, or a number
+// of up to 3 digits closed by a period or a parenthesis, and then a space.
+var listMarker = regexp.MustCompile(`^(?:[-*+\x{2022}\x{00B7}\x{25E6}\x{25AA}\x{2023}\x{2013}]|\(?[0-9]{1,3}[.)])[ \t]+`)
+
+// listBody returns a list item without the bullet or number before it. The
+// text of a list item is the item; a rendering adds the marker its format
+// needs. A marker with nothing after it is the item's whole text and stays.
+func listBody(text string) string {
+	if at := listMarker.FindStringIndex(text); at != nil && at[1] < len(text) {
+		return text[at[1]:]
+	}
+	return text
 }
 
 // mathBody returns a formula without the delimiters an engine wrapped it

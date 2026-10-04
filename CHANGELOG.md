@@ -184,3 +184,6 @@ refused before it is pushed.
 - Added: `.odt` and `.odp` files are detected.
 - Added: `make live-convert`, an opt-in test that converts a fixture of
   every converted format through a running sidecar.
+- Fixed: a list item no longer keeps the bullet or the number an engine
+  or a model wrote before it. Its text is the item alone, as a list item
+  read from a Word document already was.

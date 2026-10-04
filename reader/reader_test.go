@@ -367,6 +367,15 @@ func TestNormalizeReadsWhatAnEngineWritesAsMarkdown(t *testing.T) {
 		"a formula in inline delimiters":        {Raw{Label: "Formula", Text: "$x_i$", Level: 2}, "x_i", 0},
 		"a formula with none":                   {Raw{Label: "Formula", Text: "a^2 + b^2"}, "a^2 + b^2", 0},
 		"a lone delimiter is the formula":       {Raw{Label: "Formula", Text: "$"}, "$", 0},
+		"a list item's hyphen":                  {Raw{Label: "List-item", Text: "- Dredge the fairway"}, "Dredge the fairway", 0},
+		"a list item's asterisk":                {Raw{Label: "List-item", Text: "* A reading is dropped"}, "A reading is dropped", 0},
+		"a list item's bullet character":        {Raw{Label: "List-item", Text: "\u2022 Reset the float"}, "Reset the float", 0},
+		"a list item's number":                  {Raw{Label: "List-item", Text: "12. Station D is reported"}, "Station D is reported", 0},
+		"a list item's number in parentheses":   {Raw{Label: "List-item", Text: "(3) Check the cable"}, "Check the cable", 0},
+		"a list item that begins with a figure": {Raw{Label: "List-item", Text: "3.5 mm of rain fell"}, "3.5 mm of rain fell", 0},
+		"a list item that begins with a minus":  {Raw{Label: "List-item", Text: "-5 degrees at dawn"}, "-5 degrees at dawn", 0},
+		"a list item that is a marker alone":    {Raw{Label: "List-item", Text: "- "}, "-", 0},
+		"text keeps a leading hyphen":           {Raw{Label: "Text", Text: "- not a list item"}, "- not a list item", 0},
 	} {
 		got := Normalize([]Raw{tc.raw}, Grid{1000, 1000})
 		if len(got) != 1 || got[0].Text != tc.text || got[0].Level != tc.level {
