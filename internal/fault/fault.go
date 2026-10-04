@@ -60,6 +60,16 @@ const (
 	Internal           Code = "internal"
 )
 
+// The reasons a request is refused over who decides what its caller may
+// do (specs/012-identity-and-authorization.md). AuthorizerUnavailable is a
+// question that got no decision, and the request fails closed.
+// CapabilityUnsupported is an allow that carries a limit this server
+// cannot enforce, which is refused and never passed in silence.
+const (
+	AuthorizerUnavailable Code = "authorizer_unavailable"
+	CapabilityUnsupported Code = "capability_unsupported"
+)
+
 // Error is one failure: a code a caller branches on, a sentence for a
 // developer, and the error underneath when there is one. The sentence never
 // holds file content, a file name, or a credential.
