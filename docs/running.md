@@ -80,6 +80,68 @@ file of Reader and Policy documents, mount it into the `lectiod`
 service, and set `LECTIO_CONFIG` to its path and `LECTIO_MODEL_KEY` to
 the key the endpoint takes.
 
+## Reading a PDF's own text
+
+Most PDFs carry their text. A reader of the `text` adapter reads a page
+from it: the words the file holds, where it draws each and in what
+type, and the ruling and the pictures around them. It calls no model
+and needs no endpoint and no key, and its characters are the file's
+own. Put it first in the chain, with a reader that calls a model after
+it:
+
+```yaml
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: own }
+spec: { adapter: text }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: vision }
+spec:
+  adapter: chat
+  endpoint: https://gateway.example/v1
+  model: your-vision-model
+---
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: default }
+spec:
+  read: { chain: [own, vision] }
+```
+
+A page the text reader reads costs no call. It says so: its `source` is
+`text_layer`, it names its `reader` and no `model`, and its `usage` is
+one page and no token. A page a model read says `reader`, as before.
+Either counts as one page against a group's pages for a day.
+
+The text reader declines a page it cannot read without guessing, and
+the page goes to the next reader of the chain at the cost of one call:
+
+- a scan, with or without a text layer laid under it by a recognition
+  pass, and any page that is mostly picture;
+- a table set without ruling, a form, and text that stands side by side
+  and is not columns of prose;
+- a page with a watermark or any other text set at an angle;
+- a page whose font says nothing of what its glyphs are, or whose text
+  does not read as text.
+
+What it reads, it reads as print is laid out: paragraphs, headings by
+the size and the weight of their type, list items, a table where
+ruling closes every cell, and a figure where the page paints one. It
+does not say what a figure shows; a request to describe a parse's
+figures does. It writes a formula as the characters the file holds.
+
+A parse that names its reader gets that reader alone. One that names
+the text reader fails the pages it declines with `page_unreadable`,
+and never calls a model.
+
+Its Reader document takes an `image`, which is the image a result holds
+of the page, 160 dpi and PNG unless set, and `maxInFlight`, which is 64
+unless set: the pages it reads at once across every worker. A document
+that names an `endpoint` or a `model` for it is refused.
+[Quality](quality.md#without-a-model) has what it scores alone.
+
 ## Following a parse, and reading its failed pages again
 
 The durable server streams a parse as server-sent events until it ends:

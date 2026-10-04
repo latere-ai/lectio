@@ -29,10 +29,10 @@ says how each file was made and how to make it again.
 | `report.docx` | Word document | `exact` | 1 | the file itself |
 | `ledger.xlsx` | workbook, 3 sheets | `exact` | 3 | the file itself |
 | `report.doc` | Word 97 document, converted | `converted` | 1 | the converter, then the conversion itself |
-| `slides.pptx` | presentation, converted | `converted` | 3 | the converter, then a reader |
-| `memo.rtf` | rich text, converted | `converted` | 1 | the converter, then a reader |
-| `survey.pdf` | typeset PDF | `typeset` | 4 | a reader |
-| `survey-scan.pdf` | scanned PDF | `scan` | 4 | a reader |
+| `slides.pptx` | presentation, converted | `converted` | 3 | the converter, then a reader; the text reader reads it |
+| `memo.rtf` | rich text, converted | `converted` | 1 | the converter, then a reader; the text reader reads it |
+| `survey.pdf` | typeset PDF | `typeset` | 4 | a reader; the text reader reads it |
+| `survey-scan.pdf` | scanned PDF | `scan` | 4 | a reader; the text reader declines it |
 | `survey-1.png` | PNG of a page | `scan` | 1 | a reader |
 | `survey-1.jpg` | JPEG of a page | `scan` | 1 | a reader |
 | `survey-2-4.tiff` | TIFF of 3 frames | `scan` | 3 | a reader |
@@ -122,6 +122,59 @@ other measure at least its bar.
   pages and mark 2 of them repeated, find the page numbers, join the
   table that continues into one span, and build the outline from the
   printed section numbers.
+- The text reader, which reads a page from the text its file carries
+  and calls no model, reads the typeset survey alone and must be within
+  the `typeset` bars, as a model is to be. It must decline every page of
+  the scanned survey, which holds a picture of each page and no word.
+- Where a container runtime answers, the same reader stands first in a
+  chain through the durable server: a file of 300 pages that carries its
+  text, with one page that is a picture, is parsed with one call to a
+  model endpoint that counts its calls, and the survey as the API
+  returns it is within its bars.
+
+## Without a model
+
+A PDF that carries its text can be read with no model at all. A reader
+of the `text` adapter builds a page's blocks from the words the file
+holds and where it draws them, and declines a page it would have to
+guess at, so that the next reader of the chain reads it
+([Running Lectio](running.md#reading-a-pdfs-own-text)). The run that
+scores a model scores it too:
+
+```sh
+cat > text-reader.yaml <<'DOC'
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: own }
+spec: { adapter: text }
+DOC
+LECTIO_LIVE_CONFIG=text-reader.yaml \
+LECTIO_LIVE_FILES=survey.pdf,slides.pptx,memo.rtf \
+LECTIO_LIVE_CONVERTER=http://127.0.0.1:8090 \
+  make live-quality
+```
+
+Alone, with no reader behind it, through the durable server:
+
+| File | Class | Pages read | CER | Kinds | Cells | Order | Boxes |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `survey.pdf` | `typeset` | 3 of 3 | 0.55% | 97.4% | 100.0% | 100.0% | 97.4% |
+| `slides.pptx` | `converted` | 3 of 3 | 0.00% | 100.0% | 100.0% | 100.0% | - |
+| `memo.rtf` | `converted` | 1 of 1 | 0.00% | 100.0% | 100.0% | 100.0% | - |
+| `survey-scan.pdf` | `scan` | 0 of 3 | | | | | |
+
+Each of the 3 files it reads is within the bars of its class. The one
+block that is not right is the survey's formula, which comes back as
+text: the reader writes the characters the file holds and does not know
+that a line is a formula. The survey's figure is found and placed, with
+the words printed in it, and has no description until one is asked for.
+Every page of the scanned survey is declined, so a parse of it by this
+reader alone fails; in a chain those pages are the next reader's.
+
+The 3 files are 7 pages of clean, ruled print in one column. They hold
+no table set without ruling, no page in columns and no watermark, which
+are what this reader declines. So the numbers say how well it reads
+what it reads, and not how many pages of your files it will read.
 
 ## With a model
 

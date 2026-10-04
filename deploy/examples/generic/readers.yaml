@@ -14,6 +14,20 @@
 # or, with LECTIO_KEYS=endpoint, the key the endpoint of the Secret
 # lectiod-keys issues the page's group.
 # specs/008-readers.md lists every member of both documents.
+#
+# To read a PDF's own text before any model is called, declare a second
+# Reader, of the text adapter, and name it first in the chain. It needs
+# no endpoint, no model and no key, and a page it cannot read without
+# guessing goes to the reader after it:
+#
+#     apiVersion: lectio.latere.ai/v1
+#     kind: Reader
+#     metadata: { name: own }
+#     spec: { adapter: text }
+#
+#     # and in the Policy:
+#     spec:
+#       read: { chain: [own, default] }
 apiVersion: v1
 kind: ConfigMap
 metadata:
