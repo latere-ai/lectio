@@ -6,6 +6,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -64,6 +65,13 @@ func TestTheLoopClaimsRunsAndSettles(t *testing.T) {
 	}
 	if !last.Shutdown || len(last.Held) != 0 {
 		t.Fatalf("the last exchange said %+v", last)
+	}
+	// Every exchange names the kinds of task the worker runs, all 5: a
+	// request that named none would be handed no extraction and no figure.
+	for i, req := range requests {
+		if !slices.Equal(req.Kinds, []tasks.Kind{tasks.Prepare, tasks.Page, tasks.Assemble, tasks.Extract, tasks.Figure}) {
+			t.Fatalf("exchange %d names the kinds %v", i, req.Kinds)
+		}
 	}
 	b.store.mu.Lock()
 	defer b.store.mu.Unlock()
