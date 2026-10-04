@@ -336,14 +336,21 @@ seconds a page. 12 of the 13 files reached their bars. Every table cell
 and every reading order was right, the table that continues was joined
 on every file that holds it, and of about 13,000 characters the engine
 read, the ones in error were 2 page numbers it left out and the marker
-it writes before each list item. The `layout` adapter keeps that marker
-in a list item's text, where every other reader gives the item without
-it, and on the presentation, a file of 381 characters with 4 list
-items, the markers alone put the character error rate at 2.1 percent
-against a bar of 2. The bar stands; the marker is for normalization to
-drop ([[008-readers]]). The engine also called the title of a document
-a heading, which moves every heading of the outline up a level. No
-hosted model has read the corpus.
+it writes before each list item. The adapter kept that marker in a list
+item's text, and on the presentation, a file of 381 characters with 4
+list items, the markers alone put the character error rate at 2.1
+percent against a bar of 2. The bar stood, and normalization now drops
+the marker ([[008-readers]]). The engine also called the title of a
+document a heading, which moves every heading of the outline up a
+level.
+
+With the marker dropped, the corpus was read twice more through the
+durable server. The same layout engine reached every bar on all 13
+files, with a character error rate of at most 0.06 percent. A hosted
+general model behind the `chat` adapter, asked for boxes in the order
+and on the grid it answers in, reached every bar on all 13 files too:
+a character error rate of at most 0.75 percent, and every kind, cell,
+reading order and box right, at 5 to 11 seconds a page.
 
 ### Deploying
 
