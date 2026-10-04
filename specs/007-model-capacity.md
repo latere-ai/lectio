@@ -274,9 +274,10 @@ resume period; a ceiling driven to 1 is back at 200 within 10 quiet
 intervals; with a key per group a rate limit pauses that group alone;
 and 3 failures in a row open the breaker for every worker, with exactly
 one trial after the open period. The second row of the table below is
-proven with processes ([[004-durable-tasks]]): the pages a killed
-worker was calling are claimed again after one lease, by a fleet whose
-pool is as wide as its slots. The criteria that need a stub endpoint
+proven by the soak of [[004-durable-tasks]]: its pool was as wide as
+the fleet's 64 slots, 29 workers were killed while they called, and
+every page was read, which a slot leaked at each kill would have
+stopped. The criteria that need a stub endpoint
 that counts or limits, or an extraction, are not proven: the rows of
 the table below that name a stub endpoint, a counting stub or an
 end-to-end test.
