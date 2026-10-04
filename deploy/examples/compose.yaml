@@ -7,6 +7,9 @@
 #
 #   podman compose -f deploy/examples/compose.yaml up --build
 #
+# Both images are built from the checkout this file is in, so it runs from
+# a checkout and not from a release's deploy archive.
+#
 # Every credential here is an example and is written in this file. The
 # stack is for a laptop: only lectiod's port is published, and on the
 # loopback interface alone. An installation that serves anyone takes its

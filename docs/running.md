@@ -83,7 +83,10 @@ removes the stack and what it stored.
 
 [`deploy/`](../deploy/README.md) holds Kustomize manifests: a base with
 one Deployment for the API and one for the workers, a component that
-adds the conversion sidecar, and 2 example overlays.
+adds the conversion sidecar, and 2 example overlays. Each release
+attaches the same tree as `deploy-<tag>.tar.gz`, with both images pinned
+to the release by digest, and publishes the images as
+`ghcr.io/<owner>/lectiod:<tag>` and `ghcr.io/<owner>/lectio-convert:<tag>`.
 
 ## Converting office documents
 

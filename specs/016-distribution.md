@@ -72,7 +72,7 @@ deploy/converter/         the image of the conversion sidecar
 deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the sidecar
 docs/                     running it; the configuration reference and the API guide (not built)
 test/                     conformance, end-to-end, soak, fixtures (not built)
-tools/                    generators and checks (not built)
+tools/                    the script that writes a release's deploy archive; generators and checks (not built)
 ```
 
 Public packages are the four a consumer, an adapter or an authorizer
@@ -348,12 +348,26 @@ Built:
   the server's image and holds it under 60 MiB, with no shell, starting
   and answering with a read-only root file system.
 
+- `.github/workflows/release.yml`, `tools/release/deploy-archive.sh`
+  and `release_test.go`: the release workflow. On a `v*` tag it waits
+  for the verify run of the tagged commit, builds `lectiod` and
+  `lectio-convert` for linux/amd64 and linux/arm64, pushes each by
+  digest, checks the version each reports, signs each, attests a bill
+  of materials and the provenance of each, archives `deploy/` with both
+  images pinned by digest, tags the digests, creates the release from
+  the changelog section through the shared notes workflow, and attaches
+  the archive, the bills of materials and their signed checksums. The
+  tests hold its jobs, their order and permissions, and run the archive
+  script over the tree. The workflow has not run: no tag has been cut
+  with it.
+
 Remaining:
 
 - `lectio-stubs` and its image, the rest of `docs/`, the generated
   configuration reference and its test, an image test of the
-  conversion sidecar, the smoke test of the compose file, and the
-  release workflow.
+  conversion sidecar, and the smoke test of the compose file.
+- In the release: the binaries for 4 platforms and the stubs' image.
+  The release carries 2 images and the deploy archive.
 - Most of the test tiers. The suite today is unit tests, end-to-end
   tests of the API and the development server in one process, and the
   tests of `internal/store/postgres`, which start one Postgres and one
