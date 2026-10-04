@@ -302,10 +302,10 @@ packages.
 
 | Adapter | Implements | Reaches |
 |---|---|---|
-| `chat` | Reader, Extractor | any endpoint that speaks OpenAI-compatible chat completions with image input |
+| `chat` | Reader, Describer, Extractor | any endpoint that speaks OpenAI-compatible chat completions with image input |
 | `layout` | Reader | an OCR or layout engine someone runs themselves, behind a small HTTP contract |
 | `text` | Reader | nothing: it reads a page from the text its file carries |
-| `stub` | Reader, Extractor | nothing: its output is a function of its input |
+| `stub` | Reader, Describer, Extractor | nothing: its output is a function of its input |
 
 **`chat`** sends one user message holding the instruction and the page
 as an image, and a JSON schema as the response format when the reader
@@ -409,7 +409,8 @@ spec:
   boxes: { order: xyxy, space: grid }       # how this model is asked for positions
   temperature: 0                            # sent only when set
   outputLimitParam: max_completion_tokens   # or max_tokens
-  maxInFlight: 16                           # the pool's bound; read, not applied yet
+  maxInput: 400000                          # the most text one extraction call is given, in bytes
+  maxInFlight: 16                           # the pool's bound, in the durable server
 ```
 
 No model name is compiled in. The example is an example. A `chat`
@@ -417,9 +418,17 @@ reader defaults to 160 dpi, a long edge of 2,048 pixels, PNG, 8,192
 output tokens and a two-minute timeout; a `layout` reader to 200 dpi,
 no bound on the long edge, PNG and a five-minute timeout, since an
 engine that scales to zero may load its model on the first call.
-`boxes`, `temperature`, `outputLimitParam`, `model`, `constrained` and
-`maxOutputTokens` are the `chat` adapter's; a `layout` reader takes an
-endpoint, an image and a timeout.
+`boxes`, `temperature`, `outputLimitParam`, `model`, `constrained`,
+`maxOutputTokens` and `maxInput` are the `chat` adapter's; a `layout`
+reader takes an endpoint, an image and a timeout.
+
+A `chat` document gives 3 things under its one name: a reader of
+pages, a describer of figures and an extractor, which share the
+endpoint, the model and one pool ([[007-model-capacity]]). `maxInput`
+is the extractor's: the most text one extraction call is given, in
+bytes, 400,000 unless set. A document longer than it is extracted in
+windows ([[011-structured-extraction]]). A document of another adapter
+that sets it is refused.
 
 A `text` reader takes an image and nothing else of its own, and needs
 no key:
@@ -748,16 +757,22 @@ Built:
 - `Describer`, with `reader/chat` and `reader/stub` adapters, the
   figure prompt, the Policy's `describe.chain`, and the run that
   describes a parse's figures in the in-process runner.
-- `reader/chat` (Reader and Extractor): the request that sends only
+- `reader/chat` (Reader, Describer and Extractor): the request that sends only
   what is configured, the box convention per reader, a cut reply kept
   to its last whole block, the repair of backslashes, a refusal
   reported as `Refused`, and a version.
-- `reader/layout` (Reader), with a version, and `reader/stub` (Reader
-  and Extractor).
+- `reader/layout` (Reader), with a version, and `reader/stub` (Reader,
+  Describer and Extractor).
 - `internal/config`: Reader and Policy documents from a file or a
   directory, strict, refused whole on any error. A Reader document's
-  `boxes`, `temperature` and `outputLimitParam` are read and applied,
-  and one of the `text` adapter names no endpoint and no model.
+  `boxes`, `temperature`, `outputLimitParam` and `maxInput` are read
+  and applied, and one of the `text` adapter names no endpoint and no
+  model. A `chat` document yields the extractor of its name beside its
+  reader and its describer.
+- The Policy's `extract.chain`, applied by the durable server: an
+  extraction is claimed for the first extractor of it that is not
+  passed over, and with no chain only for the extractor its request
+  names ([[011-structured-extraction]]).
 - `internal/prompts`: the three prompts as template files, rendered per
   call, each with a test that holds its full text, and a test that
   holds the page prompt's definitions to the set of kinds.
@@ -769,13 +784,13 @@ Built:
 Remaining:
 
 - Reload on `SIGHUP`: documents are read once, at start.
-- `maxInFlight` on a Reader, and `extract.chain` and `escalate` on the
-  Policy, are read and not applied. The server names each at start.
-  Capacity is [[007-model-capacity]], extraction is
-  [[011-structured-extraction]], and escalation is fixed as described
-  above.
-- `maxInFlight` and `cost` are read and not applied; the server names
-  each at start.
+- `escalate` on the Policy is read and not applied: escalation is fixed
+  as described above. The server names it at start.
+- `maxInFlight` and `cost` on a Reader and `extract.chain` on the
+  Policy are applied by the durable server
+  ([[007-model-capacity]], [[011-structured-extraction]]) and not by a
+  development server, which extracts nothing and bounds no pool, and
+  names each at start.
 - A cut reply is kept and marked; it is not continued, and the page is
   not read again with a higher limit or by the next reader.
 - A reply is not checked against the reply schema beyond decoding;
