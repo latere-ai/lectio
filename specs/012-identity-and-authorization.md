@@ -109,11 +109,27 @@ no claim to learn it.
 The shared contract, `latere.ai/x/pkg/authz`: Lectio posts the subject,
 every verified claim verbatim, the action and the resource, with a
 bearer of its own, and receives `{allow, reason, ttl, limits, filter}`.
+The request also carries what is known of the HTTP request: its id, the
+peer address and the user agent.
+
 The client's rules are the contract's: an allow is cached for its
 `ttl`, a deny briefly, unavailability never; one retry on a connection
-failure; anything but a well-formed allow is treated as unavailable,
-and the request fails closed with `503 authorizer_unavailable`.
-`filter` narrows a list to owners and labels.
+failure. An answer about a resource with no id is never cached, so
+every submit and every upload is asked, and limits changed at the
+authorizer hold from the caller's next create.
+
+A well-formed deny is `403 forbidden`, with the authorizer's `reason`
+as the developer detail of the error and never in the sentence a
+person reads. Anything that is not a well-formed answer is treated as
+unavailable: another status than `200`, a body that does not parse or
+carries no `allow`, no answer within the deadline, and limits that
+cannot be read. The request then fails closed with `503
+authorizer_unavailable`, and the error names neither the endpoint nor
+its bearer. `filter` narrows a list to owners and labels.
+
+A read of a stored object answers a deny the way it answers a missing
+object, with the `404` of its kind, so an id cannot be probed for what
+somebody else owns.
 
 ### Limits
 
@@ -244,8 +260,8 @@ Built, as a library the server does not call yet:
   `DecodeLimits` and `Over`.
 - `internal/access`: the two interfaces a handler depends on, one that
   turns a request's bearer into a caller and one that answers a
-  question with a decision; the resources a question is about; and the
-  verifier.
+  question with a decision; the resources a question is about; the
+  verifier; and the authorizer client.
 
 A stand-in, in the server:
 
@@ -260,9 +276,8 @@ A stand-in, in the server:
   That is the owner policy's rule for one subject, without admin
   subjects.
 
-Remaining: the authorizer client, the owner policy with its admin
-subjects, the action asked by each route, and service callers naming an
-owner.
+Remaining: the owner policy with its admin subjects, the action asked
+by each route, and service callers naming an owner.
 
 ## Acceptance criteria
 
@@ -272,7 +287,10 @@ owner.
 | A verified token becomes a caller whose subject is `<iss>\|<sub>` and whose claims are the token's, verbatim; two issuers that agree on a `sub` are two subjects | `TestAVerifiedTokenBecomesACaller`, `TestTwoIssuersAreTwoSubjects` |
 | A token for another audience, of an issuer that is not listed, expired or not yet valid past the skew, or with a signature that does not check out is `invalid_token` with the reason, and the error never repeats the token | `TestWhatTheVerifierRefuses`, `TestTheSkewOnExpAndNbf` |
 | Every route asks exactly the action in the table of [[003-api]], with the resource fields above | a test that records the authorizer's requests for each route |
-| The authorizer client passes the contract's conformance suite: cache, retry, fail closed | `authz/conformance` |
+| The endpoint `lectiod` asks answers the contract for every row of the vocabulary | `TestAuthorizerConformance`, which runs `authz/conformance` against the stub authorizer |
+| The client holds an allow for its `ttl`, a deny briefly and an outage never, asks a create every time, retries once on a connection failure, and fails closed with `authorizer_unavailable` on anything that is not a well-formed answer | `TestWhatTheClientRemembers`, `TestACreateIsAlwaysAsked`, `TestOneRetryOnAConnectionFailure`, `TestTheClientFailsClosed` |
+| The authorizer receives the subject, every claim verbatim, the action and the resource; a deny is a decision with its reason, limits that cannot be read are no decision, and a limit this version does not know is `capability_unsupported` | `TestTheEnvelopeCarriesTheCallerAndTheQuestion`, `TestOneQuestionEndToEnd`, `TestADenyIsADecision`, `TestLimitsTheServerCannotHold` |
+| A create is recorded under the owner its allow names, else the owner the request named, else the caller's subject, and its group is that owner unless the allow names one | `TestWhoseACreateIs` |
 | The constants of `authorizer` are the vocabulary table above: the same actions in the same order, each on its kind with its fields | `TestTheVocabularyIsTheSpecs` |
 | The limits object carries exactly the 14 keys of the table above, and `DecodeLimits` reads back what `WireLimits` renders | `TestTheWireNamesEveryMemberAndNoOther`, `TestDecodeReadsWhatAnAuthorizerRenders` |
 | Each member of `Limits`: an allow carrying it changes the limits in force, and the absent member leaves the default | `TestEachMemberOverTheDefaults` |
