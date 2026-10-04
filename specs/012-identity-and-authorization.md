@@ -95,7 +95,10 @@ one.
 request that queues model work on a stored parse: a retry, a figure
 run, an extraction ([[003-api]]). Those send the stored parse's `id`
 and its fields, and the work stays the parse's owner's: the limits of
-such an allow hold, and its `owner` is not read.
+such an allow hold, and its `owner` is not read. A retry is the one of
+the 3 that takes no limit from its allow: its parse stays in the group
+it was admitted to and is held to that group's bounds as they stand
+([[003-api]]).
 
 On a create, `owner` is the owner the request names. A request may
 name an owner other than the caller's subject (a service submitting
@@ -367,9 +370,13 @@ Remaining:
   (`503`) can be told from one that does not (`404`).
 - The `group` an allow of `file.create` names is read and held by
   nothing: a file joins no queue.
-- `GET /usage` and `GET /queue` are planned ([[003-api]]). They ask
-  `usage.read` and `queue.read` with no owner and no group, and answer
-  `501`.
+- `GET /usage` and `GET /queue` ask `usage.read` and `queue.read` with
+  the owner and the group their request names, and narrow their answer
+  by the allow's filter ([[013-limits-and-usage]],
+  [[006-fairness-and-priority]]). A queue is a group's, so `GET /queue`
+  reads the owners of a filter as the groups the caller may see, which
+  is exact under the owner policy, where a group is its owner. In a
+  development server both answer `501` ([[003-api]]).
 
 ## Acceptance criteria
 

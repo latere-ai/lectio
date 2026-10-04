@@ -42,8 +42,16 @@ written from the task row, and a task that was retried had nowhere to
 carry the tokens of its earlier attempts: the sum the draft promised
 could not be built, and at a sustained 40 pages a second the rows
 passed a hundred million within the detail's retention. A budget is
-now a reservation made when the page count is known, and the meter is
-one row per parse and reader, summed from what each task accumulated.
+now a reservation made when the page count is known.
+
+The second draft made the meter one row per parse and reader, summed
+from the task rows when the parse ended and rolled into hourly sums by
+a sweep. A task row cannot give that sum either: it holds the calls and
+the tokens of every attempt in one figure and the reader of its last
+claim alone, so a page that moved from one reader to the next would be
+metered under the second for what the first was called for. The meter
+is now written by each settle, which knows the reader its attempt was
+claimed for, straight into the row of its hour.
 
 ## Design
 
@@ -87,6 +95,14 @@ each submit of the group as its bounds are
 ([[006-fairness-and-priority]]), so a limit the authorizer changes holds
 from the group's next submit. A page taken from an earlier read counts
 as a page read: it is reserved and not given back.
+
+A retry reserves the pages it queues again, of the day of the retry and
+against the limit as the group's row then holds it, and is refused with
+`402 budget_exhausted` when the day does not hold them
+([[004-durable-tasks]]). The pages the parse read before stay counted on
+the day they were reserved on, and what the retried parse gives back
+when it ends is the pages of the retry it did not read, to the day of
+the retry.
 
 The two counts of [[006-fairness-and-priority]], queued parses and
 running tasks, are made under a lock on the group's row for the same
@@ -257,31 +273,58 @@ group's key is asked when its first page is read.
 
 ### Meters
 
-A task accumulates what it used on its own row, over every attempt:
-model calls, input and output tokens ([[004-durable-tasks]]). An
-attempt that failed, or was told to wait, reports its tokens with its
-outcome, so what was spent is recorded and not only what was useful.
-When the parse ends, the settle of `assemble` sums the rows into the
-meter, one row per reader and model that read for it:
+The meter is written as tasks settle. Each settle carries what its
+attempt used, the model calls and the tokens they took in and gave out
+([[004-durable-tasks]]), and the task store adds it, in the transaction
+of the settle, to the row of the hour:
 
 ```sql
 CREATE TABLE usage (
-  at        timestamptz NOT NULL DEFAULT now(),
-  group_id  text NOT NULL, owner text NOT NULL, parse_id text NOT NULL,
-  kind      text NOT NULL,        -- page | extract
-  reader    text, model text,
-  pages     integer NOT NULL DEFAULT 0,
-  calls     integer NOT NULL DEFAULT 0,  -- model calls, retries included
-  input_tokens bigint NOT NULL DEFAULT 0, output_tokens bigint NOT NULL DEFAULT 0,
-  cost      numeric, currency text       -- when the endpoint reports cost
+  hour          timestamptz NOT NULL,        -- the start of the hour, in UTC, the work settled in
+  group_id      text   NOT NULL,
+  owner         text   NOT NULL,
+  kind          text   NOT NULL,             -- the kind of task: page
+  reader        text   NOT NULL DEFAULT '',  -- the reader the attempt was claimed for; '' for pages no reader read
+  pages         bigint NOT NULL DEFAULT 0,   -- pages that were read
+  calls         bigint NOT NULL DEFAULT 0,   -- model calls, the ones that failed or were told to wait included
+  input_tokens  bigint NOT NULL DEFAULT 0,
+  output_tokens bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour, group_id, owner, kind, reader)
 );
 ```
 
-A row carries counts and identifiers, never content. Native pages are
-metered with zero tokens under no reader, so "pages parsed" means the
-same thing for every format. An extraction that is asked for after the
-parse ended adds its own row when it settles. A parse that is canceled
-or fails is metered the same way, by the statement that ends it.
+A row is the sum of an hour for one group, one owner, one kind of task
+and one reader. It holds counts and names, never content.
+
+- **What was spent is recorded, and not only what was useful.** An
+  attempt that failed, or was told to wait, reports its calls and
+  tokens with its outcome, and they are metered as the success's are.
+- **Under the reader that was called.** A settle meters under the
+  reader its attempt was claimed for. A page that moved down the
+  policy's chain is metered under each reader that was called for it.
+- **A page counts when it is read.** A page task that succeeds adds 1
+  page, whether or not a call was made: a page with nothing on it and a
+  page taken from an earlier read are pages read, under the reader they
+  were claimed for and with no call. A page that failed adds its calls
+  and no page, and adds its page when a retry reads it.
+- **Native pages are pages.** The pages of a format that needs no
+  reader are metered when `prepare` settles, with no call and no token,
+  under the reader with no name, so a page means the same thing for
+  every format.
+- **In the hour of the settle.** A parse that runs across the turn of
+  an hour is metered in both hours, each with what settled in it.
+
+The table grows with the hours a group, an owner and a reader were
+active in, and never with pages or parses: a group that reads a million
+pages in an hour with one reader adds 1 row. There is no row per page,
+no row per parse, no sweep that rolls rows up and no retention of
+detail: the detail of one parse is on the parse.
+
+The meter and the parses agree. Every settle that adds to a parse's
+`calls`, tokens and `pages_done` adds the same to the meter in the same
+transaction, so the meter summed over a group and an owner equals their
+parses summed, for as long as the parses are there. A parse that is
+deleted takes its row with it and leaves the meter as it is.
 
 One thing is not metered here: a call whose worker died or was taken
 for dead before it could report. Its tokens were spent at the endpoint
@@ -289,21 +332,34 @@ and no live lease can record them ([[004-durable-tasks]]). The
 endpoint's own meter has them, and the difference is bounded by the
 calls in flight at each kill.
 
-The row count follows parses, not pages. At a sustained 40 pages a
-second in parses of 20 pages, that is two parses a second: about
-170,000 rows a day, six million over the detail's retention.
+`GET /usage?by=group|owner|reader&interval=hour|day&from=&to=` returns
+sums by a key over fixed intervals in UTC ([[003-api]]). `from` is
+moved back to the beginning of its interval and `to` on to the end of
+its own, so no sum is of a part of an interval, and the answer says the
+span it covers. A read that names no `to` ends now, and one that names
+no `from` goes back 24 hours, or 30 days for `interval=day`. A read
+spans at most 1000 intervals. An interval with nothing in it has no
+sum. The shape, sums by a key over fixed intervals, is what a billing
+job folds into a ledger without asking Lectio about each parse.
 
-`GET /usage?by=group|owner|reader|model&interval=hour|day&from=&to=`
-returns sums. Rows are rolled into hourly aggregates by a sweep and
-the detail is dropped after `LECTIO_USAGE_DETAIL` (default 35 days);
-the aggregates are kept. The shape, sums by a key over fixed
-intervals, is what a billing job folds into a ledger without asking
-Lectio about each parse.
+Whose usage a caller is answered follows from the question,
+`usage.read` ([[012-identity-and-authorization]]). `owner` and `group`
+on the request ask for one owner's or one group's, and the question
+carries them. The answer is narrowed to them and to the owners the
+allow's filter lists: under the owner policy a caller reads its own
+usage and an admin everyone's. A filter that lists nobody, or that
+narrows by labels, which the meter does not carry, is answered with no
+sum.
 
-The parse's own `usage` ([[003-api]]) is kept on the parse row,
-advanced by each settle while the parse runs, and equals the sum of its
-meter rows when it ends. Each page's result carries the attempts and
+The parse's own `usage` ([[003-api]]) is kept on the parse row and
+advanced by each settle. Each page's result carries the attempts and
 tokens of that page ([[002-object-model]]).
+
+Not in the meter: the model, and a cost. A settle carries the reader
+its attempt was claimed for and no model name, so the sums are by
+reader, and an operator who runs 2 models as 2 readers reads them
+apart. No endpoint's reported cost reaches a settle, so the meter
+holds none. An extraction, when it is built, meters under its own kind.
 
 ### What Lectio does not do
 
@@ -356,6 +412,18 @@ Built:
   fails the page on a refusal. A page taken from an earlier read calls
   no reader and asks for no key.
 
+- The meters, in the durable server. The fifth migration carries the
+  `usage` table, `lectio_meter`, which is its one writer, and
+  `lectio_usage`, which reads it. `lectio_settle` meters what each
+  attempt used under the reader it was claimed for, with the page when
+  the task succeeds, and the settle of `prepare` meters the pages of a
+  format that needs no reader. `GET /usage` reads the sums by group,
+  owner or reader over hours or days, asks `usage.read` with the owner
+  and the group its request names, and narrows its answer by the
+  allow's filter. No worker changed: the settle already carried the
+  calls and the tokens.
+- A retry reserves its failed pages again, in `lectio_retry`.
+
 Remaining:
 
 - A development server holds no budget: it refuses an allow, and a
@@ -372,8 +440,9 @@ Remaining:
   ([[008-readers]]): the key is not asked again before it expires, and
   the refusals count against the reader's breaker for every group.
 - No test reads a trace for a key.
-- The meters. A parse sums its pages' usage on its own row; there is no
-  `usage` table, no roll-up, and the `usage` route answers `501`.
+- The meters hold no model and no cost, and `GET /usage` has no `by`
+  for either. A development server keeps no meter and answers the route
+  with `501`.
 - A URL source is held to the allow's lower file size after it was
   fetched under the server's own, and not while it streams.
 
@@ -394,7 +463,8 @@ Remaining:
 | A key is asked again 1 minute before it expires and not before; calls of one group that arrive while its key is asked for wait for the one request | `TestAGroupsKeyIsAskedOnceAndHeldUntilShortlyBeforeItExpires` and `TestCallsOfOneGroupWaitForOneRequest`, on a clock the test moves |
 | `401`, `5xx`, `429`, a body that is not the contract's, no key, no expiry, an expiry that is past or within the margin, a refused connection and a request that outlasts its bound are each unavailability, with a wait that doubles from 1 second to 30 | `TestAnAnswerThatIsNoKeyAndNoRefusalIsUnavailability` and `TestTheWaitGrowsWithEachAnswerInARowAndIsBounded` |
 | A worker and a process in both roles are refused at start `endpoint` with no address, with no bearer or beside a model key, and an address or a bearer beside `static`; the API reads neither and starts | `TestAKeySourceThatCannotRunIsRefused`, `TestTheAPIReadsNeitherTheEndpointNorItsBearer` and `TestTheEndpointIsReadByAProcessThatRunsTasks` of `internal/config`, and `TestAKeySourceThatCannotRunStopsAProcessThatRunsTasks` of `cmd/lectiod` |
-| The usage rows of a parse sum to the stub endpoint's own count of tokens served, failed and rate-limited attempts included, in a run with no worker killed | an end-to-end test |
-| In a run with workers killed, the usage rows sum to no more than the endpoint's count, and the difference is at most the calls in flight at the kills | the soak test of [[004-durable-tasks]] |
-| A parse of 3,000 pages read by two readers ends with two usage rows and no `succeeded` task row | a store test |
-| `GET /usage` over a day equals the detail rows summed, before and after the roll-up sweep | a store test |
+| The meter of a group sums to the stub endpoint's own count of calls and tokens served to it, failed and rate-limited attempts included, in a run with no worker killed | `TestARateLimitOnOneGroupsKeyPausesThatGroupAlone` of `cmd/lectiod`, through the durable server with a stub gateway that records every call: the limited group's meter reads its 3 pages, a call for each and for each rate limit, and the tokens of the 3 calls that were served |
+| In a run with workers killed, the meter holds no more calls than the endpoint saw, and fewer by at most the calls in flight at the kills, and it equals a recount of what the settles recorded on the parses | `TestAKilledWorkerLosesItsLeaseAndNotTheWork` of `cmd/lectiod`, on every run; `TestSoak`, with `LECTIO_SOAK=1`, over 1,000 parses and random kills |
+| Each settle meters what its attempt used under the reader it was claimed for: a failed call as the call it was, a page that moved to the next reader under both, a page with no call and a native page as pages read; the rows are one per hour, group, owner and reader | `TestTheMeterIsWrittenAsTasksSettle`, on a direct connection, in the query mode that prepares nothing, and through PgBouncer in transaction mode: 10 pages of 3 owners in 2 groups over 2 hours are 5 rows |
+| The meter equals a recount of the parses after a failed page, a wait, a retry, a cancel with a call spent and a worker that died | `TestTheMeterEqualsARecountAfterEveryWayAParseEnds`; every case of the store ends with the check that no owner's meter holds less than its parses recorded |
+| `GET /usage` sums by group, owner or reader over hours or days, equals what the caller's parses say they used, answers a caller its own usage and an admin everyone's, and refuses a parameter that is not the contract's | `TestUsageIsReadFromTheMeters` through the API over the durable backend, `TestAReadOfTheMetersIsCheckedAndNarrowed` |

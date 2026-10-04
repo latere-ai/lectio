@@ -177,7 +177,6 @@ whether the binary reads the variable today.
 | `LECTIO_FETCH_ALLOW` | none | [[014-sources-and-retention]] | yes |
 | `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | 24h, 720h | [[014-sources-and-retention]] | yes: the durable server; a development server keeps nothing |
 | `LECTIO_KEEP_PAGE_IMAGES` | true | [[014-sources-and-retention]] | no |
-| `LECTIO_USAGE_DETAIL` | 35 days | [[013-limits-and-usage]] | no |
 | `LECTIO_DEV` | false | this spec | yes |
 | `LECTIO_DEV_TOKEN` | `dev` | this spec | yes: the one caller of a development server that lists no issuer |
 
