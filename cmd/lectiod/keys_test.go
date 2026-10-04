@@ -111,16 +111,19 @@ func (k *keyPlane) groupOf(key string) string {
 }
 
 // gateway is a stub of a model gateway that speaks chat completions. It
-// records the bearer of every call and answers each with a page of one
-// block, with a rate limit while a case says the bearer is limited, or with
-// a refusal for budget while a case says the bearer's budget is spent.
+// records the bearer of every call and answers each with what it was asked
+// for: a page of a paragraph and a figure, what a figure shows, or an
+// object for a schema. It answers with a rate limit while a case says the
+// bearer is limited, or with a refusal for budget while a case says the
+// bearer's budget is spent.
 type gateway struct {
 	*httptest.Server
 
 	mu sync.Mutex
-	// read are the bearers of the calls answered with a page, and refused
-	// the bearers of the calls answered with a rate limit.
-	read, refused []string
+	// read are the bearers of the calls that were answered, kinds what each
+	// of them asked for, in the same order, and refused the bearers of the
+	// calls answered with a rate limit.
+	read, kinds, refused []string
 	// limited reports whether a call with the bearer is answered 429.
 	limited func(bearer string) bool
 	// spent reports whether a call with the bearer is answered 402: the
@@ -133,9 +136,11 @@ func newGateway(t *testing.T) *gateway {
 	t.Helper()
 	g := &gateway{}
 	g.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
 			t.Errorf("reading a call: %v", err)
 		}
+		kind, content := asked(raw)
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -150,8 +155,7 @@ func newGateway(t *testing.T) *gateway {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		g.read = append(g.read, bearer)
-		content := `{"blocks":[{"kind":"paragraph","text":"A page read through the gateway.","description":null,"box":[100,100,900,200],"level":null}]}`
+		g.read, g.kinds = append(g.read, bearer), append(g.kinds, kind)
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"model":   "example-model",
 			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": content}}},
@@ -162,6 +166,61 @@ func newGateway(t *testing.T) *gateway {
 	}))
 	t.Cleanup(g.Close)
 	return g
+}
+
+// What a call to the gateway asks for.
+const (
+	askedPage    = "page"
+	askedFigure  = "figure"
+	askedExtract = "extract"
+)
+
+// asked tells what a chat completion asks for from its one message, and
+// what the gateway answers it with. A message with no image is an
+// extraction: its object states what the page of the gateway says, and
+// cites the page's first block. A message whose instruction is the figure's
+// is a figure. Any other is a page, read as a paragraph and a figure with a
+// place on the page.
+func asked(call []byte) (kind, content string) {
+	var body struct {
+		Messages []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	image, instruction := false, ""
+	if json.Unmarshal(call, &body) == nil && len(body.Messages) > 0 {
+		for _, part := range body.Messages[0].Content {
+			if part.Type == "image_url" {
+				image = true
+			} else {
+				instruction = part.Text
+			}
+		}
+	}
+	switch {
+	case !image:
+		return askedExtract, `{"data":{"summary":"A page read through the gateway."},"citations":[{"pointer":"/summary","refs":["1.1"]}]}`
+	case strings.HasPrefix(instruction, "This image is one figure"):
+		return askedFigure, `{"type":"diagram","description":"A figure described through the gateway.","text":["a label"]}`
+	}
+	return askedPage, `{"blocks":[{"kind":"paragraph","text":"A page read through the gateway.","description":null,"box":[100,100,900,200],"level":null},` +
+		`{"kind":"figure","text":"","description":null,"box":[250,300,750,800],"level":null}]}`
+}
+
+// served are the bearers of the calls of one kind the gateway answered.
+func (g *gateway) served(kind string) []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []string
+	for i, bearer := range g.read {
+		if g.kinds[i] == kind {
+			out = append(out, bearer)
+		}
+	}
+	return out
 }
 
 // limit sets which bearers the gateway answers with a rate limit.
@@ -179,14 +238,17 @@ func (g *gateway) calls() (read []string, refused int) {
 	return append([]string(nil), g.read...), len(g.refused)
 }
 
-// keyed is the environment of a durable server that reads its pages
-// through the gateway, in pairs: one Reader of the chat adapter, named
-// gateway, and pauses short enough that a case waits for none.
+// keyed is the environment of a durable server that reads its pages,
+// describes its figures and extracts through the gateway, in pairs: one
+// Reader of the chat adapter, named gateway, which the policy's 3 chains
+// name, and pauses short enough that a case waits for none.
 func keyed(t *testing.T, g *gateway, more ...string) []string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "reader.yaml")
 	doc := "apiVersion: lectio.latere.ai/v1\nkind: Reader\nmetadata: { name: gateway }\n" +
-		"spec: { adapter: chat, endpoint: " + g.URL + "/v1, model: example-model }\n"
+		"spec: { adapter: chat, endpoint: " + g.URL + "/v1, model: example-model }\n" +
+		"---\napiVersion: lectio.latere.ai/v1\nkind: Policy\nmetadata: { name: default }\n" +
+		"spec: { read: { chain: [gateway] }, describe: { chain: [gateway] }, extract: { chain: [gateway] } }\n"
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}

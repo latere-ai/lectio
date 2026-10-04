@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/testservers"
 	"latere.ai/x/lectio/reader"
@@ -55,6 +56,13 @@ const (
 	// failEnv names a file that lists page numbers. While the file is
 	// there, a call for one of those pages fails for good, at once.
 	failEnv = "LECTIO_TEST_FAIL"
+	// figuresEnv makes every page a reader reads hold a figure with a
+	// place on it.
+	figuresEnv = "LECTIO_TEST_FIGURES"
+	// windowEnv bounds the text of one extraction call of the process's
+	// extractors, in bytes, so a short document is read in several
+	// windows.
+	windowEnv = "LECTIO_TEST_WINDOW"
 )
 
 // child runs lectiod's own main, which is configured by the environment the
@@ -63,6 +71,12 @@ func child() {
 	wrapReaders = func(r config.Readers) config.Readers {
 		for name, rd := range r.Readers {
 			r.Readers[name] = &staged{Reader: rd, pid: os.Getpid()}
+		}
+		for name, ext := range r.Extractors {
+			r.Extractors[name] = &stagedExtractor{Extractor: ext, pid: os.Getpid()}
+		}
+		for name, d := range r.Describers {
+			r.Describers[name] = &stagedDescriber{Describer: d, pid: os.Getpid()}
 		}
 		return r
 	}
@@ -113,7 +127,76 @@ func (s *staged) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 	if err == nil && len(res.Blocks) > 0 {
 		res.Blocks[0].Text += " read by " + strconv.Itoa(s.pid)
 	}
+	if err == nil && os.Getenv(figuresEnv) != "" {
+		res.Blocks = append(res.Blocks, document.Block{Kind: document.KindFigure, Order: len(res.Blocks) + 1, Box: &document.Box{0.25, 0.25, 0.75, 0.75}})
+	}
 	return res, err
+}
+
+// called appends a line to the calls file of the process, when it has one:
+// the process's id and what the call was for.
+func called(pid int, what string) error {
+	path := os.Getenv(callsEnv)
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(f, "%d %s\n", pid, what)
+	return errors.Join(err, f.Close())
+}
+
+// delayed waits as long as the process's environment says a call takes.
+// The wait ends early when the call is told to stop.
+func delayed(ctx context.Context) {
+	if d, err := time.ParseDuration(os.Getenv(delayEnv)); err == nil {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+		}
+	}
+}
+
+// stagedExtractor is an extractor of a process a test started: the
+// configured one, with the bound on a call's text the environment names,
+// made to wait as the environment says, and counted in the calls file.
+type stagedExtractor struct {
+	reader.Extractor
+	pid int
+}
+
+func (s *stagedExtractor) Describe() reader.ExtractorDescription {
+	d := s.Extractor.Describe()
+	if n, err := strconv.Atoi(os.Getenv(windowEnv)); err == nil {
+		d.MaxInput = n
+	}
+	return d
+}
+
+func (s *stagedExtractor) Extract(ctx context.Context, req reader.ExtractRequest) (reader.ExtractResult, error) {
+	if err := called(s.pid, "extract"); err != nil {
+		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the calls file: %v", err)
+	}
+	delayed(ctx)
+	return s.Extractor.Extract(ctx, req)
+}
+
+// stagedDescriber is a describer of a process a test started: the
+// configured one, made to wait as the environment says, and counted in the
+// calls file.
+type stagedDescriber struct {
+	reader.Describer
+	pid int
+}
+
+func (s *stagedDescriber) DescribeFigure(ctx context.Context, req reader.FigureRequest) (reader.FigureResult, error) {
+	if err := called(s.pid, "figure"); err != nil {
+		return reader.FigureResult{}, reader.Errorf(reader.Permanent, "the calls file: %v", err)
+	}
+	delayed(ctx)
+	return s.Describer.DescribeFigure(ctx, req)
 }
 
 func exists(path string) bool {
