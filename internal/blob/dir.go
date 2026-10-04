@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -35,8 +36,10 @@ const (
 
 	// writeAttempts bounds how often Put writes a file again after a Delete
 	// pruned its directory away. Each loss needs a prune to land between two
-	// system calls, so a handful is more than a run ever takes.
-	writeAttempts = 8
+	// system calls. On a loaded machine with few processors that happens
+	// several times in a row, so the bound is far above a handful and a
+	// writer yields between two attempts.
+	writeAttempts = 64
 )
 
 // Dir is a Store over a directory of files that several processes on one
@@ -228,6 +231,9 @@ func write(file string, data []byte) error {
 		if err = writeOnce(file, data); !pruned(err) {
 			break
 		}
+		// The prune that took the directory is still running: let it end
+		// before the directory is made again.
+		runtime.Gosched()
 	}
 	return err
 }
