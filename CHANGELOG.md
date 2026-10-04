@@ -6,6 +6,34 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: a key per tenant, in the durable server. `LECTIO_KEYS=endpoint`
+  reads the pages of each group with a key an endpoint of yours issued
+  for that group, so a gateway attributes each tenant's model spend to
+  it and bounds the spend by the tenant's budget. `static`, the default,
+  keeps one key from `LECTIO_MODEL_KEY` for every group. A worker sends
+  `POST LECTIO_KEYS_URL` with the bearer `LECTIO_KEYS_TOKEN` and
+  `{"group", "owner", "parse"}`, once per group, takes `{"key",
+  "expires_at"}`, holds the key in memory alone, and asks again 1 minute
+  before it expires, so a key has to be good for more than 1 minute when
+  it is issued. A `402` fails the group's pages with `budget_exhausted`
+  and a `403` with `reader_unavailable`. Any other answer, and no
+  answer, fails nothing: the group's pages wait in the queue, spend no
+  attempt, and are read once the endpoint answers, which a worker tries
+  after 1 second and then after twice as long each time, up to 30
+  seconds; the worker stays ready meanwhile. With a key per group a rate
+  limit of the model endpoint pauses the calls of the group whose key
+  was limited, and no other group's. Only a process that runs tasks
+  reads `LECTIO_KEYS_URL` and `LECTIO_KEYS_TOKEN`: the API reads
+  `LECTIO_KEYS` alone and starts without them. A worker, and a process
+  in both roles, does not start with `endpoint` and no address or no
+  bearer, with `endpoint` and a `LECTIO_MODEL_KEY`, or with an address
+  or a bearer while the source is `static`, and names the variable; a
+  development server does not start with `endpoint`. In the deploy
+  tree, `LECTIO_KEYS` is a key of the ConfigMap `lectiod`, and the
+  worker Deployment reads the 2 others from the optional Secret
+  `lectiod-keys`, which `deploy/bootstrap/secrets.example.yaml`
+  declares.
+
 ## v0.1.1 - 2026-10-04
 
 - Fixed: a release publishes its images. The pipeline of `v0.1.0` stopped
