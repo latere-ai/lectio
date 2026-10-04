@@ -155,9 +155,12 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		return
 	}
 	// The key is resolved before anything is fetched or rendered: a page
-	// that has none yet goes back to the queue having cost nothing.
+	// that has none yet goes back to the queue having cost nothing. A
+	// reader that calls no model spends nothing of the group's and is
+	// asked for no key.
+	local := rd.Describe().Local
 	opt := parse.PageOptions{Languages: c.Context.Languages}
-	if w.Keys != nil {
+	if w.Keys != nil && !local {
 		key, err := w.Keys.Key(ctx, c.Group, c.Context.Owner, c.Parse)
 		if err != nil {
 			keyless(s, err)
@@ -173,7 +176,7 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 
 	got, err := w.Pipeline.ReadPage(ctx, m.Manifest, working, n, rd, opt)
 	if err != nil {
-		w.failed(c, s, err, rd.Describe().Local)
+		w.failed(c, s, err, local)
 		return
 	}
 	// A page with nothing on it is written with no read, and one read from

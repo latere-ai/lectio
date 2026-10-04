@@ -94,7 +94,8 @@ refused before it is pushed.
   and its `usage` is one page and no token; it counts as one page
   against a group's pages for a day. A client that switches on `source`
   needs the new case. `GET /usage` counts such a page as a page and no
-  call, and counts no call for a page the reader declines. In the Go
+  call, and counts no call for a page the reader declines. A worker
+  asks the key source for no key before such a reader reads. In the Go
   packages: `reader.Description` has `Text` and `Local`, `reader.Page`
   has `Text`, `reader.Result` has `TextLayer`, and
   `document.SourceTextLayer` is the new source. A `text` reader's

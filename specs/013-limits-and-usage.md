@@ -131,7 +131,10 @@ gateway that already meters it, and a tenant out of budget is refused
 by the gateway, which Lectio reports as `budget_exhausted`
 ([[007-model-capacity]]). Lectio never stores a key in the database and
 never logs one. A key endpoint that is down leaves the group's pages
-unclaimed until it answers, not failed.
+unclaimed until it answers, not failed. A reader that calls no model
+(`reader.Description.Local`) is asked for no key: it charges no one, so
+a group with no budget, or one that is issued no key, has its pages
+read by it all the same.
 
 Whose key a call is made with is also whose rate limit its reply
 describes. With `static` every group shares one key, and a rate-limit

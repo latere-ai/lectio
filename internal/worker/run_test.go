@@ -410,7 +410,8 @@ func (o own) ReadPage(context.Context, reader.Page) (reader.Result, error) {
 
 // TestAReaderThatCallsNoModelIsMeteredAsNoCall: a page read from the file's
 // own text, and a page such a reader declines, take their place in the
-// queue's account and record no model call.
+// queue's account and record no model call. No key is asked for either,
+// so a group that is issued none has the page read all the same.
 func TestAReaderThatCallsNoModelIsMeteredAsNoCall(t *testing.T) {
 	ctx := context.Background()
 	for name, tc := range map[string]struct {
@@ -421,13 +422,17 @@ func TestAReaderThatCallsNoModelIsMeteredAsNoCall(t *testing.T) {
 		"declined": {own{decline: true}, tasks.Next},
 	} {
 		b := newBench(t, map[string]reader.Reader{"own": tc.reader})
-		b.w.Costs = map[string]int{"own": 2}
+		source := &issuing{err: keys.ErrForbidden}
+		b.w.Costs, b.w.Keys = map[string]int{"own": 2}, source
 		b.put("sources/o/aa/fil_1", sheet(t, false), "image/png")
 		c := page("prs_a", 1, 1, "sources/o/aa/fil_1", "image/png")
 		c.Reader = "own"
 		s := b.w.run(ctx, c)
 		if s.Outcome != tc.outcome || s.Usage != (tasks.Usage{}) || s.Units != 2 {
 			t.Fatalf("%s: settled %+v, %+v", name, s, s.Error)
+		}
+		if source.asked != "" {
+			t.Fatalf("%s: the key source was asked for %s", name, source.asked)
 		}
 		switch tc.outcome {
 		case tasks.Done:
