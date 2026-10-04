@@ -5,19 +5,30 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
 	"latere.ai/x/lectio/internal/durable"
+	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/objects"
+	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/run"
+	"latere.ai/x/lectio/internal/store"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/internal/testservers"
 	"latere.ai/x/lectio/internal/worker"
+	"latere.ai/x/lectio/reader"
+	"latere.ai/x/lectio/reader/stub"
 )
 
 // TestMain removes the containers the durable run started.
@@ -141,3 +152,268 @@ func TestTheContractHoldsOverTheDurableBackend(t *testing.T) {
 		}
 	})
 }
+
+// failing is an object store whose calls fail when a case says so.
+type failing struct {
+	blob.Store
+	down bool
+}
+
+var errObjects = errors.New("the object store does not answer")
+
+func (f *failing) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	if f.down {
+		return errObjects
+	}
+	return f.Store.Put(ctx, key, data, contentType)
+}
+
+func (f *failing) Get(ctx context.Context, key string) ([]byte, string, error) {
+	if f.down {
+		return nil, "", errObjects
+	}
+	return f.Store.Get(ctx, key)
+}
+
+func (f *failing) Delete(ctx context.Context, key string) error {
+	if f.down {
+		return errObjects
+	}
+	return f.Store.Delete(ctx, key)
+}
+
+func (f *failing) List(ctx context.Context, prefix string) ([]string, error) {
+	if f.down {
+		return nil, errObjects
+	}
+	return f.Store.List(ctx, prefix)
+}
+
+// versionless is a reader that promises nothing about its results.
+type versionless struct{ stub.Reader }
+
+func (*versionless) Describe() reader.Description { return reader.Description{Name: "versionless"} }
+
+// TestTheDurableBackendSaysWhatItsStoresDoNotAnswer: what the task store or
+// the object store fails is an error the handlers answer as internal, and
+// never a page or a document made of nothing. A page is found where its
+// parse's state says it is: through the manifest for a native format,
+// through its task's row while the parse runs, and through the index after.
+func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
+	srv, err := testservers.StartPostgres()
+	if err != nil {
+		t.Skipf("no container runtime answered, so the durable backend did not run: %v", err)
+	}
+	ctx := context.Background()
+	dsn := testservers.Database(t, srv)
+	if err := postgres.Migrate(ctx, dsn); err != nil {
+		t.Fatal(err)
+	}
+	settings := tasks.Settings{Pools: []tasks.Pool{{Reader: "stub", MaxInFlight: 8}}, ReadChain: []string{"stub"}}
+	st, err := postgres.Open(ctx, dsn, postgres.Options{Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs := &failing{Store: blob.NewMemory()}
+	b := &durable.Backend{
+		Store: st, Objects: objs, Poll: time.Millisecond,
+		Readers: map[string]reader.Reader{"stub": &stub.Reader{}, "versionless": &versionless{}}, Chain: []string{"gone", "stub"},
+	}
+	failed := func(what string, err error) {
+		t.Helper()
+		if err == nil || fault.CodeOf(err) != fault.Internal {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+
+	// A file whose row cannot be written leaves no object behind, and says
+	// so when the object cannot be removed either.
+	first, created, err := b.PutFile(ctx, store.File{ID: "fil_1", Owner: "alice", SHA256: "aa", MediaType: "image/png", Data: []byte("x")})
+	if err != nil || !created {
+		t.Fatalf("storing a file: %v", err)
+	}
+	if _, _, err := b.PutFile(ctx, store.File{ID: "fil_1", Owner: "bob", SHA256: "bb", MediaType: "image/png", Data: []byte("y")}); err == nil {
+		t.Fatal("a file under an id that is taken was stored")
+	}
+	if keys, err := objs.List(ctx, "sources/"); err != nil || len(keys) != 1 {
+		t.Fatalf("after a row that could not be written the bucket holds %v, %v", keys, err)
+	}
+	objs.down = true
+	_, _, err = b.PutFile(ctx, store.File{ID: "fil_2", Owner: "alice", SHA256: "cc", MediaType: "image/png", Data: []byte("z")})
+	failed("storing a file with the object store down", err)
+	failed("deleting a file with the object store down", b.DeleteFile(ctx, "alice", first.ID))
+	objs.down = false
+
+	// What a read of a page means has no name without the file's digest,
+	// or with a reader that promises nothing; a reader the chain names and
+	// nobody configured is passed over.
+	submit := func(id string, p store.Parse) store.Parse {
+		t.Helper()
+		p.ID, p.Owner, p.CreatedAt = id, "alice", time.Now()
+		stored, _, err := b.Submit(ctx, p, store.Admission{}, "", "")
+		if err != nil {
+			t.Fatalf("submitting %s: %v", id, err)
+		}
+		return stored
+	}
+	admin, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = admin.Close(ctx) }()
+	base := func(id string) (out string) {
+		if err := admin.QueryRow(ctx, `SELECT coalesce(read_base, '') FROM parses WHERE parse_id = $1`, id).Scan(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	submit("prs_nosha", store.Parse{})
+	submit("prs_versionless", store.Parse{ContentSHA: "aa", Reader: "versionless"})
+	running := submit("prs_run", store.Parse{ContentSHA: "aa"})
+	if base("prs_nosha") != "" || base("prs_versionless") != "" || len(base("prs_run")) != 64 {
+		t.Fatalf("the read bases are %q, %q and %q", base("prs_nosha"), base("prs_versionless"), base("prs_run"))
+	}
+	for _, id := range []string{"prs_nosha", "prs_versionless"} {
+		if _, err := b.Cancel(ctx, "alice", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The running parse: one page read, one failed, one with a summary that
+	// is none, one still queued.
+	worker, err := st.Register(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// held is what the worker says it still runs.
+	var held []tasks.Held
+	exchange := func(free int, settles ...tasks.Settle) []tasks.Claim {
+		t.Helper()
+		reply, err := st.Exchange(ctx, worker, tasks.Request{Settles: settles, Held: held, Free: free, Idle: true})
+		if err != nil || len(reply.Refused) != 0 {
+			t.Fatalf("the exchange: %+v, %v", reply, err)
+		}
+		return reply.Claims
+	}
+	prepare := exchange(1)[0]
+	manifest := `{"media_type":"image/tiff","pages_total":4,"selected":[1,2,3,4],"source":"reader","work":"sources/x","token":1}`
+	exchange(0, tasks.Settle{Parse: prepare.Parse, Task: prepare.Task, Token: prepare.Token, Outcome: tasks.Done,
+		Prepare: &tasks.Prepared{Manifest: json.RawMessage(manifest), Pages: []int{1, 2, 3, 4}}})
+	claims := exchange(3)
+	read := tasks.Settle{Parse: claims[0].Parse, Task: claims[0].Task, Token: claims[0].Token, Outcome: tasks.Done,
+		Output: "parses/prs_run/pages/1.1.json", Result: json.RawMessage(`{"blocks":2,"source":"reader"}`)}
+	lost := tasks.Settle{Parse: claims[1].Parse, Task: claims[1].Task, Token: claims[1].Token, Outcome: tasks.Permanent,
+		Error: &tasks.Error{Code: "page_unreadable", Detail: "no"}}
+	odd := tasks.Settle{Parse: claims[2].Parse, Task: claims[2].Task, Token: claims[2].Token, Outcome: tasks.Done,
+		Output: "parses/prs_run/pages/3.1.json", Result: json.RawMessage(`"not a summary"`)}
+	if err := objects.PutPage(ctx, objs, read.Output, objects.Page{Revision: 1, Image: "parses/prs_run/pages/1.1.png", Page: document.Page{Number: 1, State: document.PageSucceeded}}); err != nil {
+		t.Fatal(err)
+	}
+	held = []tasks.Held{{Parse: claims[2].Parse, Task: claims[2].Task, Token: claims[2].Token}}
+	exchange(0, read, lost)
+	held = nil
+	running, err = b.Parse(ctx, "alice", running.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := b.Summaries(ctx, running)
+	if err != nil || len(summaries) != 2 || summaries[0].Blocks != 2 || summaries[1].State != document.PageFailed || summaries[1].Error.Code != "page_unreadable" {
+		t.Fatalf("the pages of a running parse are %+v, %v", summaries, err)
+	}
+	if page, ok, err := b.Page(ctx, running, 2); err != nil || !ok || page.State != document.PageFailed {
+		t.Fatalf("a page that failed while its parse runs: %+v, %t, %v", page, ok, err)
+	}
+	if _, ok, err := b.Page(ctx, running, 4); err != nil || ok {
+		t.Fatalf("a page that is still queued: %t, %v", ok, err)
+	}
+	// The page names an image that is not in the bucket: it has none.
+	if _, ok, err := b.Image(ctx, running, 1); err != nil || ok {
+		t.Fatalf("a page whose image is gone: %t, %v", ok, err)
+	}
+	exchange(0, odd)
+	_, err = b.Summaries(ctx, running)
+	failed("a row whose summary is none", err)
+	_, err = b.Pages(ctx, running)
+	failed("a page whose object is gone", err)
+	if _, ok, err := b.Document(ctx, running); err != nil || ok {
+		t.Fatalf("the document of a running parse: %t, %v", ok, err)
+	}
+
+	// A held submit stops waiting when its caller does.
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	b.Wait(stopped, "alice", running.ID, time.Minute)
+	b.WaitFigures(ctx, running.ID, time.Minute)
+
+	// A native format before assemble: the pages are where prepare wrote
+	// them.
+	native := running
+	native.ID, native.ManifestToken = "prs_native", 3
+	native.Manifest = &parse.Manifest{MediaType: "text/csv", PagesTotal: 1, Selected: []int{1}, Source: document.SourceNative}
+	if err := objects.PutPage(ctx, objs, blob.PageKey("prs_native", 1, 3), objects.Page{Revision: 1, Page: document.Page{Number: 1, State: document.PageSucceeded, Source: document.SourceNative}}); err != nil {
+		t.Fatal(err)
+	}
+	if pages, err := b.Pages(ctx, native); err != nil || len(pages) != 1 || pages[0].Source != document.SourceNative {
+		t.Fatalf("the pages of a native parse before assemble: %+v, %v", pages, err)
+	}
+	if listed, err := b.Summaries(ctx, native); err != nil || len(listed) != 1 {
+		t.Fatalf("its page list: %+v, %v", listed, err)
+	}
+
+	// An index: a page it lists with no key is one the parse did not read,
+	// and an index that is gone is an error.
+	indexed := running
+	indexed.IndexKey = "parses/prs_run/document.9.json"
+	_, err = b.Pages(ctx, indexed)
+	failed("the pages of a parse whose index is gone", err)
+	_, _, err = b.Document(ctx, indexed)
+	failed("the document of a parse whose index is gone", err)
+	if err := objects.PutIndex(ctx, objs, indexed.IndexKey, objects.Index{Keys: []objects.Entry{{Number: 1, Key: read.Output}, {Number: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	if pages, err := b.Pages(ctx, indexed); err != nil || len(pages) != 2 || pages[1].State != document.PageSkipped {
+		t.Fatalf("the pages of an index with a page it has no key for: %+v, %v", pages, err)
+	}
+
+	// The object store stops answering.
+	objs.down = true
+	_, _, err = b.Image(ctx, indexed, 1)
+	failed("an image with the object store down", err)
+	_, _, err = b.Page(ctx, indexed, 1)
+	failed("a page with the object store down", err)
+	_, err = b.Summaries(ctx, native)
+	failed("a page list with the object store down", err)
+	if _, err := b.Cancel(ctx, "alice", running.ID); err != nil {
+		t.Fatal(err)
+	}
+	ended, err := b.Parse(ctx, "alice", running.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = b.Document(ctx, ended)
+	failed("a document made from rows with the object store down", err)
+	failed("deleting a parse with the object store down", b.DeleteParse(ctx, "alice", running.ID))
+	objs.down = false
+	objs.Store = &undeletable{Store: objs.Store}
+	failed("deleting a parse whose objects cannot be removed", b.DeleteParse(ctx, "alice", running.ID))
+
+	// The task store stops answering.
+	st.Close()
+	_, _, err = b.PutFile(ctx, store.File{ID: "fil_3", Owner: "alice", SHA256: "dd", Data: []byte("x")})
+	failed("storing a file with the task store down", err)
+	_, _, err = b.Parses(ctx, "alice", store.Filter{}, "", 10)
+	failed("listing parses with the task store down", err)
+	_, err = b.Summaries(ctx, running)
+	failed("a page list with the task store down", err)
+	_, _, err = b.Page(ctx, running, 1)
+	failed("a page with the task store down", err)
+	_, err = b.Pages(ctx, running)
+	failed("the pages with the task store down", err)
+	_, _, err = b.Document(ctx, ended)
+	failed("a document with the task store down", err)
+}
+
+// undeletable is an object store that lists and cannot delete.
+type undeletable struct{ blob.Store }
+
+func (undeletable) Delete(context.Context, string) error { return errObjects }

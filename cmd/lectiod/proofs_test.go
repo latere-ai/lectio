@@ -71,10 +71,15 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 	}
 	held := `SELECT count(*) FROM tasks WHERE state = 'leased' AND kind = 'page' AND lease_owner = $1`
 	until(t, "the worker runs pages", 20*time.Second, func() bool { return value[int](t, conn, held, doomed.worker()) >= 2 })
-	inFlight := value[int](t, conn, held, doomed.worker())
 	doomed.signal(syscall.SIGKILL)
 	killed := time.Now()
 	<-doomed.exited
+	// What the dead worker held is still leased to it: nobody has acted on
+	// its lease yet.
+	inFlight := value[int](t, conn, held, doomed.worker())
+	if inFlight < 1 {
+		t.Fatalf("the worker held %d pages when it was killed", inFlight)
+	}
 
 	// Another worker is there, and for the length of the lease it leaves
 	// the dead one's tasks alone.
