@@ -168,11 +168,12 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 }
 
 // TestAMigrationThatCannotHaveALockFailsAndAppliesNothing: the newest
-// migration changes tables that are in use while it runs. A transaction
-// that holds one of them makes it wait, and everything that reads the table
-// waits behind it. It waits 5 seconds and no longer: the migrator fails,
-// nothing of the migration is applied, and the lock timeout it set is gone
-// with its transaction. The schema is then marked as left halfway, which an
+// migration changes tables that are in use while it runs. It takes the 3
+// of them at once and without waiting, so it never waits for one while it
+// holds another, and tries for 5 seconds. With a transaction that holds one
+// of them for longer the migrator fails, nothing of the migration is
+// applied, no table was held while it tried, and the lock timeout it set is
+// gone with its transaction. The schema is then marked as left halfway, which an
 // operator clears, and the migration applies once the table is free.
 func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	srv := server(t)
@@ -221,10 +222,29 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// While the migration tries, a statement that reads the other 2 tables
+	// is answered: the migration holds none of them.
+	reads := make(chan error, 1)
+	go func() {
+		reader, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			reads <- err
+			return
+		}
+		defer func() { _ = reader.Close(ctx) }()
+		time.Sleep(time.Second)
+		bound, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		var n int
+		reads <- reader.QueryRow(bound, `SELECT (SELECT count(*) FROM settings) + (SELECT count(*) FROM tasks)`).Scan(&n)
+	}()
 	began := time.Now()
 	err = m.Steps(1)
-	if took := time.Since(began); err == nil || !strings.Contains(err.Error(), "lock timeout") || took < 5*time.Second || took > 30*time.Second {
-		t.Fatalf("the migration ended after %s with %v, want a lock timeout after 5 seconds", took, err)
+	if took := time.Since(began); err == nil || !strings.Contains(err.Error(), "were in use for 5 seconds") || took < 5*time.Second || took > 30*time.Second {
+		t.Fatalf("the migration ended after %s with %v, want it to give up after 5 seconds", took, err)
+	}
+	if err := <-reads; err != nil {
+		t.Fatalf("a read of the other tables while the migration tried: %v", err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)

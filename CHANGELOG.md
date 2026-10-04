@@ -73,9 +73,18 @@ refused before it is pushed.
   finished by the retention sweep.
 - Changed: a worker names the kinds of task it runs in every exchange
   and is handed no other. A worker of `v0.3.0` names none and is handed
-  `prepare`, `page` and `assemble`, so the API and the workers of this
-  release are rolled in any order: the extractions and the figure runs
-  wait for the first worker that takes them.
+  `prepare`, `page` and `assemble`, so one that is running when the
+  schema is migrated goes on reading pages, and the extractions and the
+  figure runs wait for the first worker of this release.
+- Upgrading from `v0.3.0`: roll the API first, which applies the sixth
+  migration, and the workers right after it. Once the schema is
+  migrated a `v0.3.0` Pod that starts or restarts does not come up,
+  since a process refuses a schema at another version than its own; the
+  ones already running go on until they are replaced. Rolling back to
+  `v0.3.0` needs the migration's down file applied first. The migration
+  waits up to 10 seconds for its locks and fails with nothing applied
+  when a transaction holds one of its tables for longer;
+  `docs/running.md` has the repair.
 - Changed: `POST /parses/{parse}/retry` is `409 conflict` while an
   extraction or a figure of the parse is queued or running. A retry
   writes again the pages that work reads.

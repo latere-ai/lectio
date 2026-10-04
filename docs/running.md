@@ -414,24 +414,39 @@ to the release by digest, and publishes the images as
 
 ### Rolling a release
 
-The API applies the schema when it starts, and the workers of the
-release before keep running against it until they are replaced. That
-needs no order. A worker names the kinds of task it runs in every
-exchange and is handed no other, and a worker of `v0.3.0`, which names
-none, is handed the tasks a parse is made of. So while a fleet is
-rolled the earlier workers go on reading pages, and the extractions and
-the figure runs wait in the queue for the first worker of the new
-release. A worker of the new release that starts before the API has
-applied the schema stops with what it needs, and starts when the schema
-is there.
+The API applies the schema when it starts. A process refuses a schema
+at another version than its own, so from that moment a Pod of the
+release before that starts, or restarts, does not come up: it says
+which version the schema is at and stops. The Pods of the release
+before that are running go on running:
 
-A migration that changes a table waits at most 5 seconds for the
-table's lock, so a transaction that holds a table for long cannot make
-every request wait behind the migration. When it cannot have the lock
-the migration fails with nothing applied, and the API stops and says
-the schema is dirty at the version it was going to. Nothing was
-written, so the repair is to set the recorded version back and start
-the API again when the table is free:
+- A worker names the kinds of task it runs in every exchange and is
+  handed no other. A worker of `v0.3.0` names none and is handed the
+  tasks a parse is made of, so it goes on reading pages, and the
+  extractions and the figure runs wait in the queue for the first
+  worker of the new release.
+- An API of `v0.3.0` goes on answering, and its delete of a parse
+  removes the parse as it did.
+
+So roll the API first and the workers right after it, and expect a Pod
+of the release before that is restarted in between to stay down until
+it is replaced. A worker of the new release that starts before the API
+has applied the schema stops the same way, and starts when the schema
+is there. Rolling the binary back to `v0.3.0` needs the schema taken
+back first, with the down file of the migration: the release before
+does not start against the newer schema.
+
+A migration that changes tables takes the lock every exchange takes,
+and then all the tables it changes at once, and only when all of them
+are free: it never waits for one while it holds another, so it is in no
+deadlock with a request, whatever order the request reads them in. It
+waits up to 5 seconds for the first and tries for up to 5 seconds for
+the tables, 10 seconds together, during which the workers' exchanges
+wait and the API answers. A transaction that holds one of the tables
+for longer makes the migration fail with nothing applied, and the API
+stops and says the schema is dirty at the version it was going to.
+Nothing was written, so the repair is to set the recorded version back
+and start the API again when the tables are free:
 
 ```sql
 UPDATE schema_migrations SET version = version - 1, dirty = false WHERE dirty;

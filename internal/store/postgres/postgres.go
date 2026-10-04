@@ -109,8 +109,8 @@ const (
 	pingSQL  = `SELECT 1`
 
 	parseOfSQL       = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1 AND p.owner = $2`
-	parseDeleteSQL   = `SELECT lectio_parse_delete($1, $2)`
-	parseDeleteAtSQL = `SELECT lectio_parse_delete($1, $2, $3)`
+	parseRetireSQL   = `SELECT lectio_parse_retire($1, $2)`
+	parseRetireAtSQL = `SELECT lectio_parse_retire($1, $2, $3)`
 
 	// parsesSQL reads one page of the parses of some owners, newest first.
 	// The owners are a JSON array bound as text, or the JSON null for every
@@ -1014,15 +1014,16 @@ func (s *Store) Parses(ctx context.Context, owners []string, f Filter, after str
 	return out, false, nil
 }
 
-// DeleteParse begins an owner's delete of a parse that has ended: the
-// parse's retention ends now, and its extractions and figures that are
-// queued or running are dropped, so nothing of the parse is claimed from
-// here on and every later settle of its work is refused. The caller then
+// DeleteParse begins an owner's delete of a parse that has ended, with
+// lectio_parse_retire: the parse's retention ends now, and its extractions
+// and figures that are queued or running are dropped, so nothing of the
+// parse is claimed from here on and every later settle of its work is
+// refused. The caller then
 // removes the parse's objects and calls ExpireParse for its rows. A delete
 // that stops between the steps leaves a parse whose retention has ended,
 // which the retention sweep removes, and never an object nothing names.
 func (s *Store) DeleteParse(ctx context.Context, owner, parseID string) error {
-	answer, err := s.text(ctx, parseDeleteSQL, parseDeleteAtSQL, owner, parseID)
+	answer, err := s.text(ctx, parseRetireSQL, parseRetireAtSQL, owner, parseID)
 	switch {
 	case err != nil:
 		return fmt.Errorf("store: deleting %s: %w", parseID, err)

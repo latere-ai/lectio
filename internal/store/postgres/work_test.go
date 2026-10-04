@@ -541,6 +541,118 @@ func TestAnExtractionStaysWithTheExtractorThatBeganIt(t *testing.T) {
 	})
 }
 
+// TestAnExtractionLeavesAnExtractorTheConfigurationDropped: an extraction
+// that has made a call stays with its extractor, and waits for it. An
+// extractor a process's configuration no longer holds is none to wait for:
+// when the pools are written without it, an extraction that stayed with it
+// is released to the chain, from the start when the chain is shorter than
+// its place in it, with the counters of its lanes moved, and is claimed for
+// an extractor that is there. One whose call was in flight for the dropped
+// extractor does not stay with it when the call ends. An extraction its
+// caller pinned is left as its caller asked: it waits.
+func TestAnExtractionLeavesAnExtractorTheConfigurationDropped(t *testing.T) {
+	logic(t, extractors(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		w := h.worker()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme"}, 1)
+		for _, name := range []string{"waiting", "calling", "moved"} {
+			h.field("prs_a", name, "")
+		}
+		h.field("prs_a", "pinned", "text")
+		claims := w.claim(4, 4)
+		byTask := map[string]tasks.Claim{}
+		for _, c := range claims {
+			byTask[c.Task] = c
+		}
+		// One stays with the first extractor and waits in the queue, one
+		// stays with it and is claimed again, one was declined by it and
+		// stays with the second, and one is pinned by its caller.
+		w.settle(step(byTask["extract-waiting"]), step(byTask["extract-calling"]), declined(byTask["extract-moved"], "schema_not_satisfied"), step(byTask["extract-pinned"]))
+		for _, c := range w.claim(4, 4) {
+			switch c.Task {
+			case "extract-calling":
+				byTask[c.Task] = c
+			case "extract-moved":
+				if c.Reader != "strong" {
+					t.Fatalf("a declined extraction was claimed for %s", c.Reader)
+				}
+				w.settle(step(c))
+			default:
+				held := ended(c, tasks.Returned, "")
+				held.Error = nil
+				w.settle(held)
+			}
+		}
+		if row := h.task("prs_a", "extract-moved"); !row.Stuck || row.Pin != "strong" || row.ChainAt != 1 {
+			t.Fatalf("an extraction that moved to the second extractor is %+v", row)
+		}
+
+		// A process starts with the second extractor alone.
+		only := readers(tasks.Pool{Reader: stub, MaxInFlight: 100}, tasks.Pool{Reader: "strong", MaxInFlight: 100, Cost: 5})
+		only.ReadChain, only.ExtractChain, only.DescribeChain = []string{stub}, []string{"strong"}, []string{"strong"}
+		if err := h.store.Configure(ctx, only); err != nil {
+			t.Fatal(err)
+		}
+		if row := h.task("prs_a", "extract-waiting"); row.Stuck || row.Pin != "" || row.Lane != "extract" || row.State != tasks.Queued {
+			t.Fatalf("an extraction that stayed with the dropped extractor is %+v", row)
+		}
+		if row := h.task("prs_a", "extract-calling"); row.Stuck || row.Pin != "" || row.State != tasks.Leased {
+			t.Fatalf("an extraction whose call is in flight for the dropped extractor is %+v", row)
+		}
+		// Its place in the chain was 1, and the chain now holds 1 extractor.
+		if row := h.task("prs_a", "extract-moved"); !row.Stuck || row.Pin != "strong" {
+			t.Fatalf("an extraction that stays with an extractor that is there is %+v", row)
+		}
+		if row := h.task("prs_a", "extract-pinned"); row.Stuck || row.Pin != "text" || row.Lane != "extract:text" {
+			t.Fatalf("an extraction its caller pinned is %+v", row)
+		}
+		h.consistent()
+
+		// The call in flight ends: it stays with no extractor.
+		w.settle(step(byTask["extract-calling"]))
+		if row := h.task("prs_a", "extract-calling"); row.Stuck || row.Pin != "" || row.Lane != "extract" {
+			t.Fatalf("after its call ended the extraction is %+v", row)
+		}
+		// The 3 that are not pinned are claimed for the extractor that is
+		// there, and the pinned one waits.
+		got := map[string]string{}
+		for _, c := range w.claim(4, 3) {
+			got[c.Task] = c.Reader
+		}
+		var steps []tasks.Settle
+		for _, c := range w.held {
+			steps = append(steps, step(c))
+		}
+		for _, task := range []string{"extract-waiting", "extract-calling", "extract-moved"} {
+			if got[task] != "strong" {
+				t.Fatalf("after the configuration changed the claims are %v", got)
+			}
+		}
+		h.consistent()
+
+		// The configuration changes back to the first extractor alone. The
+		// 3 stay with the second now, and are released: the one that was at
+		// the second place of a chain of 2 starts at the first of a chain
+		// of 1. The pinned one has its extractor again.
+		w.settle(steps...)
+		first := readers(tasks.Pool{Reader: stub, MaxInFlight: 100}, tasks.Pool{Reader: "text", MaxInFlight: 100, Cost: 2})
+		first.ReadChain, first.ExtractChain, first.DescribeChain = []string{stub}, []string{"text"}, nil
+		if err := h.store.Configure(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		if row := h.task("prs_a", "extract-moved"); row.Stuck || row.Pin != "" || row.ChainAt != 0 || row.Lane != "extract" {
+			t.Fatalf("an extraction past the end of a shorter chain is %+v", row)
+		}
+		h.consistent()
+		for _, c := range w.claim(4, 4) {
+			if c.Reader != "text" {
+				t.Fatalf("%s was claimed for %s", c.Task, c.Reader)
+			}
+		}
+		h.consistent()
+	})
+}
+
 // TestAWorkerOfTheReleaseBeforeRunsBesideThisOne: a fleet is rolled one
 // process at a time, so a worker that knows 3 kinds of task exchanges with
 // a store that holds 5. Such a worker names no kind, and is handed no
@@ -576,6 +688,13 @@ func TestAWorkerOfTheReleaseBeforeRunsBesideThisOne(t *testing.T) {
 		reply := partial.raw(tasks.Request{Free: 4, Kinds: []tasks.Kind{tasks.Prepare, tasks.Extract}})
 		if len(reply.Claims) != 1 || reply.Claims[0].Task != "extract-invoice" {
 			t.Fatalf("a worker that runs prepare and extract claimed %s", names(reply.Claims))
+		}
+
+		// A claim made with the arguments of the release before resolves,
+		// and is for the kinds of that release: an exchange that began in
+		// the function this release replaced ends as it began.
+		if got := value[string](h, `SELECT (lectio_claim($1, 0, true, s, $2)).p_claims::text FROM settings s`, before.id, h.now); got != "[]" {
+			t.Fatalf("a claim with the arguments of the release before answered %s", got)
 		}
 
 		// A worker of this release takes what is left: the prepare, and the
@@ -986,6 +1105,36 @@ func TestADeleteDropsTheWorkOnItsParse(t *testing.T) {
 		refused(t, "a delete of a parse that is not there", h.store.DeleteParse(ctx, "alice", "prs_deleted"), fault.ParseNotFound)
 		h.submit(postgres.Submission{Parse: "prs_running", Group: "acme", Owner: "alice"})
 		refused(t, "a delete of a parse that has not ended", h.store.DeleteParse(ctx, "alice", "prs_running"), fault.NotTerminal)
+
+		// An API of the release before removes a parse's objects and then
+		// its rows, with the statement of that release. The statement keeps
+		// that meaning: the parse is gone when it answers, with its work
+		// and their counters, and is not left listed with no object behind
+		// it for a sweep to find.
+		h.through(w, "prs_running", 1)
+		h.field("prs_running", "running", "")
+		h.figures("prs_running", "", false, "1.2")
+		leased := w.claim(1, 1)
+		before := `SELECT lectio_parse_delete($1, $2)`
+		if got := value[string](h, before, "bob", "prs_running"); got != "missing" {
+			t.Fatalf("the earlier delete of another owner's parse answered %s", got)
+		}
+		if got := value[string](h, before, "alice", "prs_running"); got != "deleted" {
+			t.Fatalf("the earlier delete answered %s", got)
+		}
+		for _, table := range []string{"parses", "tasks", "fields", "figures", "figure_runs"} {
+			if n := value[int](h, `SELECT count(*) FROM `+table); n != 0 {
+				t.Fatalf("after the earlier delete %d rows of %s are left", n, table)
+			}
+		}
+		if reply := w.raw(tasks.Request{}, step(leased[0])); len(reply.Refused) != 1 {
+			t.Fatalf("after the earlier delete the settle of its work was refused %v", reply.Refused)
+		}
+		h.submit(postgres.Submission{Parse: "prs_open", Group: "acme", Owner: "alice"})
+		if got := value[string](h, before, "alice", "prs_open"); got != "not_terminal" {
+			t.Fatalf("the earlier delete of a parse that has not ended answered %s", got)
+		}
+		h.consistent()
 	})
 }
 

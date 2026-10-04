@@ -256,7 +256,10 @@ lane that can run for it. A request that names none is from a worker
 of the release before the request had the member, and stands for
 `prepare`, `page` and `assemble`. The 2 releases then run side by
 side: the earlier workers read pages, and the extractions and the
-figures wait for the first worker that names them.
+figures wait for the first worker that names them. That holds for the
+workers that are running when the schema is migrated. One that starts
+after it does not start: a process refuses a schema at another version
+than its own, so the API is rolled first and the workers after it.
 
 The same member lets a worker decline a kind for a while. A worker
 whose process can hold no reply to a schema, because both of its checks
@@ -526,7 +529,9 @@ is removed in 3 steps.
 
 1. **Its work is stopped.** One statement, under the lock the exchange
    takes, drops the parse's extractions and figures that are queued or
-   leased. A delete also ends the parse's retention at that instant.
+   leased: `lectio_parse_retire` for a delete, which also ends the
+   parse's retention at that instant, and `lectio_parse_close` for a
+   parse whose retention has ended.
    From here nothing of the parse is claimed, nothing new is asked of
    it, since an extraction, a figure run and a retry are refused for a
    parse whose retention has ended, and every settle of its work is
@@ -556,6 +561,13 @@ The rows go last so that a process that stops between the steps leaves
 a parse whose retention has ended, which the retention sweep lists and
 removes from the first step on, and never an object that no row names.
 A caller that asks the delete again finds the parse and finishes it.
+
+`lectio_parse_delete`, the one statement the release before deleted a
+parse with after it had removed the objects, keeps its name and its
+meaning: it removes the rows. An API of that release that still
+answers, while a fleet is rolled, deletes a parse for good, and does
+not leave one that is listed with no object behind it. It has the
+window the 3 steps close, as that release had.
 
 What is left for a sweep of orphaned outputs, which is not built: a
 worker that is killed, or cannot reach the object store, after it wrote
@@ -698,10 +710,19 @@ Built:
   `continue`, `lectio_field_create` and `lectio_figures_start`, the
   release of the extractions that waited when a parse ends, the
   deadline of an extraction and of a run, and the delete that drops
-  their tasks. It waits at most 5 seconds for the lock of a table it
-  changes: the migrator sends a file as one statement, so the file is
-  one transaction, and a file that cannot have a lock fails whole and
-  applies nothing. The sweeps for settled tasks past their retention and
+  their tasks. It takes its locks so that it waits a bounded time and
+  is in no deadlock: the lock the exchange takes first, waited for up
+  to 5 seconds while it holds nothing, and then the 3 tables it changes
+  at once and without waiting, tried for up to 5 seconds. The
+  statements of the control plane read those tables in more than one
+  order, so no order of taking them one by one is safe from all of
+  them, and a migration that never waits while it holds a lock is in no
+  circle of waits. The migrator sends a file as one statement, so the
+  file is one transaction, and a file that cannot have its locks fails
+  whole and applies nothing. With the exchange's lock held to the end,
+  no exchange is in the middle of a function the file replaces when it
+  commits, and the claim keeps a default for its new argument so that
+  a call with the earlier arguments resolves in any case. The sweeps for settled tasks past their retention and
   for orphaned outputs are not built, so the rows of a parse that ended
   with a failed page or was stopped stay until the parse is deleted.
 

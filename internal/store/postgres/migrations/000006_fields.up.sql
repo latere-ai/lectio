@@ -15,13 +15,50 @@
 -- own. A task of either kind exists only while it can run, and its row is
 -- removed when it ends.
 
--- A statement below that changes a table takes the table's exclusive lock,
--- and while it waits for that lock every statement that reads the table
--- waits behind it. So none of them waits longer than 5 seconds: a migration
--- that cannot have a lock fails, and applies nothing, since the migrator
--- sends this file as one statement and so as one transaction. The setting
--- ends with that transaction.
+-- The locks of this migration. It changes 3 tables that every statement of
+-- the control plane reads, and a statement that changes a table takes the
+-- table's exclusive lock. 2 things follow, and the 3 statements below hold
+-- them off.
+--
+-- A lock that is waited for makes every statement that reads the table wait
+-- behind it. So the migration waits a bounded time: 5 seconds for the lock
+-- every exchange takes, and 5 seconds for the tables. A migration that
+-- cannot have them fails and applies nothing, since the migrator sends this
+-- file as one statement and so as one transaction.
+--
+-- And a migration that takes its tables one by one can be a party to a
+-- deadlock: it holds the first and waits for the second, while a statement
+-- that read the second waits for the first. The statements of the control
+-- plane read these tables in more than one order, so no order of taking
+-- them is safe from every one. So the tables are taken at once and without
+-- waiting: either all 3 are free and the migration has them, or it holds
+-- none and tries again. It never waits for a lock while it holds one, so
+-- it is in no circle of waits, whatever order a reader takes them in.
+--
+-- The lock of the exchange is taken first, while the migration holds
+-- nothing. It keeps the workers' exchanges, which read all 3 tables, from
+-- running until this commits, so the tables fall free between the reads of
+-- the API, and no exchange is in the middle of a function this file
+-- replaces when it does.
 SET LOCAL lock_timeout = '5s';
+SELECT lectio_lock();
+DO $$
+DECLARE
+  v_until timestamptz := clock_timestamp() + interval '5 seconds';
+BEGIN
+  LOOP
+    BEGIN
+      LOCK TABLE settings, parses, tasks IN ACCESS EXCLUSIVE MODE NOWAIT;
+      RETURN;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() >= v_until THEN
+        RAISE EXCEPTION 'lectio: the tables this migration changes were in use for 5 seconds'
+          USING ERRCODE = 'lock_not_available';
+      END IF;
+      PERFORM pg_sleep(0.02);
+    END;
+  END LOOP;
+END $$;
 
 -- The policy's order of describers for a figure, beside its orders for a
 -- page and for an extraction.
@@ -136,12 +173,20 @@ $$;
 -- lectio_configure writes what the process was configured with: the queue's
 -- settings, the class weights, and one pool per reader. A pool that exists
 -- keeps its breaker state, and a pool whose reader is gone from the
--- configuration is removed with its scopes. p_config is a JSON document
--- bound as text.
+-- configuration is removed with its scopes. A task that stayed with such a
+-- reader is released, under the lock the exchange takes, since its lane
+-- changes. A task its caller pinned to a reader is left: the caller named
+-- that reader, another process may be configured with it, and the task
+-- ends at its deadline as a page pinned to a reader that never admits a
+-- call does. p_config is a JSON document bound as text.
 CREATE OR REPLACE FUNCTION lectio_configure(p_config text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
-  c jsonb := p_config::jsonb;
+  c     jsonb := p_config::jsonb;
+  v_cfg settings%ROWTYPE;
+  v_t   tasks%ROWTYPE;
+  v_at  integer;
 BEGIN
+  PERFORM lectio_lock();
   INSERT INTO settings (one, lease, sweep_interval, attempts, expiries, backoff_base, backoff_cap,
                         pool_recovery, pool_resume, pool_pause, breaker_failures, breaker_open,
                         scope_by_group, read_chain, extract_chain, describe_chain)
@@ -185,6 +230,27 @@ BEGIN
    WHERE reader NOT IN (SELECT r->>'reader' FROM jsonb_array_elements(c->'pools') r);
   DELETE FROM pools
    WHERE reader NOT IN (SELECT r->>'reader' FROM jsonb_array_elements(c->'pools') r);
+
+  -- A task that stays with a reader the configuration no longer holds has
+  -- no reader to wait for. Its pin was the store's and no caller's, so it
+  -- is released to the chain of its kind, from its place in it or from the
+  -- start when the chain is now shorter, and the counter of its lane moves
+  -- with it.
+  SELECT * INTO STRICT v_cfg FROM settings;
+  FOR v_t IN
+    SELECT * FROM tasks t
+     WHERE t.stuck AND NOT EXISTS (SELECT 1 FROM pools p WHERE p.reader = t.pin)
+     ORDER BY t.parse_id, t.task_id FOR UPDATE
+  LOOP
+    v_at := CASE WHEN v_t.chain_at < coalesce(array_length(lectio_chain(v_t.kind, v_cfg), 1), 0)
+                 THEN v_t.chain_at ELSE 0 END;
+    IF v_t.state = 'queued' THEN
+      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, v_t.lane, -1, 0);
+      PERFORM lectio_count(v_t.group_id, v_t.project_id, v_t.class, lectio_lane(v_t.kind, NULL, v_at), 1, 0);
+    END IF;
+    UPDATE tasks SET pin = NULL, stuck = false, chain_at = v_at
+     WHERE parse_id = v_t.parse_id AND task_id = v_t.task_id;
+  END LOOP;
 END $$;
 
 -- lectio_lanes answers the lanes whose tasks can run when the readers of
@@ -876,7 +942,9 @@ BEGIN
       -- What it has so far was cut for that reader's input: another reader
       -- would start it over, and the calls made so far would be paid again
       -- each time a pause or a breaker moved the task between 2 readers.
-      IF v_t.pin IS NULL AND v_t.reader IS NOT NULL THEN
+      -- A reader the configuration dropped while the call ran is none to
+      -- stay with.
+      IF v_t.pin IS NULL AND v_t.reader IS NOT NULL AND EXISTS (SELECT 1 FROM pools WHERE reader = v_t.reader) THEN
         v_pin   := v_t.reader;
         v_stuck := true;
       END IF;
@@ -1012,10 +1080,12 @@ END $$;
 -- which names no kind and runs prepare, page and assemble, is handed no
 -- extraction and no figure while it runs beside the workers that take them.
 -- The function has an argument more than the one it replaces, which is
--- dropped: the exchange is the one caller.
+-- dropped. The argument has a default, the kinds of the release before, so
+-- a call with the arguments that release made still resolves.
 DROP FUNCTION lectio_claim(text, integer, boolean, settings, timestamptz);
 CREATE FUNCTION lectio_claim(p_worker text, p_free integer, p_idle boolean, p_cfg settings, p_now timestamptz,
-                             p_kinds text[], OUT p_claims jsonb, OUT p_sleep timestamptz)
+                             p_kinds text[] DEFAULT ARRAY['prepare', 'page', 'assemble'],
+                             OUT p_claims jsonb, OUT p_sleep timestamptz)
 LANGUAGE plpgsql AS $$
 DECLARE
   v_free   integer := p_free;
@@ -1533,17 +1603,12 @@ BEGIN
   RETURN true;
 END $$;
 
--- lectio_parse_delete is the first step of an owner's delete of a parse that
--- has ended: it ends the parse's retention now and drops its extractions
--- and its figures as lectio_parse_close does. The caller then removes the
--- parse's objects and calls lectio_parse_expire. It answers deleted,
--- missing, or not_terminal.
---
--- The function has an argument more than the one it replaces, which is
--- dropped. A call with the 2 arguments of the release before still
--- resolves: the parse it deletes is then removed by the retention sweep.
-DROP FUNCTION lectio_parse_delete(text, text);
-CREATE FUNCTION lectio_parse_delete(p_owner text, p_parse text, p_now timestamptz DEFAULT NULL)
+-- lectio_parse_retire is the first step of an owner's delete of a parse
+-- that has ended: it ends the parse's retention now and drops its
+-- extractions and its figures as lectio_parse_close does. The caller then
+-- removes the parse's objects and calls lectio_parse_expire. It answers
+-- deleted, missing, or not_terminal.
+CREATE FUNCTION lectio_parse_retire(p_owner text, p_parse text, p_now timestamptz DEFAULT NULL)
 RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   v_now timestamptz := coalesce(p_now, now());
@@ -1554,6 +1619,33 @@ BEGIN
   IF FOUND THEN
     PERFORM lectio_drop(p_parse, 'extract', NULL);
     PERFORM lectio_drop(p_parse, 'figure', NULL);
+    RETURN 'deleted';
+  END IF;
+  IF EXISTS (SELECT 1 FROM parses WHERE parse_id = p_parse AND owner = p_owner) THEN
+    RETURN 'not_terminal';
+  END IF;
+  RETURN 'missing';
+END $$;
+
+-- lectio_parse_delete removes an owner's parse that has ended, with its
+-- rows, in one statement. This release does not call it: its delete is the
+-- 3 steps above. The release before does, after it has removed the parse's
+-- objects, and while a fleet is rolled, or after a binary was rolled back,
+-- an API of that release still answers deletes. It is kept with the
+-- meaning it has there, so such a delete removes the parse and does not
+-- leave one that is listed with no object behind it. The work on the parse
+-- is dropped first, with its counters, as every removal drops it. It
+-- answers deleted, missing, or not_terminal.
+CREATE OR REPLACE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
+RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM lectio_lock();
+  PERFORM 1 FROM parses
+    WHERE parse_id = p_parse AND owner = p_owner AND state IN ('succeeded', 'failed', 'canceled') FOR UPDATE;
+  IF FOUND THEN
+    PERFORM lectio_drop(p_parse, 'extract', NULL);
+    PERFORM lectio_drop(p_parse, 'figure', NULL);
+    DELETE FROM parses WHERE parse_id = p_parse;
     RETURN 'deleted';
   END IF;
   IF EXISTS (SELECT 1 FROM parses WHERE parse_id = p_parse AND owner = p_owner) THEN

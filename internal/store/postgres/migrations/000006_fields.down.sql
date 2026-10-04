@@ -9,9 +9,29 @@
 -- replaced is the one an earlier migration wrote again, and what the meter
 -- recorded of extractions and figures stays in it.
 
--- No statement below waits longer than 5 seconds for a table's lock, as in
--- the up file: this file too is one transaction, and fails whole.
+-- The locks of this file are taken as the up file takes its own: the lock
+-- of the exchange first, then every table the file changes or drops, at
+-- once and without waiting, for 5 seconds. This file too is one
+-- transaction, and fails whole.
 SET LOCAL lock_timeout = '5s';
+SELECT lectio_lock();
+DO $$
+DECLARE
+  v_until timestamptz := clock_timestamp() + interval '5 seconds';
+BEGIN
+  LOOP
+    BEGIN
+      LOCK TABLE settings, parses, tasks, fields, figure_runs, figures, descriptions IN ACCESS EXCLUSIVE MODE NOWAIT;
+      RETURN;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() >= v_until THEN
+        RAISE EXCEPTION 'lectio: the tables this migration changes were in use for 5 seconds'
+          USING ERRCODE = 'lock_not_available';
+      END IF;
+      PERFORM pg_sleep(0.02);
+    END;
+  END LOOP;
+END $$;
 
 SELECT lectio_drop(t.parse_id, t.kind, NULL)
   FROM (SELECT DISTINCT parse_id, kind FROM tasks WHERE kind IN ('extract', 'figure')) t;
@@ -28,7 +48,7 @@ DROP FUNCTION IF EXISTS lectio_fields_release(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_drop(text, text, text);
 DROP FUNCTION IF EXISTS lectio_runs(text[], text[]);
 DROP FUNCTION IF EXISTS lectio_parse_close(text, timestamptz);
-DROP FUNCTION IF EXISTS lectio_parse_delete(text, text, timestamptz);
+DROP FUNCTION IF EXISTS lectio_parse_retire(text, text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_claim(text, integer, boolean, settings, timestamptz, text[]);
 
 -- lectio_configure, as 000001 wrote it.
@@ -1000,7 +1020,7 @@ END $$;
 -- lectio_parse_delete removes an owner's parse that has ended, with its
 -- tasks and the reads kept from it. The caller removes the parse's objects
 -- first. It answers deleted, missing, or not_terminal.
-CREATE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
+CREATE OR REPLACE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
 RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM parses WHERE parse_id = p_parse AND owner = p_owner AND state IN ('succeeded', 'failed', 'canceled');

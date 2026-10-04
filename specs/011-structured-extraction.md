@@ -431,6 +431,18 @@ text is its own, starts its calls over, and stays there. A chain is
 walked in one direction, so an extraction starts over at most once for
 each extractor of it.
 
+An extractor that a process's configuration no longer holds is none to
+wait for. When a process writes its pools without it, an extraction
+that stayed with it is released to the chain, from its place in it or
+from the start when the chain is now shorter, and an extraction whose
+call was in flight for it does not stay with it. An extraction whose
+request named its extractor is not released: the caller asked for that
+one, another process may still be configured with it, and failing the
+field on a configuration that the next process to start may put back
+would lose work for a rollout. It waits, and ends at its deadline with
+`deadline_exceeded`, as a page pinned to a reader that never admits a
+call does ([[004-durable-tasks]]).
+
 The task is the parse's: it runs in the parse's group and project, in
 its class and at its priority, behind the parse's own `prepare` and
 `assemble` and ahead of the group's pages of that priority. It is
@@ -686,6 +698,7 @@ Remaining:
 | A check answers 64 findings at most, each bounded in what it says | `TestWhatAFindingSaysIsBounded` |
 | With a validator that never returns, 2 extractions fail their fields with `schema_not_satisfied` after the deadline and give their slots back, a third is returned with no attempt spent, a page is read beside them, and the worker names no extraction until a check ends | `TestACheckThatDoesNotEndGivesItsTaskBack` of `internal/extract`; `TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker` of `internal/worker` |
 | With 2 extractors in the chain, an extraction whose first call was answered by the first waits when that one is paused between 2 claims, while an extraction that has made no call is taken by the second; it is claimed for the first again when the pause ends, and moves to the second, once, only when the first declines it or its replies are not usable | `TestAnExtractionStaysWithTheExtractorThatBeganIt` at the store, with a virtual clock |
+| An extraction that stayed with an extractor the configuration dropped is released to the chain with its lane's counters moved, one whose call was in flight for it stays with none, and one its caller pinned waits | `TestAnExtractionLeavesAnExtractorTheConfigurationDropped` at the store |
 | Two schemas requested against one succeeded parse, one after the other, produce two fields and no reader call | `TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain`, through the API over the durable backend, with a reader that counts its calls |
 | For a fixture invoice and a stub text model, the result validates against the schema and every citation resolves to a block whose text contains the value | the same test, reading each citation with `resolve=true` and the block it names |
 | A reply that violates the schema is repaired within two retries or the field is recorded `failed` with the validator's errors; tokens of all attempts are in usage | `TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails`, through the API; `TestAReplyThatFailsValidationIsRepairedInTheNextClaim` of `internal/worker`; `TestAReplyThatFailsIsRepairedTwiceAndThenTheFieldFails` of `internal/extract` |
