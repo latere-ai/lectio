@@ -74,6 +74,30 @@ refused before it is pushed.
   page a `heading`, with its text, place and ref unchanged and its level
   below the title's in the outline. A parse that has ended is not
   assembled again, so its pages keep the kinds they have.
+- Added: a reader that reads a PDF page from the text the file carries,
+  with no model call. A Reader document with `adapter: text` names no
+  endpoint, no model and no key; named first in a Policy's
+  `read.chain`, it reads every page it can read without guessing and
+  the reader after it reads the rest. It builds paragraphs, headings by
+  the size and the weight of their type, list items, tables whose
+  ruling closes every cell, and a figure where the page paints one,
+  each with its box. It declines, at the cost of one call to the next
+  reader, a scan with or without a recognition layer, a page that is
+  mostly picture, a table set without ruling, text side by side that is
+  not columns of prose, text set at an angle, and text whose characters
+  have no Unicode or do not read as text. A parse that names a `text`
+  reader gets it alone and fails the pages it declines with
+  `page_unreadable`. Changed in the contract: a page's `source`, and
+  its entry in the document, has a third value, `text_layer`, beside
+  `reader` and `native`. Such a page names its `reader` and no `model`,
+  and its `usage` is one page and no token; it counts as one page
+  against a group's pages for a day. A client that switches on `source`
+  needs the new case. In the Go packages: `reader.Description` has
+  `Text`, `reader.Page` has `Text`, `reader.Result` has `TextLayer`,
+  and `document.SourceTextLayer` is the new source. A `text` reader's
+  `maxInFlight` is 64 unless its document sets it. On the typeset file
+  of the quality corpus the reader alone is within the bars a model is
+  held to: 0.55% character error, 97.4% of kinds, every table cell.
 
 ## v0.2.0 - 2026-10-04
 
