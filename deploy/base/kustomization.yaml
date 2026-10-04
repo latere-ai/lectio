@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The base of every installation (specs/016-distribution.md): one
+# Deployment for each role of lectiod, the Service in front of the API, the
+# account both roles run as, the network policy around each role, and the
+# disruption budget of the API.
+#
+# It names no namespace, so an overlay names one, and no image registry:
+# the reference is the placeholder `lectiod`, which an overlay or the
+# release pipeline points at the published image with an `images` entry.
+# The deploy archive of a release carries this file with that entry
+# appended and the image pinned to the tag by digest.
+#
+# Nothing an installation chooses is here. Its settings are the ConfigMap
+# `lectiod`, its readers and policy the ConfigMap `lectiod-readers`, and
+# its credentials the Secrets deploy/README.md lists. An overlay carries
+# the 2 ConfigMaps and an operator applies the Secrets by hand, so a Pod
+# applied without them waits and never starts on a default.
+#
+# The conversion sidecar is not here. An installation that converts adds
+# deploy/components/converter; one that does not keeps refusing the
+# formats that need it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - worker.yaml
+  - service.yaml
+  - networkpolicy.yaml
+  - pdb.yaml

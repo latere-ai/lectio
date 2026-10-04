@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The boundary around each role. Both policies name both directions, so
+# for the Pods they select every connection is refused unless a rule below
+# admits it. The cluster's network plugin has to enforce NetworkPolicy,
+# egress included, for any of this to hold.
+#
+# The rules are written as generic ports and not as destinations, because
+# the destinations are the installation's: this base cannot name the
+# namespace of an ingress controller, the address of a database, or the
+# host of a model endpoint. An overlay that can name them narrows these 2
+# documents and nothing else.
+#
+# A port in a rule is the destination Pod's own, after a Service's address
+# translation, and not the Service's port. A database whose Pod listens
+# off 5432, a pooler on 6432, an object store on 9000 or a model gateway
+# inside the cluster on 8080 is refused until an overlay adds its port.
+#
+# The kubelet's probes are not subject to policy, so the internal listener
+# is in no ingress rule. An installation that scrapes it admits its
+# scraper to port 8081.
+---
+# The API. Inbound is the public listener, from anywhere in the cluster an
+# ingress controller sits. Outbound is what it dials: cluster DNS, the
+# database, and over TLS the issuers' key sets, the authorizer, the object
+# store, and a source a caller submits by address. A source served over
+# plain HTTP on port 80 is refused until an overlay admits it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: api
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 5432
+          protocol: TCP
+---
+# The workers. Inbound is nothing: no rule, so no connection is admitted.
+# Outbound is cluster DNS, the database, and over TLS the object store and
+# the model endpoint. The conversion sidecar is not among them here; the
+# component that deploys it admits the workers to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod-worker
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: worker
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 5432
+          protocol: TCP

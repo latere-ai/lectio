@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# An installation without conversion: the base in the namespace of
+# deploy/bootstrap, with the 2 ConfigMaps the base reads. Every value in
+# them is an example; an installation writes its own. The credentials are
+# the Secrets of deploy/bootstrap, applied by hand before this.
+#
+# The image is the placeholder the base names. Set it to the release you
+# are installing:
+#
+#   kustomize edit set image lectiod=ghcr.io/<owner>/lectiod:<tag>
+#
+# The deploy archive of a release carries the base with that reference
+# already pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lectio
+resources:
+  - ../../base
+  - configmap.yaml
+  - readers.yaml

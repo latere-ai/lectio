@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The public listener of the API: the contract under /v1, which is what an
+# ingress routes. The internal listener is the cluster's, for the
+# kubelet's probes and for a metrics scrape, and is not routed here. The
+# workers have no Service: nothing dials them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lectiod
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: api
+  ports:
+    - name: public
+      port: 8080
+      targetPort: public

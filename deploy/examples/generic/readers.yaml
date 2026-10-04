@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The readers and the policy: which models read a page, and in what order
+# they are tried. The base mounts this ConfigMap at /etc/lectio, where
+# LECTIO_CONFIG points, and both roles read every .yaml, .yml and .json
+# key of it at start, in name order. A change takes a new roll to reach
+# the Pods.
+#
+# One Reader and one Policy, with example values. The endpoint is any
+# that speaks chat completions with image input, a gateway included, and
+# the model is a name that endpoint knows. The key the endpoint is called
+# with is not here: it is LECTIO_MODEL_KEY, in the Secret lectiod-model.
+# specs/008-readers.md lists every member of both documents.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lectiod-readers
+data:
+  readers.yaml: |
+    apiVersion: lectio.latere.ai/v1
+    kind: Reader
+    metadata: { name: default }
+    spec:
+      adapter: chat
+      endpoint: https://models.example.com/v1
+      model: example-vision-model
+      image: { dpi: 160, longEdge: 2048, format: png }
+      constrained: true
+    ---
+    apiVersion: lectio.latere.ai/v1
+    kind: Policy
+    metadata: { name: default }
+    spec:
+      read: { chain: [default] }

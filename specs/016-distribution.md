@@ -65,9 +65,10 @@ internal/store/postgres/  the durable task store, and its migrations
 internal/tasks/           the protocol a worker and a task store share
 internal/testfixtures/    files the tests read
 internal/version/         the build's version, stamped by the linker
-deploy/base/              manifests for a cluster, with no host or account in them (not built)
+deploy/base/              manifests for a cluster, with no host or account in them
+deploy/bootstrap/         the namespace and the template of the Secrets, applied by hand
 deploy/converter/         the image of the conversion sidecar
-deploy/examples/          a compose file: Postgres, an object store, lectiod, the stubs (not built)
+deploy/examples/          an example overlay; a compose file: Postgres, an object store, lectiod, the stubs (not built)
 docs/                     running it, the configuration reference, the API guide (not built)
 test/                     conformance, end-to-end, soak, fixtures (not built)
 tools/                    generators and checks (not built)
@@ -131,6 +132,7 @@ whether the binary reads the variable today.
 | `LECTIO_ROLE` | `all` | [[001-architecture]] | no |
 | `LECTIO_ADDR` | `:8080` | [[003-api]] | yes |
 | `LECTIO_BASE_PATH` | `/v1` | [[003-api]] | yes |
+| `LECTIO_INTERNAL_ADDR` | `:8081` | [[015-observability]] | no |
 | `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes, only to say what is missing |
 | `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes: read, and opened by no command yet |
 | `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] | no |
@@ -238,9 +240,13 @@ end-to-end, simulation or soak tiers.
 
 ### Deploying
 
-`deploy/base` holds a Deployment for each role, a Service, and a
-ConfigMap for readers and the policy, with every host, bucket and
-secret name left to an overlay the operator writes. The API and the
+`deploy/base` holds a Deployment for each role, the Service of the API,
+the account both run as, a network policy for each role and the API's
+disruption budget, and nothing an installation chooses. The settings
+and the Reader and Policy documents are 2 ConfigMaps an overlay
+carries, and the credentials are Secrets an operator applies by hand;
+the base reads each by name, and `deploy/README.md` lists the names and
+the keys. Every host, bucket and namespace is the overlay's. The API and the
 workers scale independently; the workers' count times `LECTIO_WORKERS`
 is the fleet's task concurrency, and the pools bound what reaches a
 model regardless. Migrations are embedded and run by the API at start
@@ -299,11 +305,17 @@ Built:
   capability dropped. It is built by hand; no workflow builds or
   publishes it.
 
+- `deploy/base`, `deploy/bootstrap` and `deploy/examples/generic`: the
+  manifests of both roles, written against the listeners, the probes
+  and the settings of the durable server, which no build has yet, so no
+  cluster has run them. They render with `kubectl kustomize`.
+
 Remaining:
 
-- `lectio-stubs` and its image, the rest of `deploy/`, `docs/`, the
-  generated configuration reference and its test, the image tests, and
-  the release workflow.
+- `lectio-stubs` and its image, the conversion sidecar's manifests, the
+  compose file, `docs/`, the generated configuration reference and its
+  test, the image tests, the tests of the deploy tree, and the release
+  workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end
   tests of the API and the development server in one process, and the
   tests of `internal/store/postgres`, which start one Postgres and one

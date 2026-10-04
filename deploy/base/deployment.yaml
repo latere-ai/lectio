@@ -1,0 +1,174 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The API: the HTTP contract, admission and results. Its replicas hold no
+# state of their own: a parse and its tasks are rows in the database and
+# every byte is in the object store, so replicas are interchangeable and a
+# roll replaces them one at a time with none missing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectiod
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  # The component is part of the selector: the workers carry the same name,
+  # and 2 Deployments that selected one set of Pods would each count the
+  # other's as its own.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lectiod
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: lectiod
+      automountServiceAccountToken: false
+      # What a stop takes: the preStop sleep below, then
+      # LECTIO_SHUTDOWN_GRACE for the open requests, then the margin that is
+      # left. An installation that raises the grace raises this with it.
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lectiod
+          # The placeholder the overlay or the release pipeline points at
+          # the published image with an `images` entry. No registry is
+          # written here: a release publishes under the namespace of the
+          # account that cut the tag.
+          image: lectiod
+          # Everything an installation chooses that is not a credential:
+          # the issuers, the bucket and where it is, the limits. The
+          # overlay carries the ConfigMap; a missing one is a Pod that
+          # does not start, which is the right answer for an API with no
+          # issuer and no bucket. An entry of `env` below wins over a key
+          # of the same name here.
+          envFrom:
+            - configMapRef:
+                name: lectiod
+          env:
+            - name: LECTIO_ROLE
+              value: "api"
+            - name: LECTIO_ADDR
+              value: ":8080"
+            - name: LECTIO_INTERNAL_ADDR
+              value: ":8081"
+            # The audience this server answers to. Every token it accepts
+            # carries it. An installation whose callers hold tokens
+            # addressed to a second name lists both, the core's own first.
+            - name: LECTIO_OIDC_AUDIENCE
+              value: "lectio"
+            # The directory the Reader and Policy documents are mounted in.
+            - name: LECTIO_CONFIG
+              value: "/etc/lectio"
+            # How long open requests get to finish after a stop signal. It
+            # is written here, and not left to the default, so that it sits
+            # beside the termination grace that has to cover it.
+            - name: LECTIO_SHUTDOWN_GRACE
+              value: "25s"
+            # The database. The API runs the migrations at start over the
+            # direct endpoint, because the migrator holds a session lock
+            # across its statements. The pooled endpoint is optional: with
+            # none, the serving path opens the direct one.
+            - name: LECTIO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-db
+                  key: LECTIO_DATABASE_URL
+            - name: LECTIO_DATABASE_POOL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-db
+                  key: LECTIO_DATABASE_POOL_URL
+                  optional: true
+            # The key pair the object store is reached with.
+            - name: LECTIO_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-s3
+                  key: LECTIO_S3_ACCESS_KEY
+            - name: LECTIO_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-s3
+                  key: LECTIO_S3_SECRET_KEY
+            # The endpoint that decides what a caller may do, and the bearer
+            # lectiod sends it. Optional: with no Secret the owner policy
+            # decides. The pair lives in one Secret and rotates together.
+            - name: LECTIO_AUTHORIZER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-authorizer
+                  key: LECTIO_AUTHORIZER_URL
+                  optional: true
+            - name: LECTIO_AUTHORIZER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-authorizer
+                  key: LECTIO_AUTHORIZER_TOKEN
+                  optional: true
+          ports:
+            - name: public
+              containerPort: 8080
+            - name: internal
+              containerPort: 8081
+          # The probes are on the internal listener and are separate on
+          # purpose: a database or an object store that does not answer
+          # takes the Pod out of rotation and must not restart it.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: internal
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: internal
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          # A Pod that is told to stop is still in the Service for the
+          # moment its removal takes to reach every proxy. The sleep keeps
+          # the listener open through that moment, so no connection is sent
+          # to a server that already closed. It is the kubelet's own sleep
+          # and runs no program: the image has no shell and no sleep.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          # The root file system is read only and no volume is writable:
+          # lectiod writes no file.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: readers
+              mountPath: /etc/lectio
+              readOnly: true
+      volumes:
+        - name: readers
+          configMap:
+            name: lectiod-readers

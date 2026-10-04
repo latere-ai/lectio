@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The namespace an installation runs in, applied once by an operator and
+# in no kustomization: a namespace outlives every apply of what is in it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lectio

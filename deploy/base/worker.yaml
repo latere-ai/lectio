@@ -1,0 +1,151 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The workers: the same image in the role that runs tasks. A worker serves
+# no caller and holds no caller's token; it reaches the database, the
+# object store and the model endpoint, and coordinates with the others
+# through the database alone. Their count times LECTIO_WORKERS is the
+# fleet's task concurrency, and the API and the workers scale apart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectiod-worker
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  # A new worker starts before an old one stops, so a roll never lowers
+  # the fleet's task concurrency. The worker that stops returns its
+  # running tasks to the queue, and another takes them.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lectiod
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: lectiod
+      automountServiceAccountToken: false
+      # On a stop signal a worker stops claiming and gives its running
+      # tasks LECTIO_SHUTDOWN_GRACE to finish, then returns the rest to the
+      # queue. The grace here covers that with a margin. An installation
+      # that raises the one raises the other with it.
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lectiod
+          # The placeholder of deployment.yaml: one image, 2 roles.
+          image: lectiod
+          # The installation's settings, the same ConfigMap the API reads.
+          # An entry of `env` below wins over a key of the same name here.
+          envFrom:
+            - configMapRef:
+                name: lectiod
+          env:
+            - name: LECTIO_ROLE
+              value: "worker"
+            - name: LECTIO_INTERNAL_ADDR
+              value: ":8081"
+            # The directory the Reader and Policy documents are mounted in.
+            - name: LECTIO_CONFIG
+              value: "/etc/lectio"
+            # How long running tasks get to finish after a stop signal,
+            # beside the termination grace that has to cover it.
+            - name: LECTIO_SHUTDOWN_GRACE
+              value: "25s"
+            # The database. Migrations are the API's; a worker serves from
+            # the pooled endpoint where there is one, and from the direct
+            # one otherwise.
+            - name: LECTIO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-db
+                  key: LECTIO_DATABASE_URL
+            - name: LECTIO_DATABASE_POOL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-db
+                  key: LECTIO_DATABASE_POOL_URL
+                  optional: true
+            # The key pair the object store is reached with.
+            - name: LECTIO_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-s3
+                  key: LECTIO_S3_ACCESS_KEY
+            - name: LECTIO_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-s3
+                  key: LECTIO_S3_SECRET_KEY
+            # The key the readers are called with. Only the workers call a
+            # model, so only the workers hold it. Optional: an endpoint
+            # that takes no key needs none.
+            - name: LECTIO_MODEL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-model
+                  key: LECTIO_MODEL_KEY
+                  optional: true
+          # No public port: nothing dials a worker. The internal listener
+          # answers the kubelet's probes.
+          ports:
+            - name: internal
+              containerPort: 8081
+          # Readiness is the database, the object store and a recent
+          # exchange. Liveness is the process. A worker whose readers are
+          # all paused is ready: that is the pool's to handle, and not a
+          # reason to restart.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: internal
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: internal
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          # A worker renders PDF pages in process, several at once, and
+          # each rendering engine is bounded in memory on its own. The
+          # limit leaves room for those and for the file being prepared.
+          # An installation sizes it by the files it parses.
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          # The root file system is read only and no volume is writable:
+          # pages are rendered in memory and every result goes to the
+          # object store.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: readers
+              mountPath: /etc/lectio
+              readOnly: true
+      volumes:
+        - name: readers
+          configMap:
+            name: lectiod-readers

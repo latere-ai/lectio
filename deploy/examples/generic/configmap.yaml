@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# Everything this installation chooses that is not a credential. Both
+# roles read it. The credentials are not here: they are the Secrets of
+# deploy/bootstrap.
+#
+# A key here is a variable of the configuration table in
+# specs/016-distribution.md, and any variable of that table may be added.
+# The ones left out take their defaults: LECTIO_WORKERS, the tasks one
+# worker runs at once, and LECTIO_MAX_FILE_BYTES and LECTIO_MAX_PAGES, the
+# largest file and the most pages a parse takes, are the 3 an installation
+# most often sets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lectiod
+data:
+  # The identity providers whose tokens the API accepts, as a comma list.
+  LECTIO_OIDC_ISSUERS: "https://issuer.example"
+  # The bucket every byte is kept in, and the prefix under which this
+  # installation keeps its own, so that one bucket can serve several.
+  LECTIO_BUCKET: "lectio"
+  LECTIO_BUCKET_PREFIX: "lectio/"
+  # Where the object store answers, and how a bucket is addressed there. A
+  # store that serves buckets as a path of one host, which is most that
+  # are not a cloud's own, takes path style. The region is part of every
+  # request's signature; a store with no regions of its own expects the
+  # one below.
+  LECTIO_S3_ENDPOINT: "https://objects.example.com"
+  LECTIO_S3_REGION: "us-east-1"
+  LECTIO_S3_PATH_STYLE: "true"

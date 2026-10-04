@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# One replica of the API may be down at a time, so a node drain never
+# takes the API away. The workers have no budget: a drained worker returns
+# its tasks to the queue and the others take them.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lectiod
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: api
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: api
