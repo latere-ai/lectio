@@ -124,6 +124,7 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		}
 		w = &worker.Worker{
 			Store: st, Objects: objects, Pipeline: pipeline, Readers: readers.Readers, Costs: costs,
+			Extractors: readers.Extractors, Describers: readers.Describers,
 			Keys:  keySource(ctx, s, log),
 			Slots: s.Workers, Lease: s.Lease, Flush: s.Flush, Poll: s.Poll, Grace: s.Grace,
 			CacheBytes: s.CacheBytes, Retention: st, Sweep: s.SweepInterval, Log: log,
@@ -152,6 +153,8 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		handlers := &httpapi.Server{
 			Backend: &durable.Backend{
 				Store: st, Objects: objects, Readers: readers.Readers, Chain: readers.Chain,
+				Describers: readers.Describers, DescribeChain: readers.DescribeChain,
+				Extractors: readers.Extractors, ExtractChain: readers.ExtractChain,
 				MaxDeadline: s.MaxDeadline, Log: log,
 			},
 			Auth: who.Authenticator, Authz: who.Authorizer,

@@ -102,6 +102,17 @@ type Backend interface {
 	Figures(ctx context.Context, p store.Parse, opt run.FigureOptions) error
 	FigureRun(ctx context.Context, parseID string) (run store.FigureRun, started bool, err error)
 	WaitFigures(ctx context.Context, parseID string, d time.Duration)
+
+	// CreateField asks an extraction of a parse and returns it as that
+	// leaves it: pending. A name the parse already has is refused with
+	// conflict, and an extractor that is not configured, or none when the
+	// policy names none, with reader_not_found.
+	CreateField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error)
+	// Field returns one extraction of a parse. ok is false when the parse
+	// has none of the name.
+	Field(ctx context.Context, p store.Parse, name string) (f store.Field, ok bool, err error)
+	// Fields returns the extractions of a parse, by name.
+	Fields(ctx context.Context, p store.Parse) ([]store.Field, error)
 }
 
 // Memory is the Backend of a development server: everything is kept in the
@@ -202,6 +213,22 @@ func (m *Memory) Usage(context.Context, store.UsageQuery) ([]store.UsageSum, err
 // for every owner, no group and no pool.
 func (m *Memory) Queue(context.Context, []string) (store.Queue, error) {
 	return store.Queue{}, undurable("the view of the queue")
+}
+
+// CreateField is not built in a development server: an extraction is a
+// task of the task store, which holds what it has between 2 of its calls.
+func (m *Memory) CreateField(context.Context, store.Parse, store.FieldRequest) (store.Field, error) {
+	return store.Field{}, undurable("an extraction")
+}
+
+// Field is not built in a development server, as CreateField is not.
+func (m *Memory) Field(context.Context, store.Parse, string) (store.Field, bool, error) {
+	return store.Field{}, false, undurable("an extraction")
+}
+
+// Fields is not built in a development server, as CreateField is not.
+func (m *Memory) Fields(context.Context, store.Parse) ([]store.Field, error) {
+	return nil, undurable("an extraction")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

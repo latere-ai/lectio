@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"slices"
 	"testing"
 	"time"
@@ -42,6 +41,12 @@ type durableBench struct {
 	// idle starts no worker: the case claims the tasks itself, to see the
 	// order they are dispatched in.
 	idle bool
+
+	// extractors are what fills a schema in the servers a case starts, by
+	// name, and extractChain the routing policy's order of them. The
+	// in-process runner extracts nothing, so a case sets them here.
+	extractors   map[string]reader.Extractor
+	extractChain []string
 }
 
 // durably runs the servers a test starts over the durable backend, until
@@ -86,7 +91,12 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 	if runner.Attempts > 0 {
 		settings.Attempts = runner.Attempts
 	}
-	for _, name := range slices.Sorted(mapKeys(runner.Readers)) {
+	// A reader, a describer and an extractor of one name share one pool.
+	names := slices.Collect(mapKeys(runner.Readers))
+	names = slices.AppendSeq(names, mapKeys(runner.Describers))
+	names = slices.AppendSeq(names, mapKeys(d.extractors))
+	slices.Sort(names)
+	for _, name := range slices.Compact(names) {
 		settings.Pools = append(settings.Pools, tasks.Pool{Reader: name, MaxInFlight: 64})
 	}
 	for _, name := range runner.Chain {
@@ -94,6 +104,12 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 			settings.ReadChain = append(settings.ReadChain, name)
 		}
 	}
+	for _, name := range runner.DescribeChain {
+		if runner.Describers[name] != nil {
+			settings.DescribeChain = append(settings.DescribeChain, name)
+		}
+	}
+	settings.ExtractChain = d.extractChain
 	st, err := postgres.Open(ctx, dsn, postgres.Options{Settings: settings})
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
@@ -101,6 +117,8 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 	objects := blob.NewMemory()
 	s.Backend = &durable.Backend{
 		Store: st, Objects: objects, Readers: runner.Readers, Chain: settings.ReadChain,
+		Describers: runner.Describers, DescribeChain: settings.DescribeChain,
+		Extractors: d.extractors, ExtractChain: settings.ExtractChain,
 		MaxDeadline: s.MaxDeadline, Poll: 5 * time.Millisecond, Log: slog.New(slog.DiscardHandler),
 	}
 	if d.idle {
@@ -108,6 +126,7 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 	}
 	w := &worker.Worker{
 		Store: st, Objects: objects, Pipeline: runner.Pipeline, Readers: runner.Readers,
+		Describers: runner.Describers, Extractors: d.extractors,
 		Slots: runner.Workers, Lease: settings.Lease, Flush: 2 * time.Millisecond, Poll: 5 * time.Millisecond,
 		Grace: 50 * time.Millisecond, CacheBytes: 64 << 20, Log: slog.New(slog.DiscardHandler),
 	}
@@ -164,24 +183,12 @@ func TestTheContractHoldsOverTheDurableBackend(t *testing.T) {
 		{"every route asks its action", TestEveryRouteAsksItsAction},
 		{"what a question carries", TestWhatAQuestionCarries},
 		{"a deny and an outage answer before anything is done", TestADenyAndAnOutageAnswerBeforeAnythingIsDone},
+		{"a block's image is its region of the page", TestABlocksImageIsItsRegionOfThePage},
+		{"figures are described on request", TestFiguresAreDescribedOnRequest},
+		{"a figure run is one at a time and says what it lost", TestAFigureRunIsOneAtATimeAndSaysWhatItLost},
 	} {
 		t.Run(tc.name, tc.run)
 	}
-
-	// Describing figures is not built over the durable control plane: the
-	// request is routed, authenticated and answered 501, and the listing
-	// shows the figures with no run.
-	t.Run("figures are listed and not described", func(t *testing.T) {
-		e := serve(t, nil)
-		pid := e.parsed(e.upload("scan.png", sheet(t)), "")["id"].(string)
-		if got := e.do("POST", "/parses/"+pid+"/figures", nil); got.status != http.StatusNotImplemented || got.code(t) != "not_implemented" {
-			t.Fatalf("describing figures: %d %s", got.status, got.body)
-		}
-		listed := e.do("GET", "/parses/"+pid+"/figures", nil)
-		if listed.status != http.StatusOK || listed.json(t)["run"] != nil || listed.json(t)["figures"] == nil {
-			t.Fatalf("the figures of a parse: %d %s", listed.status, listed.body)
-		}
-	})
 }
 
 // failing is an object store whose calls fail when a case says so.

@@ -13,6 +13,12 @@
 // written one. A parse that ended without assemble, because it was
 // canceled, ran out of time or could not start, has no index: its document
 // is made from its task rows when it is read.
+//
+// An extraction and a run that describes figures are tasks of a parse that
+// has ended (specs/003-api.md, specs/011-structured-extraction.md). The
+// backend queues them and reads what they wrote: a field's row and its
+// object, and a figure's description, which is an object of its own and is
+// written onto the figure's block whenever the block is read.
 package durable
 
 import (
@@ -30,7 +36,9 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/objects"
 	"latere.ai/x/lectio/internal/render"
 	"latere.ai/x/lectio/internal/run"
@@ -54,8 +62,19 @@ type Backend struct {
 	Readers map[string]reader.Reader
 	Chain   []string
 
-	// MaxDeadline is the deadline of a parse submitted with none, so
-	// nothing waits without bound. Zero takes one hour.
+	// Describers and Extractors are what says what a figure shows and what
+	// fills a schema, by the names of the readers they are configured
+	// with, and DescribeChain and ExtractChain the routing policy's order
+	// for each, as the workers have them. The API calls none of them: it
+	// reads which exist, and the version a describer names itself with.
+	Describers    map[string]reader.Describer
+	DescribeChain []string
+	Extractors    map[string]reader.Extractor
+	ExtractChain  []string
+
+	// MaxDeadline is the deadline of a parse submitted with none, and how
+	// long an extraction and a figure run have, so nothing waits without
+	// bound. Zero takes one hour.
 	MaxDeadline time.Duration
 
 	// Poll is how often a held submit reads its parse. Zero takes
@@ -148,10 +167,7 @@ func (b *Backend) DeleteFile(ctx context.Context, owner, id string) error {
 // parse's own. The parse's deadline is the caller's or the longest one
 // allowed.
 func (b *Backend) Submit(ctx context.Context, p store.Parse, a store.Admission, key, digest string) (store.Parse, bool, error) {
-	deadline := b.MaxDeadline
-	if deadline <= 0 {
-		deadline = time.Hour
-	}
+	deadline := b.deadline()
 	if p.DeadlineAt != nil {
 		deadline = p.DeadlineAt.Sub(p.CreatedAt)
 	}
@@ -177,6 +193,15 @@ func (b *Backend) Submit(ctx context.Context, p store.Parse, a store.Admission, 
 	}
 	stored, err := b.Parse(ctx, id)
 	return stored, created, err
+}
+
+// deadline is the longest work waits when its request names no time: a
+// parse submitted with none, an extraction, and a figure run.
+func (b *Backend) deadline() time.Duration {
+	if b.MaxDeadline <= 0 {
+		return time.Hour
+	}
+	return b.MaxDeadline
 }
 
 // readBase names what reading a page of the parse means, less the page: the
@@ -229,7 +254,7 @@ func view(row postgres.Parse) store.Parse {
 		PagesTotal: row.PagesTotal, PagesDone: row.PagesDone, PagesFailed: row.PagesFailed, PagesReused: row.PagesReused,
 		Usage:     document.Usage{Pages: row.PagesDone, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens},
 		CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, DeadlineAt: &row.DeadlineAt,
-		IndexKey: row.Index,
+		IndexKey: row.Index, Fields: row.Fields, Described: row.Described,
 	}
 	if len(row.Labels) > 0 {
 		p.Labels = row.Labels
@@ -339,26 +364,10 @@ func (b *Backend) DeleteParse(ctx context.Context, owner, id string) error {
 // Wait reads the parse's row until it has ended. There is no bus between
 // the processes: whichever worker ends the parse, the row says so.
 func (b *Backend) Wait(ctx context.Context, owner, id string, d time.Duration) {
-	poll := b.Poll
-	if poll <= 0 {
-		poll = DefaultPoll
-	}
-	deadline := time.NewTimer(d)
-	defer deadline.Stop()
-	tick := time.NewTicker(poll)
-	defer tick.Stop()
-	for {
-		if row, err := b.Store.ParseOf(ctx, owner, id); err != nil || row.Terminal() {
-			return
-		}
-		select {
-		case <-tick.C:
-		case <-deadline.C:
-			return
-		case <-ctx.Done():
-			return
-		}
-	}
+	b.until(ctx, d, func() bool {
+		row, err := b.Store.ParseOf(ctx, owner, id)
+		return err != nil || row.Terminal()
+	})
 }
 
 // located is where a page of a parse is: the key of its stored result, or
@@ -505,11 +514,40 @@ func (b *Backend) Summaries(ctx context.Context, p store.Parse) ([]document.Page
 	return out, nil
 }
 
-// Page returns one page of a parse. ok is false for a page that has no
-// result yet.
+// Page returns one page of a parse, its figures with the descriptions they
+// were given. ok is false for a page that has no result yet.
 func (b *Backend) Page(ctx context.Context, p store.Parse, n int) (document.Page, bool, error) {
 	stored, ok, err := b.stored(ctx, p, n)
-	return stored.Page, ok, err
+	if err != nil || !ok {
+		return document.Page{}, false, err
+	}
+	pages := []document.Page{stored.Page}
+	if err := b.describe(ctx, p, pages); err != nil {
+		return document.Page{}, false, err
+	}
+	return pages[0], true, nil
+}
+
+// describe writes onto the figures of pages the descriptions a run gave
+// them. A page's stored result is as its reader left it, and a description
+// is an object of its own, so every read of a block goes through here. A
+// parse none of whose figures was described costs no statement.
+func (b *Backend) describe(ctx context.Context, p store.Parse, pages []document.Page) error {
+	if p.Described == 0 {
+		return nil
+	}
+	got, started, err := b.Store.Figures(ctx, p.ID)
+	if err != nil || !started {
+		return err
+	}
+	keys := map[string]string{}
+	for _, f := range got.Figures {
+		keys[f.Ref] = f.Output
+	}
+	if err := objects.Describe(ctx, b.Objects, pages, keys); err != nil {
+		return fmt.Errorf("durable: reading a figure's description: %w", err)
+	}
+	return nil
 }
 
 // stored returns one page's result as it is kept.
@@ -525,9 +563,10 @@ func (b *Backend) stored(ctx context.Context, p store.Parse, n int) (objects.Pag
 	return stored[0], true, nil
 }
 
-// Pages returns every page of a parse that has a result, with its blocks.
-// For a parse that ended without assemble, the running headers and footers
-// are marked here, as assemble would have marked them.
+// Pages returns every page of a parse that has a result, with its blocks,
+// its figures with the descriptions they were given. For a parse that
+// ended without assemble, the running headers and footers are marked here,
+// as assemble would have marked them.
 func (b *Backend) Pages(ctx context.Context, p store.Parse) ([]document.Page, error) {
 	at, err := b.locate(ctx, p, 0)
 	if err != nil {
@@ -544,7 +583,7 @@ func (b *Backend) Pages(ctx context.Context, p store.Parse) ([]document.Page, er
 	if p.IndexKey == "" && p.Terminal() {
 		assemble.Document(p.ID, out)
 	}
-	return out, nil
+	return out, b.describe(ctx, p, out)
 }
 
 // Image returns the image of a page that a reader saw.
@@ -571,7 +610,8 @@ func (b *Backend) Document(ctx context.Context, p store.Parse) (document.Documen
 		if err != nil {
 			return document.Document{}, false, fmt.Errorf("durable: reading the index of %s: %w", p.ID, err)
 		}
-		return idx.Document, true, nil
+		idx.Fields, err = b.filled(ctx, p)
+		return idx.Document, err == nil, err
 	}
 	if !p.Terminal() {
 		return document.Document{}, false, nil
@@ -590,7 +630,28 @@ func (b *Backend) Document(ctx context.Context, p store.Parse) (document.Documen
 	}
 	doc := assemble.Document(p.ID, pages)
 	doc.Renderings = []string{"markdown", "text"}
-	return doc, true, nil
+	doc.Fields, err = b.filled(ctx, p)
+	return doc, err == nil, err
+}
+
+// filled names the extractions of a parse that were filled, which a
+// document lists beside its renderings. A parse nobody asked an extraction
+// of costs no statement.
+func (b *Backend) filled(ctx context.Context, p store.Parse) ([]string, error) {
+	if p.Fields == 0 {
+		return nil, nil
+	}
+	rows, err := b.Store.Fields(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, row := range rows {
+		if row.State == postgres.FieldSucceeded {
+			names = append(names, row.Name)
+		}
+	}
+	return names, nil
 }
 
 // Usage reads the meter the task store writes as tasks settle.
@@ -644,16 +705,201 @@ func queueClasses(classes []postgres.ClassQueue) []store.QueueClass {
 	return out
 }
 
-// Figures is not built over the durable control plane: describing figures
-// is a task of its own there, and that task does not exist yet.
-func (b *Backend) Figures(context.Context, store.Parse, run.FigureOptions) error {
-	return fault.New(fault.NotImplemented, "describing figures is not built in the durable server yet")
+// Figures starts a run that describes figures of a parse that has ended:
+// every figure block on the selected pages that has a box, sits on a page
+// read from an image, and has no description yet, or has one when the run
+// describes again. The run and a task per figure are written in one
+// transaction, so when this returns the figures are queued with the pages
+// of every parse, in the parse's group. A run is refused while an earlier
+// one of the parse is in flight, for a parse that has not ended, and when
+// no describer is configured or the one named is not.
+func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOptions) error {
+	if !p.Terminal() {
+		return fault.New(fault.NotTerminal, "parse %s has not ended", p.ID)
+	}
+	chain := b.DescribeChain
+	if opt.Describer != "" {
+		chain = []string{opt.Describer}
+	}
+	chain = slices.DeleteFunc(slices.Clone(chain), func(name string) bool { return b.Describers[name] == nil })
+	if len(chain) == 0 {
+		if opt.Describer != "" {
+			return fault.New(fault.ReaderNotFound, "no describer is named %q", opt.Describer)
+		}
+		return fault.New(fault.ReaderNotFound, "no describer is configured")
+	}
+
+	at, err := b.locate(ctx, p, 0)
+	if err != nil {
+		return err
+	}
+	stored, err := b.read(ctx, at)
+	if err != nil {
+		return err
+	}
+	pages := make([]document.Page, len(stored))
+	for i, s := range stored {
+		pages[i] = s.Page
+	}
+	// A figure an earlier run described is known by its description.
+	if err := b.describe(ctx, p, pages); err != nil {
+		return err
+	}
+	// The file's bytes name a description so that it is not made twice. A
+	// file that is gone names none, and its figures are described.
+	sha := ""
+	if file, err := b.Store.File(ctx, p.File); err == nil {
+		sha = file.SHA256
+	} else if fault.CodeOf(err) != fault.FileNotFound {
+		return err
+	}
+	start := postgres.FigureStart{Parse: p.ID, Pin: opt.Describer, Redo: opt.Redo, Deadline: b.deadline()}
+	for i, page := range pages {
+		// A page that was not read from an image has nothing to cut a
+		// figure from, and one that failed or was skipped holds no block.
+		if at[i].key == "" || stored[i].Image == "" || (opt.Pages != nil && !slices.Contains(opt.Pages, page.Number)) {
+			continue
+		}
+		for _, f := range figures.Of(page, opt.Redo) {
+			start.Figures = append(start.Figures, postgres.FigureAsk{
+				Ref: f.Ref, Page: f.Page, PageKey: at[i].key, FigureKey: figures.Key(sha, f, p.Languages, chain, b.Describers),
+			})
+		}
+	}
+	return b.Store.StartFigures(ctx, start)
 }
 
-// FigureRun reports no run: none can be started.
-func (b *Backend) FigureRun(context.Context, string) (store.FigureRun, bool, error) {
-	return store.FigureRun{}, false, nil
+// FigureRun returns the run of a parse that describes its figures, when
+// one was started: what the task store counted of it, and why each figure
+// it lost was lost.
+func (b *Backend) FigureRun(ctx context.Context, parseID string) (store.FigureRun, bool, error) {
+	got, started, err := b.Store.Figures(ctx, parseID)
+	if err != nil || !started {
+		return store.FigureRun{}, false, err
+	}
+	out := store.FigureRun{
+		State: got.Run.State, Total: got.Run.Total, Done: got.Run.Done, Failed: got.Run.Failed, Reused: got.Run.Reused,
+		Usage:     document.Usage{InputTokens: got.Run.InputTokens, OutputTokens: got.Run.OutputTokens},
+		StartedAt: got.Run.StartedAt, FinishedAt: got.Run.FinishedAt,
+	}
+	for _, f := range got.Figures {
+		if f.State == postgres.FigureFailed && f.Error != nil {
+			if out.Failures == nil {
+				out.Failures = map[string]document.Error{}
+			}
+			out.Failures[f.Ref] = document.Error{Code: f.Error.Code, Detail: f.Error.Detail}
+		}
+	}
+	return out, true, nil
 }
 
-// WaitFigures returns at once: there is no run to wait for.
-func (b *Backend) WaitFigures(context.Context, string, time.Duration) {}
+// WaitFigures reads the run's row until the run has ended. There is no bus
+// between the processes: whichever worker describes the last figure, the
+// row says so.
+func (b *Backend) WaitFigures(ctx context.Context, parseID string, d time.Duration) {
+	b.until(ctx, d, func() bool {
+		got, started, err := b.Store.Figures(ctx, parseID)
+		return err != nil || !started || got.Run.State != postgres.RunRunning
+	})
+}
+
+// until reads a condition at the poll interval until it holds, d has
+// passed, or ctx ends.
+func (b *Backend) until(ctx context.Context, d time.Duration, ended func() bool) {
+	poll := b.Poll
+	if poll <= 0 {
+		poll = DefaultPoll
+	}
+	deadline := time.NewTimer(d)
+	defer deadline.Stop()
+	tick := time.NewTicker(poll)
+	defer tick.Stop()
+	for !ended() {
+		select {
+		case <-tick.C:
+		case <-deadline.C:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// CreateField asks an extraction of a parse: its row, and its task at once
+// when the parse has ended. One asked of a parse that runs waits for the
+// parse to end. The extractor is the one the request names, or the first
+// of the routing policy's extract chain that has room when its task is
+// claimed.
+func (b *Backend) CreateField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error) {
+	switch {
+	case f.Extractor != "" && b.Extractors[f.Extractor] == nil:
+		return store.Field{}, fault.New(fault.ReaderNotFound, "no extractor is named %q", f.Extractor)
+	case f.Extractor == "" && !slices.ContainsFunc(b.ExtractChain, func(name string) bool { return b.Extractors[name] != nil }):
+		return store.Field{}, fault.New(fault.ReaderNotFound, "no extractor is configured")
+	}
+	request, err := json.Marshal(tasks.Field{Schema: f.Schema, Instructions: f.Instructions, Citations: f.Citations})
+	if err != nil {
+		return store.Field{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
+	}
+	err = b.Store.CreateField(ctx, postgres.FieldRequest{
+		Parse: p.ID, Name: f.Name, Request: string(request), Pin: f.Extractor, Deadline: b.deadline(),
+	})
+	if err != nil {
+		return store.Field{}, err
+	}
+	return store.Field{Name: f.Name, State: store.FieldPending}, nil
+}
+
+// Field returns one extraction of a parse: its row, and for one that was
+// filled its object and its citations from the object store.
+func (b *Backend) Field(ctx context.Context, p store.Parse, name string) (store.Field, bool, error) {
+	row, ok, err := b.Store.Field(ctx, p.ID, name)
+	if err != nil || !ok {
+		return store.Field{}, false, err
+	}
+	f, err := b.field(ctx, row)
+	return f, err == nil, err
+}
+
+// Fields returns the extractions of a parse, by name, each as Field
+// returns it.
+func (b *Backend) Fields(ctx context.Context, p store.Parse) ([]store.Field, error) {
+	rows, err := b.Store.Fields(ctx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.Field, len(rows))
+	for i, row := range rows {
+		if out[i], err = b.field(ctx, row); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// field is an extraction's row as the API's field, with its result read
+// from the object store when it has one.
+func (b *Backend) field(ctx context.Context, row postgres.Field) (store.Field, error) {
+	f := store.Field{
+		Name: row.Name, State: row.State,
+		Usage: document.Usage{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens},
+	}
+	if row.Error != nil {
+		f.Error = &document.Error{Code: row.Error.Code, Detail: row.Error.Detail}
+	}
+	var said extract.Summary
+	if len(row.Result) > 0 {
+		if err := json.Unmarshal(row.Result, &said); err != nil {
+			return store.Field{}, fmt.Errorf("durable: the row of the extraction %s of %s holds no summary: %w", row.Name, row.Parse, err)
+		}
+		f.Model, f.Constrained, f.Attempts, f.Windows = said.Model, said.Constrained, said.Attempts, said.Windows
+	}
+	if row.State == postgres.FieldSucceeded && row.Output != "" {
+		var result extract.Result
+		if err := objects.Get(ctx, b.Objects, row.Output, &result); err != nil {
+			return store.Field{}, fmt.Errorf("durable: reading the extraction %s of %s: %w", row.Name, row.Parse, err)
+		}
+		f.Data, f.Citations = result.Data, result.Citations
+	}
+	return f, nil
+}

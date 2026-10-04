@@ -125,6 +125,13 @@ type Parse struct {
 	// sets neither.
 	IndexKey      string
 	ManifestToken int64
+
+	// Fields and Described are a durable backend's own too: how many
+	// extractions were asked of the parse, and how many of its figures
+	// hold a description. With neither there is nothing to read beside the
+	// parse's pages.
+	Fields    int
+	Described int
 }
 
 // Admission is what a parse is admitted with: the group and the project it
@@ -551,6 +558,57 @@ type FigureRun struct {
 
 	StartedAt  time.Time
 	FinishedAt *time.Time
+}
+
+// The states of an extraction.
+const (
+	FieldPending   = "pending"
+	FieldSucceeded = "succeeded"
+	FieldFailed    = "failed"
+)
+
+// FieldRequest is one extraction a caller asks of a parse
+// (specs/011-structured-extraction.md).
+type FieldRequest struct {
+	// Name identifies the extraction within its parse.
+	Name string
+	// Schema is the caller's JSON Schema, as it was sent, and Instructions
+	// the caller's guidance for the model.
+	Schema       []byte
+	Instructions string
+	// Citations says whether each value names the blocks it was read from.
+	Citations bool
+	// Extractor names the one extractor to use. Empty takes the routing
+	// policy's chain.
+	Extractor string
+}
+
+// Field is one extraction of a parse, and where it stands. It is pending
+// from its request until its task ends, whether it waits for its parse to
+// end, for its turn, or for a model.
+type Field struct {
+	Name  string
+	State string
+
+	// Data is the object in the shape of the schema, and Citations the
+	// refs of the blocks each of its values was read from, by JSON pointer.
+	// Both are set once the extraction succeeded.
+	Data      []byte
+	Citations map[string][]string
+
+	// Model is what answered, Constrained whether the schema was sent to
+	// be enforced in decoding, Attempts how many times the model was asked
+	// for a reply that satisfies the schema, and Windows how many parts the
+	// document was read in. They are known once the extraction has ended.
+	Model       string
+	Constrained bool
+	Attempts    int
+	Windows     int
+
+	// Usage is what the extraction's calls consumed, and Error why it
+	// failed.
+	Usage document.Usage
+	Error *document.Error
 }
 
 // StartFigureRun records a run for a parse. It is refused while an earlier

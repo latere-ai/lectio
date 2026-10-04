@@ -129,29 +129,13 @@ func (s *Server) Routes() []Route {
 		{"POST", "/parses/{parse}/figures", false, s.createFigures},
 		{"GET", "/parses/{parse}/figures", false, s.listFigures},
 		{"GET", "/parses/{parse}/chunks", false, s.listChunks},
-		{"POST", "/parses/{parse}/fields", true, s.plannedOnParse},
-		{"GET", "/parses/{parse}/fields", true, s.plannedOnParse},
-		{"GET", "/parses/{parse}/fields/{name}", true, s.plannedOnParse},
+		{"POST", "/parses/{parse}/fields", false, s.createField},
+		{"GET", "/parses/{parse}/fields", false, s.listFields},
+		{"GET", "/parses/{parse}/fields/{name}", false, s.getField},
 		{"GET", "/readers", false, s.listReaders},
 		{"GET", "/usage", false, s.getUsage},
 		{"GET", "/queue", false, s.getQueue},
 	}
-}
-
-// errPlanned is the answer of an operation the contract has and the server
-// does not build yet.
-func errPlanned() error {
-	return fault.New(fault.NotImplemented, "this operation is part of the contract and is not built yet")
-}
-
-// plannedOnParse answers a planned operation on a parse. It asks as the
-// built operation will, so what a caller may not do is refused today and
-// not on the day the operation is built.
-func (s *Server) plannedOnParse(_ http.ResponseWriter, r *http.Request, c call) error {
-	if _, _, err := s.parse(r, c); err != nil {
-		return err
-	}
-	return errPlanned()
 }
 
 // ask puts the route's question about a resource to the authorizer. An

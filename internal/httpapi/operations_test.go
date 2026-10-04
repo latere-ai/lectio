@@ -257,25 +257,38 @@ func fieldOf(t *testing.T, r reply) string {
 	return field
 }
 
-// TestADevelopmentServerBuildsNothingOverTheTaskStore: the 4 operations
+// TestADevelopmentServerBuildsNothingOverTheTaskStore: the 7 operations
 // that are built over the task store are routed and authenticated in a
 // development server, ask their action, and answer 501, which the contract
-// lists for each of them.
+// lists for each of them: a retry, the event stream, the meter, the view
+// of the queue, and the 3 of an extraction. An extraction is checked as the
+// contract says before it is answered, so a request that is malformed is
+// told so by either server.
 func TestADevelopmentServerBuildsNothingOverTheTaskStore(t *testing.T) {
 	e := serve(t, nil)
 	pid := e.parsed(e.upload("scan.png", sheet(t)), "")["id"].(string)
-	for _, route := range []string{"POST /parses/" + pid + "/retry", "GET /parses/" + pid + "/events", "GET /usage", "GET /queue"} {
+	for _, route := range []string{
+		"POST /parses/" + pid + "/retry", "GET /parses/" + pid + "/events", "GET /usage", "GET /queue",
+		"POST /parses/" + pid + "/fields", "GET /parses/" + pid + "/fields", "GET /parses/" + pid + "/fields/invoice",
+	} {
 		method, path, _ := strings.Cut(route, " ")
-		got := e.do(method, path, nil)
+		var body any
+		if strings.HasSuffix(route, "/fields") && method == "POST" {
+			body = `{"name":"invoice","schema":{"type":"object"}}`
+		}
+		got := e.do(method, path, body)
 		if got.status != http.StatusNotImplemented || got.code(t) != "not_implemented" {
 			t.Errorf("%s in a development server: %d %s", route, got.status, got.body)
 		}
-		if got := e.as("").do(method, path, nil); got.status != http.StatusUnauthorized {
+		if got := e.as("").do(method, path, body); got.status != http.StatusUnauthorized {
 			t.Errorf("%s with no token: %d %s", route, got.status, got.body)
 		}
 	}
 	if got := e.as("bob-token").do("POST", "/parses/"+pid+"/retry", nil); got.status != http.StatusNotFound {
 		t.Errorf("a retry of another caller's parse in a development server: %d %s", got.status, got.body)
+	}
+	if got := e.do("POST", "/parses/"+pid+"/fields", `{"name":"invoice","schema":{"type":"array"}}`); got.status != http.StatusBadRequest || got.code(t) != "invalid_schema" {
+		t.Errorf("a schema that is refused, in a development server: %d %s", got.status, got.body)
 	}
 }
 

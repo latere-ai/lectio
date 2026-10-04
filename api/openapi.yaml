@@ -21,8 +21,9 @@ info:
 
     A body with a field this document does not describe is refused with
     `unknown_field`. A route marked `x-lectio-status: planned` is part of the
-    contract and answers `501 not_implemented` until it is built. A route
-    that one kind of server does not build yet says so and lists the `501`.
+    contract and answers `501 not_implemented` until it is built; none is
+    marked today. A route that one kind of server does not build says so
+    and lists the `501`.
 
     Every error has the same shape: one `code` to branch on, one `message`
     for a person, and `details` for a developer. Any operation may answer
@@ -231,8 +232,10 @@ paths:
         A parse that has not ended is `not_terminal`. One with nothing to
         read again is `conflict`: no page of it failed, or it ended
         before its pages were all read, by a cancel, its deadline or a
-        file that could not be prepared. Submit such a file again. The
-        parse stays in its group: a group that already holds as many
+        file that could not be prepared. Submit such a file again. A
+        parse of which an extraction or a figure is queued or running is
+        `conflict` too, until that work has ended: a retry writes again
+        the pages it reads. The parse stays in its group: a group that already holds as many
         parses that have not ended as it may is `queue_full`, and one
         whose day does not hold the failed pages is `budget_exhausted`.
 
@@ -491,9 +494,10 @@ paths:
         `200` when it ended. A run succeeds when it described any figure
         it set out to; a figure it lost says why in the listing.
 
-        A server that keeps its work in a database does not describe
-        figures yet and answers `501 not_implemented`; a development
-        server does.
+        Each figure is one call, queued with the pages of every parse and
+        read with the key its parse's pages are read with. A run has as
+        long as a parse submitted with no deadline has: the figures it
+        has not described by then are lost to it.
       parameters:
         - name: Prefer
           in: header
@@ -510,7 +514,6 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
-        "501": { $ref: "#/components/responses/Error" }
     get:
       tags: [figures]
       operationId: listFigures
@@ -556,14 +559,36 @@ paths:
     post:
       tags: [fields]
       operationId: createField
-      x-lectio-status: planned
       summary: Extract an object
       description: |
         Extract an object in the shape of a schema.
 
-        May be requested while the parse is running; it waits for the
-        document. Reads no page again. A second request with a name already
-        used is `conflict`.
+        The object is filled from the document's text by a text model,
+        and each value in it cites the blocks it was read from. A value
+        the document does not state is left out and is never made up, so
+        an object that lacks a member its schema requires fails the
+        extraction with `schema_not_satisfied`. The extraction is a
+        request against a parse and no option of a submit: a new schema
+        needs no new parse and reads no page again.
+
+        The schema is checked when the request arrives. One that does not
+        compile, is larger than 64 KiB, nests deeper than 16 levels, is
+        of another dialect than draft 2020-12, does not describe an
+        object at its root, or refers to anything outside itself is
+        `invalid_schema`. A second request with a name the parse already
+        has is `conflict`, and so is one for a parse that holds 64
+        extractions. With no extractor configured, or one named that is
+        not, it is `reader_not_found`.
+
+        Answers `202` with the extraction, `pending`. It may be requested
+        while the parse is running: it waits for the parse to end, and
+        then runs over the document the parse ended with, which is every
+        page that was read. It is read with the key its parse's pages are
+        read with, and has as long from when it is queued as a parse
+        submitted with no deadline has.
+
+        A development server does not extract and answers `501
+        not_implemented`.
       requestBody:
         required: true
         content:
@@ -578,8 +603,11 @@ paths:
     get:
       tags: [fields]
       operationId: listFields
-      x-lectio-status: planned
       summary: List a parse's extractions
+      description: |
+        List the extractions of a parse, by name, each as it stands.
+
+        A development server answers `501 not_implemented`.
       responses:
         "200": { description: The extractions., content: { application/json: { schema: { $ref: "#/components/schemas/FieldList" } } } }
         "404": { $ref: "#/components/responses/Error" }
@@ -592,8 +620,15 @@ paths:
     get:
       tags: [fields]
       operationId: getField
-      x-lectio-status: planned
       summary: Read one extraction
+      description: |
+        Read one extraction of a parse.
+
+        It is `pending` from its request until it ends, `succeeded` with
+        its object and its citations, or `failed` with why. A parse with
+        no extraction of the name is `not_found`.
+
+        A development server answers `501 not_implemented`.
       parameters:
         - name: resolve
           in: query
@@ -601,6 +636,7 @@ paths:
           schema: { type: boolean, default: false }
       responses:
         "200": { description: The extraction., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
 
@@ -1200,18 +1236,35 @@ components:
       required: [name, state, constrained]
       properties:
         name: { type: string }
-        state: { type: string, enum: [pending, succeeded, failed] }
-        data: { description: The object, in the shape of the schema. }
+        state:
+          type: string
+          enum: [pending, succeeded, failed]
+          description: "`pending` from the request until the extraction ends, whether it waits for its parse to end, for its turn, or for a model."
+        data: { description: "The object, in the shape of the schema. Present once the extraction succeeded." }
         citations:
           type: object
-          description: A JSON pointer into `data`, to the refs of the blocks the value was read from.
-          additionalProperties: { type: array, items: { type: string } }
+          description: A JSON pointer into `data`, to the blocks the value was read from. A ref the model named that is no block of the document is left out.
+          additionalProperties:
+            type: array
+            items:
+              description: The ref of a block, or with `resolve=true` the ref with its page and its box.
+              oneOf:
+                - { type: string }
+                - { $ref: "#/components/schemas/Citation" }
         model: { type: string }
-        constrained: { type: boolean, description: Whether the schema was enforced by the model's decoding. }
-        attempts: { type: integer }
-        windows: { type: integer }
+        constrained: { type: boolean, description: "Whether the schema was sent to be enforced by the model's decoding. A schema that uses what such decoding does not take is stated in the prompt alone." }
+        attempts: { type: integer, description: "How many times the model was asked for a reply that satisfies the schema: 1, and 1 for each repair." }
+        windows: { type: integer, description: "How many parts the document was read in. Above 1, the object was merged from the replies to each: lists joined, and of 2 other values the first that is not null." }
         usage: { $ref: "#/components/schemas/Usage" }
         error: { $ref: "#/components/schemas/Problem" }
+
+    Citation:
+      type: object
+      required: [ref, page, box]
+      properties:
+        ref: { type: string }
+        page: { type: integer }
+        box: { $ref: "#/components/schemas/Box" }
 
     FieldList:
       type: object

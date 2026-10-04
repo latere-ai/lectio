@@ -176,6 +176,23 @@ func endedAs(t *testing.T, base, bearer, id string) map[string]any {
 	return nil
 }
 
+// fieldOf waits for an extraction of a parse to end and returns it. base is
+// the parse's address.
+func fieldOf(t *testing.T, base, bearer, name string) map[string]any {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Minute); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		status, field, raw := call(t, "GET", base+"/fields/"+name, bearer, nil)
+		if status != http.StatusOK {
+			t.Fatalf("reading the extraction %s: %d %s", name, status, raw)
+		}
+		if field["state"] != "pending" {
+			return field
+		}
+	}
+	t.Fatalf("the extraction %s did not end", name)
+	return nil
+}
+
 // TestTheDurableServerRunsBothRolesInOneProcess: with a database and a
 // bucket and no LECTIO_DEV, the server applies its schema, serves the
 // contract from durable state, runs the tasks, and answers its probes on
@@ -236,14 +253,6 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 	if scan["state"] != "succeeded" || scan["labels"].(map[string]any)["batch"] != "oct" {
 		t.Fatalf("the parse of an image ended %v", scan)
 	}
-	// Describing figures and extraction are not built over the task store
-	// and answer 501.
-	for _, route := range []string{"POST /parses/" + scan["id"].(string) + "/figures", "GET /parses/" + scan["id"].(string) + "/fields"} {
-		method, path, _ := strings.Cut(route, " ")
-		if status, body, _ := call(t, method, base+"/v1"+path, token(), nil); status != http.StatusNotImplemented || body["error"].(map[string]any)["code"] != "not_implemented" {
-			t.Fatalf("%s: %d %v", route, status, body)
-		}
-	}
 	// The meters hold the 4 pages the 2 parses read, each with one call of
 	// the stub, the queue holds no group once both ended, a parse that
 	// ended tells its pages and its end as events, and one with no failed
@@ -260,6 +269,32 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 	}
 	if status, body, raw := call(t, "POST", at+"/retry", token(), nil); status != http.StatusConflict || code(body) != "conflict" {
 		t.Fatalf("a retry of a parse with every page read: %d %s", status, raw)
+	}
+
+	// A run that describes figures and an extraction are tasks of the same
+	// worker, over the parse that ended. The stub reader finds no figure,
+	// so the run sets out to describe none and has ended when it answers.
+	// The stub extractor fills a schema's member with the document's first
+	// line and cites the block it is in, with one call and no page read
+	// again.
+	on := base + "/v1/parses/" + scan["id"].(string)
+	if status, body, raw := call(t, "POST", on+"/figures", token(), nil); status != http.StatusOK || body["run"].(map[string]any)["state"] != "succeeded" || body["run"].(map[string]any)["total"] != 0.0 {
+		t.Fatalf("a run over a parse with no figure: %d %s", status, raw)
+	}
+	asked := []byte(`{"name":"title","schema":{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}}`)
+	if status, body, raw := call(t, "POST", on+"/fields", token(), asked); status != http.StatusAccepted || body["state"] != "pending" {
+		t.Fatalf("asking an extraction: %d %s", status, raw)
+	}
+	field := fieldOf(t, on, token(), "title")
+	if field["state"] != "succeeded" || field["data"].(map[string]any)["title"] != "Page 1" || field["attempts"] != 1.0 || field["windows"] != 1.0 ||
+		field["citations"].(map[string]any)["/title"].([]any)[0] != "1.1" {
+		t.Fatalf("the extraction: %v", field)
+	}
+	if got := meter(t, base, token(), "stub"); !strings.HasPrefix(got, "4/5/") {
+		t.Fatalf("the meters after an extraction are %s, want the 4 pages and 1 call more", got)
+	}
+	if status, doc, raw := call(t, "GET", on+"/document", token(), nil); status != http.StatusOK || len(doc["fields"].([]any)) != 1 {
+		t.Fatalf("the document of a parse with a field: %d %s", status, raw)
 	}
 
 	if err := stop(); err != nil {

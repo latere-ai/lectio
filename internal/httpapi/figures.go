@@ -166,6 +166,11 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, c call) e
 		w.Header().Set("Preference-Applied", "wait="+strconv.Itoa(int(d/time.Second)))
 		s.Backend.WaitFigures(r.Context(), p.ID, d)
 	}
+	// The parse is read again: it is the one the listing is made from, and
+	// the run that was started may have described figures of it since.
+	if p, err = s.Backend.Parse(r.Context(), p.ID); err != nil {
+		return err
+	}
 	out, err := s.figures(r.Context(), p)
 	if err != nil {
 		return err
