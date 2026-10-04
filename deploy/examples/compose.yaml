@@ -23,6 +23,8 @@
 # one to verify a caller against. LECTIO_OIDC_ISSUERS in the environment
 # of the command names yours, the command stops without it, and a token
 # your provider issued for the audience `lectio` is what a request carries.
+# No authorizer is named, so the owner policy decides: a caller acts on
+# the files and parses it created.
 
 name: lectio
 

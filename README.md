@@ -23,9 +23,10 @@ way past another.
 > durable. The durable server keeps parses and their tasks in Postgres
 > and bytes in an S3 bucket, with the API and the workers as separate
 > processes: a worker that is killed loses its lease and not the work.
-> It takes one static token; signing in with an issuer, limits per
-> tenant, retry, extraction and the usage meter are designed and not
-> built. Each spec says what of it exists.
+> It verifies its callers against an OpenID Connect issuer, asks an
+> authorizer or its own owner policy what each may do, and holds a
+> parse to the limits it is given. Retry, extraction and the usage
+> meter are designed and not built. Each spec says what of it exists.
 
 ## Run it
 
@@ -34,7 +35,8 @@ make run          # builds out/lectiod and starts it with LECTIO_DEV=true
 ```
 
 The development server listens on `:8080`, keeps everything in memory,
-and takes the token `dev`. With no reader configured it reads pages
+and takes the token `dev`, whose holder owns what it creates. With no
+reader configured it reads pages
 with a stub that calls no model, so the path can be followed end to end
 before a key exists.
 
@@ -161,14 +163,34 @@ podman run -d --name lectio-objects -p 127.0.0.1:9000:9000 \
 export LECTIO_DATABASE_URL='postgres://lectio:example@127.0.0.1:5432/lectio?sslmode=disable'
 export LECTIO_BUCKET=lectio LECTIO_S3_ENDPOINT=http://127.0.0.1:9000 LECTIO_S3_REGION=us-east-1
 export LECTIO_S3_ACCESS_KEY=example LECTIO_S3_SECRET_KEY=example-secret LECTIO_S3_PATH_STYLE=true
-export LECTIO_DEV_TOKEN=choose-a-token
+export LECTIO_OIDC_ISSUERS=https://issuer.example    # your identity provider
 
 make build
 out/lectiod                 # the API and a worker in one process
 ```
 
-The same requests as above then work against `http://localhost:8080/v1`
-with that token, and a parse survives a restart of the process. To run
+The durable server takes no static token. It verifies each bearer
+against the issuers of `LECTIO_OIDC_ISSUERS`, for the audience `lectio`
+unless `LECTIO_OIDC_AUDIENCE` names another, and does not start without
+an issuer. The same requests as above then work against
+`http://localhost:8080/v1` with a token your provider issued, and a
+parse survives a restart of the process.
+
+Who may do what is decided in one of 2 ways. With nothing more set, the
+owner policy decides: a caller, known by its issuer and its `sub`, acts
+on the files and parses it created, and the subjects of
+`LECTIO_ADMIN_SUBJECTS` read everyone's. With `LECTIO_AUTHORIZER_URL`
+and `LECTIO_AUTHORIZER_TOKEN` set, every request is asked of that
+endpoint, whose answer may also say whose a new parse is, which group
+it joins, and what it is held to: pages per parse and per day, file
+size, classes, readers, priority and retention. The package
+[`authorizer`](authorizer) is what such an endpoint is written against,
+and [`specs/012-identity-and-authorization.md`](specs/012-identity-and-authorization.md)
+is the contract.
+
+A file is kept for 24 hours after its last use and a parse for 30 days
+after it ended, unless `LECTIO_FILE_RETENTION` and
+`LECTIO_PARSE_RETENTION` say otherwise. To run
 the roles apart, as a deployment does, start one process of each with
 the same settings:
 
@@ -188,8 +210,7 @@ transaction-mode pooler in front of the database, name the pooler in
 `LECTIO_DATABASE_URL`. Every setting is in
 [`specs/016-distribution.md`](specs/016-distribution.md).
 
-The durable server does not describe figures yet, and it takes the one
-token of `LECTIO_DEV_TOKEN` until signing in with an issuer is built.
+The durable server does not describe figures yet.
 
 ## Build and deploy it
 

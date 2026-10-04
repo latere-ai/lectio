@@ -42,7 +42,8 @@ spec:
 # The identity shape shared across the open cores (spec 012): lectiod
 # verifies one token against the issuers it is given, hands every claim to
 # the authorizer it asks, and reads none of them. internal/access holds the
-# verifier and the authorizer client; the handlers do not call them yet.
+# verifier and the authorizer client, and every handler of internal/httpapi
+# authenticates and asks through it.
 identity:
   role: core
   audience: lectio

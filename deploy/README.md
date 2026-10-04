@@ -120,6 +120,8 @@ variable the base sets itself is not overridden from here.
 | `LECTIO_S3_ENDPOINT`, `LECTIO_S3_REGION`, `LECTIO_S3_PATH_STYLE` | where the object store answers, and how a bucket is addressed there |
 | `LECTIO_WORKERS` | the tasks one worker runs at once |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | the largest file and the most pages a parse takes |
+| `LECTIO_GROUP_DEFAULTS` | what a group takes where no allow names it, as `name=value` pairs: its `weight`, `max_running`, `max_queued`, `max_priority` and `pages_per_day` |
+| `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | how long a file and a parse are kept, `24h` and `720h` unless set |
 
 **The ConfigMap `lectiod-readers`**, which the overlay carries: the
 Reader and Policy documents, mounted read-only at `/etc/lectio`. Every

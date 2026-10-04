@@ -18,8 +18,9 @@ it runs with a read-only root file system and no capability.
 
 ## The development server
 
-One process that keeps everything in memory, takes the token `dev`, and
-reads pages with a stub that calls no model:
+One process that keeps everything in memory, takes the token `dev`
+(`LECTIO_DEV_TOKEN` names another), and reads pages with a stub that
+calls no model:
 
 ```sh
 podman run --rm --read-only --cap-drop ALL \
@@ -46,9 +47,17 @@ LECTIO_OIDC_ISSUERS=https://issuer.example \
   podman compose -f deploy/examples/compose.yaml up --build
 ```
 
-`lectiod` listens on `127.0.0.1:8080`. It runs the durable server, so it
-needs a build that has one: on a build without it, `lectiod` exits at
-start and says so, and the other services stay up.
+`lectiod` listens on `127.0.0.1:8080`. It reads the provider's keys
+when it starts, and when the provider does not answer then, it says so
+and reads them when the first token arrives.
+
+A caller is the `sub` of its token at that issuer, and owns the files
+and the parses it creates: nobody else reads or changes them. To let
+some subjects read everyone's, name them in `LECTIO_ADMIN_SUBJECTS`,
+each as `<issuer>|<sub>`. To have a service of your own decide instead,
+with limits per caller, set `LECTIO_AUTHORIZER_URL` and
+`LECTIO_AUTHORIZER_TOKEN`; the `lectiod` service of the compose file is
+where to add either.
 
 Upload a file and parse it. The second command holds its answer up to 30
 seconds for the parse to end:
@@ -70,6 +79,40 @@ Pages are read by the stub reader. To read them with a model, write a
 file of Reader and Policy documents, mount it into the `lectiod`
 service, and set `LECTIO_CONFIG` to its path and `LECTIO_MODEL_KEY` to
 the key the endpoint takes.
+
+## Signing in and deciding
+
+What `lectiod` needs set to serve callers, in each of its 3 setups:
+
+| Setup | Set | Who is calling | Who decides |
+|---|---|---|---|
+| development | `LECTIO_DEV=true` | the holder of `LECTIO_DEV_TOKEN`, as the subject `dev` | the owner policy |
+| durable | `LECTIO_OIDC_ISSUERS`, and `LECTIO_OIDC_AUDIENCE` when it is not `lectio` | a token one of the issuers signed for that audience | the owner policy, with `LECTIO_ADMIN_SUBJECTS` |
+| durable, with an authorizer | the same, and `LECTIO_AUTHORIZER_URL` with `LECTIO_AUTHORIZER_TOKEN` | the same | the endpoint, asked with that bearer |
+
+A durable process that serves the API does not start without an issuer,
+and none starts with an authorizer's URL and no token for it. A worker
+needs neither. An authorizer that does not answer does not stop the
+server from starting: it is named in the log, and every request is
+refused with `503 authorizer_unavailable` until it answers. An
+authorizer that allows the probe the server sends at start is refused:
+it does not read what it is asked.
+
+Under the owner policy a submit's `priority` is 0 unless
+`LECTIO_GROUP_DEFAULTS` names a bound, as in
+`LECTIO_GROUP_DEFAULTS=max_priority=10`.
+
+## What is kept, and for how long
+
+The durable server keeps a file for 24 hours after it was last uploaded
+and after the last parse that read it ended, and a parse with its pages,
+images and document for 30 days after it ended. `LECTIO_FILE_RETENTION`
+and `LECTIO_PARSE_RETENTION` set other times, as durations such as
+`48h`, and an authorizer may shorten either for a caller. The workers
+remove what has expired. The development server keeps everything until
+it stops.
+
+## The credentials of the example
 
 Every credential in the file is an example and is written in it. The
 stack is for one machine: only `lectiod`'s port is published, on the

@@ -6,6 +6,66 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Changed: `lectiod` verifies its callers and asks who decides. The
+  durable server no longer takes the token of `LECTIO_DEV_TOKEN`: a
+  process that serves the API needs `LECTIO_OIDC_ISSUERS`, verifies each
+  bearer against them for the audience of `LECTIO_OIDC_AUDIENCE`, and is
+  refused at start without one, naming the variable. A worker needs
+  none. With `LECTIO_AUTHORIZER_URL` and `LECTIO_AUTHORIZER_TOKEN` every
+  request is asked of that endpoint; without them the owner policy
+  decides, with `LECTIO_ADMIN_SUBJECTS` as the subjects that read every
+  owner's. `LECTIO_DEV=true` keeps its one static token, for the
+  subject `dev`, unless it lists issuers. The server logs the mode at
+  start, names an issuer or an endpoint that does not answer and starts,
+  and is refused an endpoint that allows the probe every authorizer
+  denies.
+- Changed: every route asks its action before it acts, the planned ones
+  included. A parse or a file the caller may not act on is answered
+  as one that is not there (`404`), a create, a list or a read of the
+  readers the caller may not make is `403 forbidden` with the
+  authorizer's reason in `details.reason`, and a request the authorizer
+  gave no decision on is `503 authorizer_unavailable`, which is
+  retryable. An owner is now the verified subject, `<issuer>|<sub>`, or
+  the owner the authorizer's allow names.
+- Added: the limits of an allow are held. A new file or parse is
+  recorded under the allow's `owner`; a parse joins its `group` and
+  `project` with their weights and the group's `max_running` and
+  `max_queued` (`429 queue_full`); `max_priority` bounds a submit's
+  priority (`400 invalid_request`), `classes` its class (`403
+  forbidden`), `readers` the reader it pins (`403
+  reader_not_permitted`); `max_file_bytes` holds an upload and the file
+  a submit names (`413 file_too_large`); `max_pages` fails a parse that
+  selects more with `too_many_pages`; and a list is narrowed to the
+  owners and labels of the allow's `filter`. A limit a server cannot
+  hold is `422 capability_unsupported`: a development server refuses
+  `max_running`, `max_queued`, `pages_per_day` and `retention_seconds`.
+- Changed: with no bound configured, a submit's `priority` is 0 or is
+  refused. `LECTIO_GROUP_DEFAULTS=max_priority=10` admits priorities
+  from -10 to 10 under the owner policy and where an allow names none.
+- Added: `LECTIO_GROUP_DEFAULTS`, a list of `name=value` over `weight`,
+  `max_running`, `max_queued`, `max_priority` and `pages_per_day`: what
+  a group takes when the allow of its parse names none.
+- Added: pages per day, in the durable server. An allow's
+  `pages_per_day` is its group's budget for a day in UTC. A parse's
+  pages are reserved when they are counted: a parse the day does not
+  hold fails with `budget_exhausted` before a page is read, a submit of
+  a group with nothing left is `402 budget_exhausted`, and the pages a
+  parse reserved and did not read are given back when it ends.
+- Added: retention, in the durable server. A file is kept for
+  `LECTIO_FILE_RETENTION` (default `24h`) after its last upload and
+  after the end of the last parse that read it, and a parse with
+  everything it wrote for `LECTIO_PARSE_RETENTION` (default `720h`)
+  after it ended; an allow's `retention_seconds` shortens either. A
+  file's `expires_at` is in its API view. Every worker runs the sweep,
+  one of them per `LECTIO_SWEEP_INTERVAL`: objects are removed before
+  rows, and a delete that stopped halfway is finished by a later sweep.
+  Files and parses stored before this version have no retention and are
+  kept until they are deleted.
+- Changed: the schema is at version 4. The API applies migration
+  `000004_limits` at start; a worker of this version waits for it.
+- Changed: `api/openapi.yaml` lists the codes `authorizer_unavailable`
+  and `capability_unsupported`, `503` among the statuses any operation
+  may answer, `422` on `POST /files`, and `402` on `POST /parses`.
 - Added: the durable server. Without `LECTIO_DEV`, `lectiod` keeps
   parses and their tasks in Postgres and bytes in an S3 bucket, and
   `LECTIO_ROLE` says whether a process serves the API (`api`), runs the
@@ -13,9 +73,9 @@ refused before it is pushed.
   the schema at start and holds no parse in memory, so it can be
   restarted while parses run. A worker that is stopped gives its pages
   back at once; one that is killed loses them to the other workers
-  after `LECTIO_TASK_LEASE`, and no page is recorded twice. It takes
-  the one token of `LECTIO_DEV_TOKEN`, describes no figures yet
-  (`501 not_implemented`), and serves every other built route.
+  after `LECTIO_TASK_LEASE`, and no page is recorded twice. It describes
+  no figures yet (`501 not_implemented`), and serves every other built
+  route.
 - Added: `/livez`, `/readyz` and `/version` on `LECTIO_INTERNAL_ADDR`
   (default `:8081`) in the durable server. A process is ready when the
   database answers and, for a worker, the task store answered it within
@@ -40,10 +100,9 @@ refused before it is pushed.
 - Added: `lectiod` reads `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE`
   (default `lectio`), `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN`
   and `LECTIO_ADMIN_SUBJECTS`, and refuses to start when one is not
-  well formed, naming the variable. Nothing uses them yet: the server
-  still takes its one static token.
-- Added: identity and authorization as a library the server does not
-  call yet (`internal/access`). A bearer is verified against the listed
+  well formed, naming the variable.
+- Added: identity and authorization (`internal/access`). A bearer is
+  verified against the listed
   issuers and becomes a subject, `<issuer>|<sub>`, with every claim
   handed on unread. One question per request goes to the authorizer,
   which may answer with limits and with whose a new parse or file is;
@@ -54,8 +113,7 @@ refused before it is pushed.
 - Added: the package `authorizer`, what an authorization endpoint for
   Lectio is written against: the 11 actions `lectiod` asks, the resource
   kind and the fields of each, and the limits an allow may carry, with
-  the JSON form an endpoint renders and the function that reads it. The
-  server does not ask an authorizer yet.
+  the JSON form an endpoint renders and the function that reads it.
 - Added: an image of the server. `Dockerfile` builds `lectiod` alone on
   a distroless base: no shell, no package manager, no office suite, run
   as user 65532. It is 37 MiB, and it runs with a read-only root file
