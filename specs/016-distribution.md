@@ -331,11 +331,26 @@ Built:
   and no identity provider, so a caller brings a token of its own
   issuer.
 
+- `deploy_test.go`, the tests of the deploy tree, and 2 jobs of the
+  verify workflow. From the files as written, on every run of the gate:
+  every container's security context, probes and resources; the
+  listeners against the ports and the probes; the termination grace
+  against what a stop takes; a policy with both directions around every
+  Pod, and no egress rule and no credential for the sidecar; every
+  variable set under `deploy/` against the configuration table; no
+  credential and no address but an example's in a shipped file; and the
+  example Reader and Policy against the loader. The tests that render
+  the base and the examples need `kubectl`, skip in the gate, and run
+  in the `deploy` job, which fails on a skip. The `image` job builds
+  the server's image and holds it under 60 MiB, with no shell, starting
+  and answering with a read-only root file system.
+
 Remaining:
 
-- `lectio-stubs` and its image, the rest of `docs/`, the generated configuration reference and its
-  test, the image tests, the tests of the deploy tree, and the release
-  workflow.
+- `lectio-stubs` and its image, the rest of `docs/`, the generated
+  configuration reference and its test, an image test of the
+  conversion sidecar, the smoke test of the compose file, and the
+  release workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end
   tests of the API and the development server in one process, and the
   tests of `internal/store/postgres`, which start one Postgres and one
