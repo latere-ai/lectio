@@ -96,7 +96,7 @@ func TestTheDurableServerAsksItsAuthorizer(t *testing.T) {
 	if status != http.StatusCreated || file["expires_at"] == nil {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", mine, []byte(`{"source":{"file":"`+file["id"].(string)+`"},"priority":1}`), "Prefer", "wait=30")
+	status, parse, raw := finished(t, base, mine)(call(t, "POST", base+"/v1/parses", mine, []byte(`{"source":{"file":"`+file["id"].(string)+`"},"priority":1}`), "Prefer", "wait=30"))
 	if status != http.StatusOK || parse["state"] != "succeeded" || parse["owner"] != acme {
 		t.Fatalf("submit: %d %s", status, raw)
 	}
@@ -217,7 +217,7 @@ func TestTheDurableServerUnderTheOwnerPolicy(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", alice, []byte(`{"source":{"file":"`+file["id"].(string)+`"},"priority":3}`), "Prefer", "wait=30")
+	status, parse, raw := finished(t, base, alice)(call(t, "POST", base+"/v1/parses", alice, []byte(`{"source":{"file":"`+file["id"].(string)+`"},"priority":3}`), "Prefer", "wait=30"))
 	if status != http.StatusOK || parse["owner"] != provider().URL()+"|alice" || parse["state"] != "succeeded" {
 		t.Fatalf("submit: %d %s", status, raw)
 	}

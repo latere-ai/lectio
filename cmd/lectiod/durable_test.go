@@ -179,6 +179,12 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 	base, logs, stop := started(t, env(p.env("all")...))
 	internal := internalOf(t, logs)
 
+	// The worker registers after the listeners are up, so the server is
+	// ready a moment after it answers.
+	until(t, "the server is ready", time.Minute, func() bool {
+		status, _ := get(t, internal+"/readyz")
+		return status == http.StatusOK
+	})
 	for path, want := range map[string]string{"/livez": "ok", "/readyz": "ok", "/version": `"version"`} {
 		if status, body := get(t, internal+path); status != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("%s: %d %q", path, status, body)
@@ -280,9 +286,10 @@ func TestTheRolesRunAsTwoServers(t *testing.T) {
 	if status, _ := get(t, probes+"/v1/readers"); status != http.StatusNotFound {
 		t.Fatalf("a worker answered a public route with %d", status)
 	}
-	if status, body := get(t, probes+"/readyz"); status != http.StatusOK {
-		t.Fatalf("a worker that registered is not ready: %d %q", status, body)
-	}
+	until(t, "a worker that registered is ready", time.Minute, func() bool {
+		status, _ := get(t, probes+"/readyz")
+		return status == http.StatusOK
+	})
 	if done := ended(t, base, parse["id"].(string)); done["state"] != "succeeded" {
 		t.Fatalf("the parse the worker ran ended %v", done)
 	}
@@ -328,9 +335,15 @@ func TestTheDurableServerDoesNotStartOnWhatItCannotRun(t *testing.T) {
 		"an internal address taken":    {p.env("all", "LECTIO_INTERNAL_ADDR", taken.Addr().String()), "LECTIO_INTERNAL_ADDR"},
 		"a public address taken":       {p.env("api", "LECTIO_ADDR", taken.Addr().String()), "address already in use"},
 	} {
-		// Each case fails at once, but for the worker that waits for a
-		// schema: it is given a second to.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		// Each case fails as soon as the server reaches what it lacks,
+		// which on a loaded machine is after it opened its store, so each
+		// is given a minute. The worker that waits for a schema fails by
+		// running out of time, and is given a second.
+		within := time.Minute
+		if name == "a worker with no schema yet" {
+			within = time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), within)
 		err := serve(ctx, nil, env(tc.env...), io.Discard, io.Discard, nil)
 		cancel()
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "lectio:lectio") {

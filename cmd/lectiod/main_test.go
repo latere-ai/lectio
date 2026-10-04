@@ -172,23 +172,32 @@ func parsed(t *testing.T, base, fixture, name string) map[string]any {
 	if status != http.StatusCreated {
 		t.Fatalf("upload of %s: %d %s", name, status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=30")
-	// A parse that outlasts the wait is answered 202 and read until it
-	// ends: a loaded machine under the race detector takes longer than
-	// one wait to convert and render a file.
-	for deadline := time.Now().Add(5 * time.Minute); status == http.StatusAccepted && time.Now().Before(deadline); {
-		time.Sleep(200 * time.Millisecond)
-		if status, parse, raw = call(t, "GET", base+"/v1/parses/"+parse["id"].(string), "dev", nil); status != http.StatusOK {
-			break
-		}
-		if state := parse["state"]; state == "queued" || state == "running" {
-			status = http.StatusAccepted
-		}
-	}
+	status, parse, raw := finished(t, base, "dev")(call(t, "POST", base+"/v1/parses", "dev", []byte(`{"source":{"file":"`+file["id"].(string)+`"}}`), "Prefer", "wait=30"))
 	if status != http.StatusOK {
 		t.Fatalf("parse of %s: %d %s", name, status, raw)
 	}
 	return parse
+}
+
+// finished takes the answer of a submit that waited and, when the parse
+// outlasted the wait and was answered 202, reads the parse until it ends: a
+// loaded machine under the race detector takes longer than one wait to
+// convert, render and read a file. Any other answer is handed back as it is.
+func finished(t *testing.T, base, token string) func(int, map[string]any, []byte) (int, map[string]any, []byte) {
+	t.Helper()
+	return func(status int, parse map[string]any, raw []byte) (int, map[string]any, []byte) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Minute); status == http.StatusAccepted && time.Now().Before(deadline); {
+			time.Sleep(200 * time.Millisecond)
+			if status, parse, raw = call(t, "GET", base+"/v1/parses/"+parse["id"].(string), token, nil); status != http.StatusOK {
+				break
+			}
+			if state := parse["state"]; state == "queued" || state == "running" {
+				status = http.StatusAccepted
+			}
+		}
+		return status, parse, raw
+	}
 }
 
 // TestTheDevServerReadsOfficeDocuments takes a Word document and a workbook
