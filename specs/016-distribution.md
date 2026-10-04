@@ -330,6 +330,21 @@ callers verifies and a server that takes one static token is given as
 that token. These `LECTIO_LIVE_*` variables are the test's and not the
 binary's, so the table of configuration does not list them.
 
+The first run read the corpus with a layout engine of about 3 billion
+parameters on one machine, behind the `layout` adapter, at about 10
+seconds a page. 12 of the 13 files reached their bars. Every table cell
+and every reading order was right, the table that continues was joined
+on every file that holds it, and of about 13,000 characters the engine
+read, the ones in error were 2 page numbers it left out and the marker
+it writes before each list item. The `layout` adapter keeps that marker
+in a list item's text, where every other reader gives the item without
+it, and on the presentation, a file of 381 characters with 4 list
+items, the markers alone put the character error rate at 2.1 percent
+against a bar of 2. The bar stands; the marker is for normalization to
+drop ([[008-readers]]). The engine also called the title of a document
+a heading, which moves every heading of the outline up a level. No
+hosted model has read the corpus.
+
 ### Deploying
 
 `deploy/base` holds a Deployment for each role, the Service of the API,
@@ -461,11 +476,10 @@ Built:
 - The quality tier and the live quality run, as described under
   Quality: the corpus of 13 files with their truths, `internal/quality`,
   the tests of `test/quality` in the gate, `make live-quality`, and
-  `docs/quality.md`. The live run has read the corpus with one reader, a
-  layout engine on the machine it ran on, through the durable server;
-  no hosted model has read it. The corpus holds no HTML and no XML,
-  which a parse refuses, and none of the other converted formats
-  (`.ppt`, `.odp`, `.odt`, `.key`).
+  `docs/quality.md`. The live run has read the corpus with one reader,
+  through the durable server, with the result above. The corpus holds
+  no HTML and no XML, which a parse refuses, and none of the other
+  converted formats (`.ppt`, `.odp`, `.odt`, `.key`).
 
 Remaining:
 
