@@ -115,6 +115,7 @@ variable the base sets itself is not overridden from here.
 | Key | What it is |
 |---|---|
 | `LECTIO_OIDC_ISSUERS` | the issuers whose tokens the API accepts, as a comma list |
+| `LECTIO_ADMIN_SUBJECTS` | under the owner policy, the subjects that may read every owner's resources |
 | `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX` | the bucket, and the prefix this installation keeps its objects under |
 | `LECTIO_S3_ENDPOINT`, `LECTIO_S3_REGION`, `LECTIO_S3_PATH_STYLE` | where the object store answers, and how a bucket is addressed there |
 | `LECTIO_WORKERS` | the tasks one worker runs at once |
