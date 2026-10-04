@@ -23,11 +23,11 @@ import (
 	"latere.ai/x/lectio/internal/fetch"
 	"latere.ai/x/lectio/internal/httpapi"
 	"latere.ai/x/lectio/internal/intake/pages"
+	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/version"
 	"latere.ai/x/lectio/internal/worker"
-	"latere.ai/x/lectio/reader"
 )
 
 // probeTimeout bounds one readiness check.
@@ -38,6 +38,18 @@ const probeTimeout = 2 * time.Second
 // reads pages with a reader that waits, or blocks, as the test needs. It is
 // nil in a build.
 var wrapReaders func(config.Readers) config.Readers
+
+// keySource builds what a worker resolves the key of a page with, and logs
+// which source is in force: one key from configuration for every group, or
+// the operator's endpoint, asked per group. Only a process that runs tasks
+// builds it, so the API never holds the endpoint's bearer.
+func keySource(ctx context.Context, s config.Settings, log *slog.Logger) keys.Source {
+	log.InfoContext(ctx, "keys", "source", s.Keys)
+	if s.Keys == config.KeysEndpoint {
+		return keys.NewEndpoint(keys.Options{URL: s.KeysURL, Token: s.KeysToken, Log: log})
+	}
+	return keys.Static{Credential: s.ModelKey}
+}
 
 // serveDurable runs the durable server in the role LECTIO_ROLE names, until
 // ctx ends. The API role applies the schema over the direct connection,
@@ -99,6 +111,10 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 	}
 	defer st.Close()
 
+	// Readiness is the database and, for a worker, a recent exchange. The
+	// key endpoint is not part of it: while it is down the pages that need a
+	// key wait in the queue, the worker runs every other task, and taking
+	// the worker out of a roll would mend nothing.
 	checks := []health.Check{{Name: "database", Run: st.Ping}}
 	var w *worker.Worker
 	if works {
@@ -108,8 +124,8 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		}
 		w = &worker.Worker{
 			Store: st, Objects: objects, Pipeline: pipeline, Readers: readers.Readers, Costs: costs,
-			Credential: func(string, string, string) reader.Credential { return s.ModelKey },
-			Slots:      s.Workers, Lease: s.Lease, Flush: s.Flush, Poll: s.Poll, Grace: s.Grace,
+			Keys:  keySource(ctx, s, log),
+			Slots: s.Workers, Lease: s.Lease, Flush: s.Flush, Poll: s.Poll, Grace: s.Grace,
 			CacheBytes: s.CacheBytes, Retention: st, Sweep: s.SweepInterval, Log: log,
 		}
 		checks = append(checks, health.Check{Name: "worker", Run: func(context.Context) error { return w.Ready() }})

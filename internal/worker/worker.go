@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
@@ -78,9 +79,9 @@ type Worker struct {
 	Readers map[string]reader.Reader
 	Costs   map[string]int
 
-	// Credential returns the key a group's pages are read with. Nil means
-	// every call is made without one.
-	Credential func(group, owner, parseID string) reader.Credential
+	// Keys resolves the key a group's pages are read with. Nil means every
+	// call is made without one.
+	Keys keys.Source
 
 	// Slots is how many tasks the process runs at once. Zero takes
 	// DefaultSlots.

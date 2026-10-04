@@ -122,8 +122,9 @@ const (
 	Retryable Outcome = "retryable"
 	// Permanent is a failure no attempt changes. The task fails at once.
 	Permanent Outcome = "permanent"
-	// Wait is a rate-limit reply from the reader's endpoint. It spends no
-	// attempt, and pauses the key scope the call was made in.
+	// Wait is a rate-limit reply from the reader's endpoint, or a key source
+	// that cannot say yet which key the call is made with. It spends no
+	// attempt, and pauses the key scope the task was claimed in.
 	Wait Outcome = "wait"
 	// Next is a reader that cannot be the one to read this page: it declined
 	// the page, or its endpoint rejects the request itself. The task goes to

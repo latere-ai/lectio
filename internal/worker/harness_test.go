@@ -152,6 +152,22 @@ func (g *gate) ReadPage(ctx context.Context, page reader.Page) (reader.Result, e
 	}
 }
 
+// issuing is a key source of a case: it issues a key that names what it was
+// asked for, or fails with the error the case set.
+type issuing struct {
+	err error
+	// asked is the group, the owner and the parse of the last call.
+	asked string
+}
+
+func (i *issuing) Key(_ context.Context, group, owner, parseID string) (reader.Credential, error) {
+	i.asked = group + "/" + owner + "/" + parseID
+	if i.err != nil {
+		return reader.Credential{}, i.err
+	}
+	return reader.NewCredential(i.asked), nil
+}
+
 // sheet is a PNG of one color with a dark bar across it, or of one color
 // alone, which is a page with nothing on it.
 func sheet(t *testing.T, blank bool) []byte {

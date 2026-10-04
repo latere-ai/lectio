@@ -118,8 +118,8 @@ func sweeping(t *testing.T) (*Worker, *retaining, *noting, *bytes.Buffer) {
 	return b.w, store, objects, &logged
 }
 
-// keys lists what the object store holds.
-func keys(t *testing.T, s blob.Store) []string {
+// objectKeys lists what the object store holds.
+func objectKeys(t *testing.T, s blob.Store) []string {
 	t.Helper()
 	got, err := s.List(context.Background(), "")
 	if err != nil {
@@ -142,7 +142,7 @@ func TestTheSweepRemovesObjectsAndThenRows(t *testing.T) {
 	if !slices.Equal(store.log, want) {
 		t.Fatalf("the sweep did\n  %v\nwant\n  %v", store.log, want)
 	}
-	if left := keys(t, objects.Store); !slices.Equal(left, []string{blob.PageKey("prs_new", 1, 3), "sources/a/bb/fil_new"}) {
+	if left := objectKeys(t, objects.Store); !slices.Equal(left, []string{blob.PageKey("prs_new", 1, 3), "sources/a/bb/fil_new"}) {
 		t.Fatalf("after the sweep the object store holds %v", left)
 	}
 	if !strings.Contains(logged.String(), "parses=1 files=1") {
@@ -177,7 +177,7 @@ func TestAnInterruptedSweepCompletesOnTheNextRun(t *testing.T) {
 			// Whatever stopped the sweep, no row went before its objects.
 			for i, step := range store.log {
 				if step == "rows prs_old" {
-					for _, key := range keys(t, objects.Store) {
+					for _, key := range objectKeys(t, objects.Store) {
 						if strings.HasPrefix(key, blob.ParsePrefix("prs_old")) {
 							t.Fatalf("the rows of the parse were removed at step %d while %s was there", i, key)
 						}
@@ -189,7 +189,7 @@ func TestAnInterruptedSweepCompletesOnTheNextRun(t *testing.T) {
 			if !parseKept && !fileKept {
 				t.Fatalf("nothing was left to sweep again: %v", store.log)
 			}
-			if fileKept && strings.HasPrefix(name, "a file's object") && !slices.Contains(keys(t, objects.Store), "sources/a/aa/fil_old") {
+			if fileKept && strings.HasPrefix(name, "a file's object") && !slices.Contains(objectKeys(t, objects.Store), "sources/a/aa/fil_old") {
 				t.Fatal("the file's object is gone and its row is not")
 			}
 			if !strings.Contains(logged.String(), "level=WARN") {
@@ -202,7 +202,7 @@ func TestAnInterruptedSweepCompletesOnTheNextRun(t *testing.T) {
 			if len(store.due.Parses) != 0 || len(store.due.Files) != 0 {
 				t.Fatalf("after the next sweep %+v is still listed", store.due)
 			}
-			if left := keys(t, objects.Store); !slices.Equal(left, []string{blob.PageKey("prs_new", 1, 3), "sources/a/bb/fil_new"}) {
+			if left := objectKeys(t, objects.Store); !slices.Equal(left, []string{blob.PageKey("prs_new", 1, 3), "sources/a/bb/fil_new"}) {
 				t.Fatalf("after the next sweep the object store holds %v", left)
 			}
 		})
@@ -250,7 +250,7 @@ func TestAWorkerSweepsWhileItRuns(t *testing.T) {
 	stopped, cancel := context.WithCancel(context.Background())
 	cancel()
 	w.sweep(stopped)
-	if len(swept.log) != 0 || len(keys(t, objects.Store)) != 6 {
+	if len(swept.log) != 0 || len(objectKeys(t, objects.Store)) != 6 {
 		t.Fatalf("a sweep whose context had ended did %v", swept.log)
 	}
 	swept.due.Parses = nil

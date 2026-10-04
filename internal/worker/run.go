@@ -16,6 +16,7 @@ import (
 	"latere.ai/x/lectio/internal/blob"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/intake/detect"
+	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/objects"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/store/postgres"
@@ -131,10 +132,11 @@ func same(a, b []byte) bool {
 }
 
 // page reads one page: it takes the result of the same read when an earlier
-// parse kept one, and otherwise renders the page, has the reader it was
-// claimed for read it, and writes the image and the result under this
-// task's token. What it does about a failed call follows from the class of
-// the reader's error (specs/005-parse-graph.md) and from nothing else.
+// parse kept one, and otherwise resolves the key of the page's group,
+// renders the page, has the reader it was claimed for read it with that key,
+// and writes the image and the result under this task's token. What it does
+// about a failed call follows from the class of the reader's error
+// (specs/005-parse-graph.md) and from nothing else.
 func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	n, ok := tasks.PageOf(c.Task)
 	var m objects.Manifest
@@ -152,14 +154,21 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		s.Error = &tasks.Error{Code: string(fault.ReaderUnavailable), Detail: "the reader the page was claimed for is not configured"}
 		return
 	}
+	// The key is resolved before anything is fetched or rendered: a page
+	// that has none yet goes back to the queue having cost nothing.
+	opt := parse.PageOptions{Languages: c.Context.Languages}
+	if w.Keys != nil {
+		key, err := w.Keys.Key(ctx, c.Group, c.Context.Owner, c.Parse)
+		if err != nil {
+			keyless(s, err)
+			return
+		}
+		opt.Credential = key
+	}
 	working, err := w.cache.get(ctx, w.Objects, m.Work)
 	if err != nil {
 		stored(s, "the working copy", err)
 		return
-	}
-	opt := parse.PageOptions{Languages: c.Context.Languages}
-	if w.Credential != nil {
-		opt.Credential = w.Credential(c.Group, c.Context.Owner, c.Parse)
 	}
 
 	got, err := w.Pipeline.ReadPage(ctx, m.Manifest, working, n, rd, opt)
@@ -240,6 +249,30 @@ func (w *Worker) reuse(ctx context.Context, c tasks.Claim, n int, s *tasks.Settl
 	}
 	w.wrote(ctx, c, s, n, res)
 	return true
+}
+
+// keyless ends a page's attempt for which the key source gave no key
+// (specs/013-limits-and-usage.md). No reader was called, so no call is
+// recorded and nothing is said about a reader's health.
+//
+// A refusal is about the group and stands whatever is tried, on every
+// reader, so the page fails at once and does not move down the chain: a
+// group with no budget as the reader's own budget refusal does, and a group
+// that is issued no key as a page no reader can be called for.
+//
+// Anything else is a source that cannot say yet. The attempt ends as a
+// wait, which spends no attempt and pauses the group's key scope, so the
+// group's pages stay unclaimed until the source is asked again. A source
+// that names no wait leaves it to the store's own pause.
+func keyless(s *tasks.Settle, err error) {
+	switch {
+	case errors.Is(err, keys.ErrBudget):
+		permanent(s, fault.BudgetExhausted, "the group has no budget left to read with")
+	case errors.Is(err, keys.ErrForbidden):
+		permanent(s, fault.ReaderUnavailable, "the group is issued no key to read with")
+	default:
+		s.Outcome, s.RetryAfter = tasks.Wait, keys.RetryAfterOf(err)
+	}
 }
 
 // cost is what one call to a reader is charged.

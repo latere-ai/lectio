@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/objects"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
@@ -238,9 +240,7 @@ func TestAReadersErrorDecidesWhatThePageDoesNext(t *testing.T) {
 			var seen reader.Page
 			rd := &stub.Reader{Fail: func(p reader.Page) error { seen = p; return tc.err }}
 			b := newBench(t, map[string]reader.Reader{"stub": rd})
-			b.w.Credential = func(group, owner, parseID string) reader.Credential {
-				return reader.NewCredential(group + "/" + owner + "/" + parseID)
-			}
+			b.w.Keys = &issuing{}
 			b.put("sources/o/aa/fil_1", sheet(t, false), "image/png")
 			s := b.w.run(context.Background(), page("prs_a", 1, 5, "sources/o/aa/fil_1", "image/png"))
 			code := ""
@@ -255,13 +255,77 @@ func TestAReadersErrorDecidesWhatThePageDoesNext(t *testing.T) {
 			if s.Usage.Calls != 1 || s.Units != 3 || s.Output != "" || rd.Calls(1) != 1 {
 				t.Fatalf("a failed call is accounted as %+v, units %d, after %d calls", s.Usage, s.Units, rd.Calls(1))
 			}
-			if keys, err := b.objects.List(context.Background(), blob.ParsePrefix("prs_a")); err != nil || len(keys) != 0 {
-				t.Fatalf("a page that was not read left %v, %v", keys, err)
+			if left, err := b.objects.List(context.Background(), blob.ParsePrefix("prs_a")); err != nil || len(left) != 0 {
+				t.Fatalf("a page that was not read left %v, %v", left, err)
 			}
 			if seen.Credential.Reveal() != "acme/alice/prs_a" || strings.Join(seen.Languages, ",") != "de" {
 				t.Fatalf("the reader was called with the key %q and the languages %v", seen.Credential.Reveal(), seen.Languages)
 			}
 		})
+	}
+}
+
+// TestAPageWithNoKeyWaitsOrFailsAndCallsNoReader is the key source at the
+// worker (specs/013-limits-and-usage.md). A source that cannot say yet ends
+// the attempt as a wait for as long as the source names, or for the store's
+// own pause when it names none. A group with no budget fails the page as a
+// spent budget, and a group that is issued no key fails it at once without
+// moving it to another reader. In each case no reader is called, no call is
+// charged, nothing is said about a reader, and nothing is fetched or written.
+func TestAPageWithNoKeyWaitsOrFailsAndCallsNoReader(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err     error
+		outcome tasks.Outcome
+		code    string
+		wait    time.Duration
+	}{
+		"an endpoint that is down":      {&keys.Unavailable{RetryAfter: 4 * time.Second, Reason: "the key endpoint answered 503"}, tasks.Wait, "", 4 * time.Second},
+		"a wait wrapped by its caller":  {fmt.Errorf("resolving: %w", &keys.Unavailable{RetryAfter: 2 * time.Second}), tasks.Wait, "", 2 * time.Second},
+		"a source that names no wait":   {&keys.Unavailable{Reason: "the call ended"}, tasks.Wait, "", 0},
+		"an error of no kind":           {errors.New("a source of another kind failed"), tasks.Wait, "", 0},
+		"a group with no budget":        {keys.ErrBudget, tasks.Permanent, "budget_exhausted", 0},
+		"a group that is issued no key": {fmt.Errorf("asking: %w", keys.ErrForbidden), tasks.Permanent, "reader_unavailable", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rd := &stub.Reader{}
+			b := newBench(t, map[string]reader.Reader{"stub": rd})
+			source := &issuing{err: tc.err}
+			fetched := &counting{Store: b.objects, gets: map[string]int{}}
+			b.w.Keys, b.w.Objects = source, fetched
+			b.put("sources/o/aa/fil_1", sheet(t, false), "image/png")
+			s := b.w.run(context.Background(), page("prs_a", 1, 5, "sources/o/aa/fil_1", "image/png"))
+			code := ""
+			if s.Error != nil {
+				code = s.Error.Code
+			}
+			if s.Outcome != tc.outcome || code != tc.code || s.RetryAfter != tc.wait {
+				t.Fatalf("settled %+v, error %+v", s, s.Error)
+			}
+			if s.Usage != (tasks.Usage{}) || s.Units != 0 || s.Health != tasks.Silent || s.Invalid || s.Output != "" || rd.Calls(1) != 0 {
+				t.Fatalf("a page with no key is accounted as %+v, units %d, health %q, after %d calls", s.Usage, s.Units, s.Health, rd.Calls(1))
+			}
+			if source.asked != "acme/alice/prs_a" {
+				t.Fatalf("the source was asked for %q", source.asked)
+			}
+			if left, err := b.objects.List(context.Background(), blob.ParsePrefix("prs_a")); err != nil || len(left) != 0 || len(fetched.gets) != 0 {
+				t.Fatalf("a page with no key left %v and fetched %v, %v", left, fetched.gets, err)
+			}
+		})
+	}
+
+	// A page that is taken from an earlier read calls no reader, so it asks
+	// for no key.
+	b := newBench(t, nil)
+	source := &issuing{err: keys.ErrBudget}
+	b.w.Keys = source
+	kept := objects.Page{Revision: objects.FirstReading, Page: document.Page{Number: 4, State: document.PageSucceeded, Source: document.SourceReader, Blocks: []document.Block{}}}
+	if err := objects.PutPage(context.Background(), b.objects, "parses/prs_old/pages/4.1.json", kept); err != nil {
+		t.Fatal(err)
+	}
+	reused := page("prs_a", 1, 5, "sources/o/aa/fil_1", "image/png")
+	reused.Context.Reuse = "parses/prs_old/pages/4.1.json"
+	if s := b.w.run(context.Background(), reused); s.Outcome != tasks.Done || source.asked != "" {
+		t.Fatalf("a page taken from an earlier read settled %+v after asking for the key of %q", s, source.asked)
 	}
 }
 
