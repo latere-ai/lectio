@@ -193,14 +193,72 @@ type UsageQuery struct {
 }
 
 // UsageSum is what one key used in one interval: the pages read, and the
-// model calls and the tokens they cost, the calls that failed included.
+// model calls and the tokens they cost, the calls that failed included. It
+// is written into an answer as it is.
 type UsageSum struct {
-	Key          string
-	Start        time.Time
-	Pages        int64
-	Calls        int64
-	InputTokens  int64
-	OutputTokens int64
+	Key          string    `json:"key"`
+	Start        time.Time `json:"start"`
+	Pages        int64     `json:"pages"`
+	Calls        int64     `json:"calls"`
+	InputTokens  int64     `json:"input_tokens"`
+	OutputTokens int64     `json:"output_tokens"`
+}
+
+// Queue is the queue as it stands at one instant
+// (specs/006-fairness-and-priority.md, specs/007-model-capacity.md): the
+// groups with what waits and what runs for each, and the readers' pools. It
+// is written into an answer as it is.
+type Queue struct {
+	Groups []QueueGroup `json:"groups"`
+	Pools  []QueuePool  `json:"pools"`
+}
+
+// QueueClass is the tasks of one class that wait and that run.
+type QueueClass struct {
+	Class   string `json:"class"`
+	Queued  int    `json:"queued"`
+	Running int    `json:"running"`
+}
+
+// QueueGroup is the queue of one group: its share and its bounds, its
+// parses that have not ended, its tasks per class, and its projects.
+type QueueGroup struct {
+	Group      string         `json:"group"`
+	Weight     int            `json:"weight"`
+	MaxRunning int            `json:"max_running"`
+	MaxQueued  int            `json:"max_queued"`
+	Parses     int            `json:"parses"`
+	Classes    []QueueClass   `json:"classes"`
+	Projects   []QueueProject `json:"projects"`
+}
+
+// QueueProject is the queue of one project of a group. The group's own
+// project has the empty name.
+type QueueProject struct {
+	Project string       `json:"project"`
+	Weight  int          `json:"weight"`
+	Parses  int          `json:"parses"`
+	Classes []QueueClass `json:"classes"`
+}
+
+// QueuePool is the pool of one reader: its bound on calls in flight, the
+// calls in flight, whether its breaker admits calls, and the key scopes
+// that were limited.
+type QueuePool struct {
+	Reader      string       `json:"reader"`
+	MaxInFlight int          `json:"max_in_flight"`
+	InFlight    int          `json:"in_flight"`
+	Breaker     string       `json:"breaker"`
+	Scopes      []QueueScope `json:"scopes"`
+}
+
+// QueueScope is one key scope of a pool: the key every group shares, which
+// has the empty name, or one group's key.
+type QueueScope struct {
+	Scope       string     `json:"scope"`
+	Ceiling     int        `json:"ceiling"`
+	InFlight    int        `json:"in_flight"`
+	PausedUntil *time.Time `json:"paused_until,omitempty"`
 }
 
 // Terminal reports whether the parse has ended.

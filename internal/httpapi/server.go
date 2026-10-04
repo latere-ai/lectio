@@ -134,7 +134,7 @@ func (s *Server) Routes() []Route {
 		{"GET", "/parses/{parse}/fields/{name}", true, s.plannedOnParse},
 		{"GET", "/readers", false, s.listReaders},
 		{"GET", "/usage", false, s.getUsage},
-		{"GET", "/queue", true, s.plannedQueue},
+		{"GET", "/queue", false, s.getQueue},
 	}
 }
 
@@ -149,14 +149,6 @@ func errPlanned() error {
 // not on the day the operation is built.
 func (s *Server) plannedOnParse(_ http.ResponseWriter, r *http.Request, c call) error {
 	if _, _, err := s.parse(r, c); err != nil {
-		return err
-	}
-	return errPlanned()
-}
-
-// plannedQueue answers the planned read of the queue.
-func (s *Server) plannedQueue(_ http.ResponseWriter, r *http.Request, c call) error {
-	if _, err := s.allowed(r, c, access.Queue("")); err != nil {
 		return err
 	}
 	return errPlanned()

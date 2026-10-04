@@ -36,24 +36,14 @@ var usageSteps = map[string]struct {
 	"day":  {24 * time.Hour, usageDays},
 }
 
-// usageSum is what one key used in one interval.
-type usageSum struct {
-	Key          string    `json:"key"`
-	Start        time.Time `json:"start"`
-	Pages        int64     `json:"pages"`
-	Calls        int64     `json:"calls"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-}
-
 // usageView is the answer of a read of the meters: the read as the server
 // took it, with its span moved out to whole intervals, and the sums.
 type usageView struct {
-	By       string     `json:"by"`
-	Interval string     `json:"interval"`
-	From     time.Time  `json:"from"`
-	To       time.Time  `json:"to"`
-	Sums     []usageSum `json:"sums"`
+	By       string           `json:"by"`
+	Interval string           `json:"interval"`
+	From     time.Time        `json:"from"`
+	To       time.Time        `json:"to"`
+	Sums     []store.UsageSum `json:"sums"`
 }
 
 // ranging lays the filter of an allow over the one owner, or the one
@@ -118,7 +108,7 @@ func (s *Server) span(r *http.Request, interval string) (from, to time.Time, err
 // them and to the owners its allow's filter lists.
 func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, c call) error {
 	q := r.URL.Query()
-	view := usageView{By: q.Get("by"), Interval: q.Get("interval"), Sums: []usageSum{}}
+	view := usageView{By: q.Get("by"), Interval: q.Get("interval"), Sums: []store.UsageSum{}}
 	if view.By == "" {
 		view.By = "group"
 	}
@@ -151,9 +141,36 @@ func (s *Server) getUsage(w http.ResponseWriter, r *http.Request, c call) error 
 		if err != nil {
 			return err
 		}
-		for _, sum := range sums {
-			view.Sums = append(view.Sums, usageSum(sum))
+		// A read with nothing in it is an empty list, and never null.
+		view.Sums = append(view.Sums, sums...)
+	}
+	httpjson.Write(w, http.StatusOK, view)
+	return nil
+}
+
+// getQueue reads the queue: what waits and what runs for each group and
+// each of its projects, and where the readers' pools stand. The question
+// carries the group the request names. The filter of its allow lists the
+// groups the caller may see as owners: a group is named by the owner it is
+// the group of, which under the owner policy is every owner's own.
+func (s *Server) getQueue(w http.ResponseWriter, r *http.Request, c call) error {
+	group := r.URL.Query().Get("group")
+	d, err := s.allowed(r, c, access.Queue(group))
+	if err != nil {
+		return err
+	}
+	view := store.Queue{}
+	if groups, none := ranging(group, d.Filter); !none {
+		if view, err = s.Backend.Queue(r.Context(), groups); err != nil {
+			return err
 		}
+	}
+	// A view with nothing in it holds empty lists, and never null.
+	if view.Groups == nil {
+		view.Groups = []store.QueueGroup{}
+	}
+	if view.Pools == nil {
+		view.Pools = []store.QueuePool{}
 	}
 	httpjson.Write(w, http.StatusOK, view)
 	return nil

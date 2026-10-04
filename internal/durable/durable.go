@@ -606,6 +606,44 @@ func (b *Backend) Usage(ctx context.Context, q store.UsageQuery) ([]store.UsageS
 	return out, nil
 }
 
+// Queue reads the queue from the counters the task store keeps for the
+// claim, and the pools from their rows.
+func (b *Backend) Queue(ctx context.Context, groups []string) (store.Queue, error) {
+	got, err := b.Store.Queue(ctx, groups)
+	if err != nil {
+		return store.Queue{}, err
+	}
+	out := store.Queue{Groups: make([]store.QueueGroup, len(got.Groups)), Pools: make([]store.QueuePool, len(got.Pools))}
+	for i, g := range got.Groups {
+		out.Groups[i] = store.QueueGroup{
+			Group: g.Group, Weight: g.Weight, MaxRunning: g.MaxRunning, MaxQueued: g.MaxQueued, Parses: g.Parses,
+			Classes: queueClasses(g.Classes), Projects: make([]store.QueueProject, len(g.Projects)),
+		}
+		for j, p := range g.Projects {
+			out.Groups[i].Projects[j] = store.QueueProject{Project: p.Project, Weight: p.Weight, Parses: p.Parses, Classes: queueClasses(p.Classes)}
+		}
+	}
+	for i, p := range got.Pools {
+		out.Pools[i] = store.QueuePool{
+			Reader: p.Reader, MaxInFlight: p.MaxInFlight, InFlight: p.InFlight, Breaker: p.Breaker,
+			Scopes: make([]store.QueueScope, len(p.Scopes)),
+		}
+		for j, sc := range p.Scopes {
+			out.Pools[i].Scopes[j] = store.QueueScope(sc)
+		}
+	}
+	return out, nil
+}
+
+// queueClasses names the classes of a queue as the API names them.
+func queueClasses(classes []postgres.ClassQueue) []store.QueueClass {
+	out := make([]store.QueueClass, len(classes))
+	for i, c := range classes {
+		out[i] = store.QueueClass{Class: c.Class.String(), Queued: c.Queued, Running: c.Running}
+	}
+	return out
+}
+
 // Figures is not built over the durable control plane: describing figures
 // is a task of its own there, and that task does not exist yet.
 func (b *Backend) Figures(context.Context, store.Parse, run.FigureOptions) error {

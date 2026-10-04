@@ -20,6 +20,7 @@ import (
 
 	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/internal/testfixtures"
 )
 
@@ -275,5 +276,160 @@ func TestADevelopmentServerBuildsNothingOverTheTaskStore(t *testing.T) {
 	}
 	if got := e.as("bob-token").do("POST", "/parses/"+pid+"/retry", nil); got.status != http.StatusNotFound {
 		t.Errorf("a retry of another caller's parse in a development server: %d %s", got.status, got.body)
+	}
+}
+
+// TestTheQueueIsViewedPerGroupAndProject: a known set of parses of 2 groups
+// is queued through the API, each under its own allow, and no worker runs.
+// The view holds each group with its weight, its bounds, its parses that
+// have not ended and its queued and running tasks per class, the same for
+// each project, and the reader's pool with the calls in flight. A caller
+// is answered the groups its allow's filter lists, with the calls in
+// flight that are theirs, and one group by name when the authorizer
+// allows.
+func TestTheQueueIsViewedPerGroupAndProject(t *testing.T) {
+	d := dispatched(t, nil)
+	groups := map[string]string{"alice": "acme", "bob": "beta"}
+	d.rec.answer = func(req authz.Request) (authz.Decision, error) {
+		allow := authz.Decision{Allow: true}
+		switch {
+		case req.Action == "queue.read" && req.Subject == "root":
+			// The operator sees every group.
+		case req.Action == "queue.read" && req.Resource.String("group") == "":
+			allow.Filter = &authz.Filter{Owners: []string{groups[req.Subject]}}
+		case req.Action == "queue.read" && req.Resource.String("group") != groups[req.Subject]:
+			return authz.Decision{Reason: "not_your_group"}, nil
+		case req.Subject == "alice":
+			allow.Limits = []byte(`{"group": "acme", "weight": 4, "max_queued": 10, "max_running": 6}`)
+			if req.Resource.String("class") == "batch" {
+				allow.Limits = []byte(`{"group": "acme", "weight": 4, "max_queued": 10, "max_running": 6, "project": "search", "project_weight": 2}`)
+			}
+		case req.Subject == "bob":
+			allow.Limits = []byte(`{"group": "beta"}`)
+		}
+		return allow, nil
+	}
+	alice, bob, root := d.env, d.as("bob-token"), d.as("root-token")
+	queued := func(e *env, options string) {
+		t.Helper()
+		file := e.upload("scan.png", sheet(t))
+		if r := e.do("POST", "/parses", `{"source":{"file":"`+file+`"},"reuse":false`+options+`}`); r.status != http.StatusAccepted {
+			t.Fatalf("submit: %d %s", r.status, r.body)
+		}
+	}
+	// acme: one parse in its own project and a batch parse in the project
+	// search. beta: 2 parses.
+	queued(alice, ``)
+	queued(alice, `,"class":"batch"`)
+	queued(bob, ``)
+	queued(bob, ``)
+
+	// group finds a group of a view, and classes lists its tasks per class
+	// as "class:queued/running".
+	group := func(view map[string]any, id string) map[string]any {
+		t.Helper()
+		for _, g := range view["groups"].([]any) {
+			if at(g, "group") == id {
+				return g.(map[string]any)
+			}
+		}
+		t.Fatalf("no group %s in %v", id, view["groups"])
+		return nil
+	}
+	classes := func(of any) string {
+		var out []string
+		for _, c := range at(of, "classes").([]any) {
+			out = append(out, fmt.Sprintf("%v:%v/%v", at(c, "class"), at(c, "queued"), at(c, "running")))
+		}
+		return strings.Join(out, " ")
+	}
+
+	// Nothing was claimed: each parse waits with its prepare task.
+	view := root.do("GET", "/queue", nil)
+	if view.status != http.StatusOK || len(view.json(t)["groups"].([]any)) != 2 {
+		t.Fatalf("the queue: %d %s", view.status, view.body)
+	}
+	acme, beta := group(view.json(t), "acme"), group(view.json(t), "beta")
+	if acme["weight"] != 4.0 || acme["max_queued"] != 10.0 || acme["max_running"] != 6.0 || acme["parses"] != 2.0 || classes(acme) != "interactive:1/0 batch:1/0" {
+		t.Fatalf("acme is viewed as %v", acme)
+	}
+	projects := acme["projects"].([]any)
+	if len(projects) != 2 || at(projects[0], "project") != "" || classes(projects[0]) != "interactive:1/0" || at(projects[0], "parses") != 1.0 ||
+		at(projects[1], "project") != "search" || at(projects[1], "weight") != 2.0 || classes(projects[1]) != "batch:1/0" {
+		t.Fatalf("the projects of acme are viewed as %v", projects)
+	}
+	if beta["weight"] != 1.0 || beta["max_queued"] != 0.0 || beta["parses"] != 2.0 || classes(beta) != "interactive:2/0" {
+		t.Fatalf("beta is viewed as %v", beta)
+	}
+	pool := view.json(t)["pools"].([]any)
+	if len(pool) != 1 || at(pool[0], "reader") != "stub" || at(pool[0], "in_flight") != 0.0 || at(pool[0], "breaker") != "closed" || len(at(pool[0], "scopes").([]any)) != 0 {
+		t.Fatalf("the pools are viewed as %v", pool)
+	}
+
+	// The 4 prepares are run, each counting 3 pages, and 5 of the 12 pages
+	// are claimed and held.
+	ctx := context.Background()
+	prepares, err := d.st.Exchange(ctx, d.worker, tasks.Request{Free: 10, Idle: true})
+	if err != nil || len(prepares.Claims) != 4 {
+		t.Fatalf("claiming the prepares: %d claims, %v", len(prepares.Claims), err)
+	}
+	var settles []tasks.Settle
+	for _, c := range prepares.Claims {
+		settles = append(settles, tasks.Settle{
+			Parse: c.Parse, Task: c.Task, Token: c.Token, Outcome: tasks.Done, Units: 1,
+			Prepare: &tasks.Prepared{Manifest: []byte(`{"media_type":"application/pdf","source":"reader","pages_total":3,"selected":[1,2,3]}`), Pages: []int{1, 2, 3}},
+		})
+	}
+	reply, err := d.st.Exchange(ctx, d.worker, tasks.Request{Settles: settles, Free: 5, Idle: true})
+	if err != nil || len(reply.Claims) != 5 || len(reply.Refused) != 0 {
+		t.Fatalf("claiming 5 pages: %+v, %v", reply, err)
+	}
+	held := map[string]float64{}
+	for _, c := range reply.Claims {
+		held[c.Group]++
+	}
+	view = root.do("GET", "/queue", nil)
+	for id, pages := range map[string]float64{"acme": 6, "beta": 6} {
+		var waiting, running float64
+		for _, c := range group(view.json(t), id)["classes"].([]any) {
+			waiting, running = waiting+at(c, "queued").(float64), running+at(c, "running").(float64)
+		}
+		if running != held[id] || waiting+running != pages {
+			t.Errorf("%s is viewed with %v tasks waiting and %v running, and %v of its %v pages were claimed", id, waiting, running, held[id], pages)
+		}
+	}
+	if pool := view.json(t)["pools"].([]any); at(pool[0], "in_flight") != 5.0 {
+		t.Fatalf("with 5 pages claimed the pool is viewed as %v", pool[0])
+	}
+
+	// A caller is answered its own group, and the calls that are its own.
+	for sub, e := range map[string]*env{"alice": alice, "bob": bob} {
+		own := e.do("GET", "/queue", nil)
+		listed := own.json(t)["groups"].([]any)
+		if own.status != http.StatusOK || len(listed) != 1 || at(listed[0], "group") != groups[sub] || at(own.json(t)["pools"].([]any)[0], "in_flight") != held[groups[sub]] {
+			t.Errorf("%s's view of the queue: %d %s", sub, own.status, own.body)
+		}
+		named := e.do("GET", "/queue?group="+groups[sub], nil)
+		if named.status != http.StatusOK || len(named.json(t)["groups"].([]any)) != 1 {
+			t.Errorf("%s's view of its group by name: %d %s", sub, named.status, named.body)
+		}
+	}
+	if got := alice.do("GET", "/queue?group=beta", nil); got.status != http.StatusForbidden || got.code(t) != "forbidden" {
+		t.Errorf("alice's view of beta: %d %s", got.status, got.body)
+	}
+	if got := root.do("GET", "/queue?group=beta", nil); got.status != http.StatusOK || len(got.json(t)["groups"].([]any)) != 1 {
+		t.Errorf("the operator's view of beta: %d %s", got.status, got.body)
+	}
+	// The question carries the group the request names.
+	d.rec.take()
+	alice.do("GET", "/queue?group=acme", nil)
+	if asked := d.rec.take(); len(asked) != 1 || asked[0].Action != "queue.read" || asked[0].Resource.String("group") != "acme" {
+		t.Errorf("a read that names a group asked %+v", asked)
+	}
+	// A filter that leaves nobody is answered with nothing, and not with
+	// everything.
+	d.rec.answer = allowing("", &authz.Filter{Owners: []string{}})
+	if got := alice.do("GET", "/queue", nil); got.status != http.StatusOK || len(got.json(t)["groups"].([]any)) != 0 || len(got.json(t)["pools"].([]any)) != 0 {
+		t.Errorf("a view narrowed to nobody: %d %s", got.status, got.body)
 	}
 }

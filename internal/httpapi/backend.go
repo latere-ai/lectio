@@ -89,6 +89,12 @@ type Backend interface {
 	// the keys.
 	Usage(ctx context.Context, q store.UsageQuery) ([]store.UsageSum, error)
 
+	// Queue returns the queue as it stands: the groups with their
+	// projects, and the readers' pools. Nil groups is every group that
+	// holds a parse that has not ended, and a list is those groups, with
+	// the pools as those groups see them.
+	Queue(ctx context.Context, groups []string) (store.Queue, error)
+
 	// Figures starts a run that describes the figures of a parse, and
 	// FigureRun returns the run of a parse when one was started.
 	// WaitFigures returns when the run has ended, when d has passed, or
@@ -190,6 +196,12 @@ func (m *Memory) Events(context.Context, string, int64, int) (store.Events, erro
 // the task store as tasks settle.
 func (m *Memory) Usage(context.Context, store.UsageQuery) ([]store.UsageSum, error) {
 	return nil, undurable("the meter")
+}
+
+// Queue is not built in a development server: its runner has one queue
+// for every owner, no group and no pool.
+func (m *Memory) Queue(context.Context, []string) (store.Queue, error) {
+	return store.Queue{}, undurable("the view of the queue")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

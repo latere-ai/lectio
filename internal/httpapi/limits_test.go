@@ -76,17 +76,14 @@ func (h *bounded) row(id string) postgres.Parse {
 // submit left it.
 func (h *bounded) group(id string) postgres.GroupQueue {
 	h.t.Helper()
-	queue, err := h.st.Queue(context.Background())
+	queue, err := h.st.Queue(context.Background(), []string{id})
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	for _, g := range queue {
-		if g.Group == id {
-			return g
-		}
+	if len(queue.Groups) != 1 {
+		h.t.Fatalf("no group %q in %+v", id, queue.Groups)
 	}
-	h.t.Fatalf("no group %q in %+v", id, queue)
-	return postgres.GroupQueue{}
+	return queue.Groups[0]
 }
 
 // submit submits a parse of a file with options and returns the answer.

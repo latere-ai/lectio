@@ -21,7 +21,8 @@ info:
 
     A body with a field this document does not describe is refused with
     `unknown_field`. A route marked `x-lectio-status: planned` is part of the
-    contract and answers `501 not_implemented` until it is built.
+    contract and answers `501 not_implemented` until it is built. A route
+    that one kind of server does not build yet says so and lists the `501`.
 
     Every error has the same shape: one `code` to branch on, one `message`
     for a person, and `details` for a developer. Any operation may answer
@@ -666,11 +667,31 @@ paths:
     get:
       tags: [operations]
       operationId: getQueue
-      x-lectio-status: planned
       summary: Read the queue
-      description: Read what is waiting and running, per group and project.
+      description: |
+        Read what is waiting and running, per group and project.
+
+        Each group is listed with its weight and its bounds, how many of
+        its parses have not ended, and its queued and running tasks per
+        class, and each of its projects with the same. A task is a unit
+        of work of a parse, a page for the most part, and a running task
+        is one a worker holds. Each reader's pool is listed with the
+        calls it has in flight against its bound, whether its breaker
+        admits calls, and the keys of it that a rate limit paused.
+
+        The answer holds what the caller may see: its own group, unless
+        the authorizer lets it see more, and then every group that holds
+        a parse that has not ended. `group` asks for one group, which the
+        authorizer may refuse; a group that is named is listed whether it
+        holds work or not. A caller that sees some groups is told the
+        calls in flight that are theirs, and their own keys.
+
+        A development server has one queue for every caller and answers
+        `501 not_implemented`.
+      parameters:
+        - { name: group, in: query, description: Limits the read to one group., schema: { type: string } }
       responses:
-        "200": { description: The queue., content: { application/json: { schema: { type: object } } } }
+        "200": { description: The queue., content: { application/json: { schema: { $ref: "#/components/schemas/Queue" } } } }
         "501": { $ref: "#/components/responses/Error" }
 
 components:
@@ -919,6 +940,67 @@ components:
         calls: { type: integer, format: int64, description: "Model calls, those that failed or were told to wait included." }
         input_tokens: { type: integer, format: int64 }
         output_tokens: { type: integer, format: int64 }
+
+    Queue:
+      type: object
+      required: [groups, pools]
+      properties:
+        groups: { type: array, items: { $ref: "#/components/schemas/QueueGroup" } }
+        pools: { type: array, items: { $ref: "#/components/schemas/QueuePool" } }
+
+    QueueClass:
+      type: object
+      required: [class, queued, running]
+      properties:
+        class: { type: string, enum: [interactive, batch] }
+        queued: { type: integer, description: Tasks that wait. }
+        running: { type: integer, description: Tasks a worker holds. }
+
+    QueueGroup:
+      type: object
+      required: [group, weight, max_running, max_queued, parses, classes, projects]
+      properties:
+        group: { type: string }
+        weight: { type: integer, description: The group's share of service against other groups. }
+        max_running: { type: integer, description: The most tasks of the group that run at once. 0 is no bound. }
+        max_queued: { type: integer, description: The most parses of the group that have not ended. 0 is no bound. }
+        parses: { type: integer, description: The group's parses that have not ended. }
+        classes: { type: array, description: One per class the group has had work in., items: { $ref: "#/components/schemas/QueueClass" } }
+        projects: { type: array, items: { $ref: "#/components/schemas/QueueProject" } }
+
+    QueueProject:
+      type: object
+      required: [project, weight, parses, classes]
+      properties:
+        project: { type: string, description: Empty for the group's own project. }
+        weight: { type: integer, description: The project's share of what its group is served. }
+        parses: { type: integer, description: The project's parses that have not ended. }
+        classes: { type: array, items: { $ref: "#/components/schemas/QueueClass" } }
+
+    QueuePool:
+      type: object
+      required: [reader, max_in_flight, in_flight, breaker, scopes]
+      properties:
+        reader: { type: string }
+        max_in_flight: { type: integer, description: The most calls to the reader at once, across every group. }
+        in_flight: { type: integer, description: "Calls in flight: of every group, or of the groups the answer holds when it is narrowed to some." }
+        breaker:
+          type: string
+          enum: [closed, open, trial]
+          description: "`closed` admits calls. `open` admits none: the reader failed several times in a row. `trial` admits one call, whose outcome closes the breaker or opens it again."
+        scopes:
+          type: array
+          description: The keys of the reader that a rate limit reached. A key that never was limited is not listed.
+          items: { $ref: "#/components/schemas/QueueScope" }
+
+    QueueScope:
+      type: object
+      required: [scope, ceiling, in_flight]
+      properties:
+        scope: { type: string, description: "Whose key it is: empty for the key every group shares, and the group for a key of its own." }
+        ceiling: { type: integer, description: The most calls with the key at once as it stands. A rate limit halves it and quiet time restores it. }
+        in_flight: { type: integer }
+        paused_until: { type: string, format: date-time, description: When the pause of a rate limit ends. Absent when the key is not paused. }
 
     Kind:
       type: string
