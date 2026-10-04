@@ -278,6 +278,62 @@ that is given no network. `prepare` calls it like any other step. A
 worker with no converter configured refuses the formats that need one
 with `unsupported_media_type`.
 
+The sidecar is `lectio-convert` ([[016-distribution]]), and the call is
+one HTTP request: a POST of the file to `/v1/convert`, with the file's
+media type as `Content-Type` and the type wanted as `Accept`. It
+converts seven pairs and no other: `.doc` to `.docx`, and `.pptx`,
+`.ppt`, `.odp`, `.key`, `.rtf` and `.odt` to PDF. The answer is the
+conversion, or a status with a body of `{"error": {"code", "detail"}}`:
+
+| Answer | Meaning | The parse fails with |
+|---|---|---|
+| `200` | the conversion, as the type asked for | |
+| `415` | the sidecar does not convert that pair | `unsupported_media_type` |
+| `413` | the file, or its conversion, is over `LECTIO_MAX_FILE_BYTES` | `file_too_large` |
+| `422` | the suite did not convert the file within its time and its memory | `document_corrupt` |
+| any other status, no answer, or none within 5 minutes | the sidecar failed | `internal` |
+
+The first three are the file's, as a page that does not render within
+its bounds is. The last is not the file's and not its caller's. The
+client follows no redirect, so a sidecar cannot send a file on, and it
+holds a conversion to the size a file is held to. `prepare` then reads
+the conversion as it reads any file, so a conversion that is not the
+type it was asked for fails as a corrupt file does.
+
+What the sidecar does for the four rules, and what it leaves to whoever
+runs it:
+
+- **Network.** The sidecar cannot take the network from itself. It is
+  run in a container with no network, listening on a socket in a
+  directory it shares with the worker
+  (`LECTIO_CONVERT_ADDR=unix:/run/lectio/convert.sock`, and the worker's
+  `LECTIO_CONVERTER_URL=unix:///run/lectio/convert.sock`), which leaves
+  it no route to any address, the worker's included. Where containers
+  of one pod share a network, it is a pod of its own under a policy
+  that denies it all egress and admits the workers' calls.
+- **Profile.** Each conversion gets a profile of its own, written
+  before the suite starts: macro execution disabled, the macro security
+  level at its highest, links out of a document blocked, and links not
+  updated on load. The filter that reads the file is named for its
+  type, so the suite does not choose one from what the bytes look like.
+- **Credentials.** The sidecar holds none and is given none. The suite
+  is started with an environment of two variables, its home and its
+  directory for temporary files, both inside the conversion's scratch
+  directory. The scratch directory holds the file, the profile and
+  everything the suite writes, and is removed when the conversion ends,
+  however it ends, with the socket the suite leaves outside it when it
+  is killed.
+- **Time and memory.** One conversion runs at a time, and a call that
+  waits holds a connection and no part of its file. The suite runs in a
+  process group of its own. Past `LECTIO_CONVERT_TIMEOUT` (2 minutes)
+  the whole group is killed. `LECTIO_CONVERT_MEMORY_BYTES` (4 GiB)
+  bounds the address space of the suite and of everything it starts:
+  the sidecar's own program sets the limit on itself and then becomes
+  the suite, so the system enforces it, an allocation past it fails,
+  and the suite ends. That is a bound on address space. The bound on
+  the memory a container holds is the container's own limit, which the
+  deployment sets.
+
 The first draft scheduled conversion instead: a second server image
 that carried the suite, workers that advertised whether they could
 convert, and a column the claim query filtered on. That put one
@@ -416,6 +472,14 @@ Built:
   CSV as one page holding one table, `.docx` as one page of blocks, and
   `.xlsx` and `.xlsm` as one page per sheet, each read from the package
   under the bounds above.
+- `internal/convert`, `cmd/lectio-convert` and `deploy/converter`: the
+  client a pipeline converts through, the sidecar that answers it, and
+  the sidecar's image, with the suite, as a user that is not root. Run
+  by hand, with no network, on a socket: all seven conversions through
+  LibreOffice 25.2, a conversion past its time limit killed with
+  nothing left running or on disk, and a suite under a memory limit too
+  small for it refused. `make live-convert` repeats the conversions
+  against a running sidecar.
 - `internal/render`: the interface above; a renderer for PNG, JPEG and
   each frame of a TIFF, with the bound on decoded pixels, scaling,
   re-encoding and the blank check; and the PDF renderer with every
@@ -430,12 +494,20 @@ Remaining:
   uploads, and a parse of one fails with `unsupported_media_type`.
 - The bytes of a picture in a `.docx`. A figure of a native page has no
   image.
-- The conversion sidecar. `internal/convert` holds the client a
-  pipeline converts through, which a server reaches by
-  `LECTIO_CONVERTER_URL` ([[016-distribution]]); nothing answers it
-  yet, so the formats that need conversion are still refused in
-  practice. The sidecar and its isolation are to build together: a
-  converter with a network is not an intermediate step.
+- The denial of the network to the sidecar, as something the
+  repository ships and tests. The image and the sidecar are built, and
+  run with no network when they are told to; the manifests that tell
+  them to (`deploy/`, [[016-distribution]]) are not, and no test in the
+  gate runs a container. The test with a counting server is not built
+  either: run by hand with a network, three documents that name an
+  outside resource were converted by this suite without one fetch, with
+  the profile and without it, so the profile's effect has not been
+  observed.
+- The memory limit under a real suite in the gate. The gate proves the
+  limit is set on the suite's process; that the system then enforces it
+  was checked by hand in the image.
+- Detecting a legacy office file by its content. A `.doc` and a `.ppt`
+  are compound files, told apart by their name or declared type.
 - The working copy on disk and its cache. The steps hold the file in
   memory.
 
@@ -476,6 +548,10 @@ a test:
 | A workbook is one page per sheet with its merged cells as spans, its dates in ISO 8601, and its formulas as their stored values | `TestAWorkbookIsOnePagePerSheet`, `TestRender` |
 | Each office format read natively has a generated fixture and one an office suite wrote back out, and each comes out of `prepare` with the stated pages, blocks of each kind, table shape, spanned cells and texts | `TestOfficeFormatsAreReadFromTheirOwnStructure` |
 | A converter has no route to any address, the worker's own included, and a document that names an external resource converts without fetching it | a test with a converter in a container and a counting server |
-| A deployment with no converter fails a parse that needs one with `unsupported_media_type` at `prepare` | a pipeline test |
-| A conversion that exceeds its time or its memory limit is killed with its children and leaves no file in the scratch directory | a test with a stub converter |
+| A deployment with no converter fails a parse that needs one with `unsupported_media_type` at `prepare`, and one with a converter reads the conversion's pages | `TestTheDevServerConvertsThroughAConverter` |
+| A conversion that exceeds its time limit is killed with its children and leaves no file in the scratch directory, and the suite runs under the memory limit it is given | `TestAConversionPastItsTimeLimitIsKilledWithItsChildren`, `TestTheSuiteRunsUnderTheMemoryLimit` |
+| The suite is started with the filter for the file's type, a profile that turns macros and links off, and an environment that holds nothing of the sidecar's | `TestTheSuiteIsGivenNothingOfTheSidecar` |
+| The client maps each answer of the sidecar to its code, follows no redirect, does not wait past its time limit, and refuses a conversion over the size limit | `TestTheClientMapsWhatTheSidecarAnswers`, `TestTheClientDoesNotWaitPastItsTimeLimit` |
+| One conversion runs at a time, and a call that stops waiting was never started | `TestOneConversionRunsAtATime` |
+| Every type the detector routes to conversion is one the sidecar converts, and a real suite converts the fixture of each | `TestEveryConvertedTypeHasAConversion`; `TestLiveConverter`, run by hand |
 | A blank page costs no reader call | a test with a counting stub reader |

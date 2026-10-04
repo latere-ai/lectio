@@ -37,6 +37,7 @@ repository ships a server anyone runs, and no interface.
 
 ```
 cmd/lectiod/              the server: roles api and worker
+cmd/lectio-convert/       the conversion sidecar: an office suite behind one call
 cmd/lectio-stubs/         the stub model endpoint, authorizer and key endpoint (not built)
 api/                      public: openapi.yaml, the contract, embedded for the server to serve
 authorizer/               public: the action vocabulary and limits (not built)
@@ -47,7 +48,7 @@ reader/layout/            the adapter for a layout engine behind its own HTTP co
 reader/stub/              a deterministic reader and extractor that make no call
 internal/assemble/        the document-wide passes and the views
 internal/config/          settings from the environment; Reader and Policy documents
-internal/convert/         conversion: the client a pipeline converts through
+internal/convert/         conversion: the client a pipeline converts through, and the sidecar's service
 internal/fault/           the error codes
 internal/fetch/           a source URL fetched with the address check
 internal/httpapi/         the routes, held to the contract by its tests
@@ -64,6 +65,7 @@ internal/tasks/           the protocol a worker and a task store share
 internal/testfixtures/    files the tests read
 internal/version/         the build's version, stamped by the linker
 deploy/base/              manifests for a cluster, with no host or account in them (not built)
+deploy/converter/         the image of the conversion sidecar
 deploy/examples/          a compose file: Postgres, an object store, lectiod, the stubs (not built)
 docs/                     running it, the configuration reference, the API guide (not built)
 test/                     conformance, end-to-end, soak, fixtures (not built)
@@ -144,6 +146,9 @@ whether the binary reads the variable today.
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
 | `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | no |
 | `LECTIO_CONVERTER_URL` | none: formats that need conversion are refused | [[009-intake]] | yes |
+| `LECTIO_CONVERT_ADDR` | `:8090` | [[009-intake]] | yes, by `lectio-convert` |
+| `LECTIO_CONVERT_SUITE` | `soffice`, found on `PATH` | [[009-intake]] | yes, by `lectio-convert` |
+| `LECTIO_CONVERT_TIMEOUT`, `LECTIO_CONVERT_MEMORY_BYTES` | 2m, 4 GiB | [[009-intake]] | yes, by `lectio-convert` |
 | `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] | no |
 | `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
 | `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
@@ -159,7 +164,10 @@ never its value: a variable may hold a secret by mistake.
 `LECTIO_CONVERTER_URL` is where the conversion sidecar listens:
 `http://host:port`, or `unix:///path/to/socket` for a sidecar that has
 no network and listens on a socket in a directory it shares with the
-server.
+server. The `LECTIO_CONVERT_*` variables are the sidecar's own, and it
+also reads `LECTIO_MAX_FILE_BYTES`, for the largest file it takes and
+the largest conversion it returns. `LECTIO_CONVERT_ADDR` is `host:port`
+or `unix:/path/to/socket`.
 
 `LECTIO_DEV=true` runs one process with the memory store, the owner
 scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
@@ -243,11 +251,17 @@ Built:
   both URLs.
 - A graceful stop: an upload that is still sending its body when the
   signal arrives is answered.
+- `cmd/lectio-convert` and `deploy/converter/Dockerfile`: the conversion
+  sidecar and its image, which holds the suite and the one binary and
+  runs as a user that is not root. `lectio-convert version` prints the
+  build's version. The image is built by hand; no workflow builds or
+  publishes it.
 
 Remaining:
 
-- `lectio-stubs`, the images, `deploy/`, `docs/`, the generated
-  configuration reference and its test, and the release workflow.
+- `lectio-stubs`, the server's image and the stubs', the rest of
+  `deploy/`, `docs/`, the generated configuration reference and its
+  test, the image tests, and the release workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end
   tests of the API and the development server in one process, and the
   tests of `internal/store/postgres`, which start one Postgres and one
@@ -257,8 +271,10 @@ Remaining:
   container runtime answers. The dispatch simulation is among them: it
   drives the exchange function one task at a time with a virtual
   clock. There is no memory twin of the task store for a conformance
-  suite to hold to the same cases, and no soak. The live tier is one test, `make live`,
-  which reads a real file with a configured reader and is run by hand.
+  suite to hold to the same cases, and no soak. The live tier is 2
+  tests run by hand: `make live`, which reads a real file with a
+  configured reader, and `make live-convert`, which converts a fixture
+  of each converted format through a running sidecar.
 - `LECTIO_DEV` holds page images in memory and has no local directory
   for objects.
 - The health probe is `GET /healthz`. Readiness and version probes

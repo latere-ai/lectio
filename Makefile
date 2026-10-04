@@ -3,7 +3,7 @@
 
 GO ?= go
 
-.PHONY: build check clean fmt hooks live openapi run specs
+.PHONY: build check clean fmt hooks live live-convert openapi run specs
 
 # The whole bar. Every gate lives in latere.ai/x/ci-gate, pinned as a tool
 # in go.mod and configured in .lateregate.yaml, so this target is a name for
@@ -54,6 +54,15 @@ specs:
 # the figures described by the Policy's describe chain.
 live:
 	@$(GO) test ./cmd/lectiod -run '^TestLiveReader$$' -count=1 -v -timeout 40m
+
+# live-convert converts a fixture of every format that needs conversion
+# through a running sidecar, and so through a real office suite. It needs
+# the sidecar, so it is never part of `make check`:
+#   LECTIO_LIVE_CONVERTER=http://127.0.0.1:8090 make live-convert
+# The address may be unix:///path/to/socket. LECTIO_LIVE_OUT is a directory
+# each conversion is written to.
+live-convert:
+	@$(GO) test ./internal/convert -run '^TestLiveConverter$$' -count=1 -v -timeout 20m
 
 # openapi checks that api/openapi.yaml and the router agree.
 openapi:

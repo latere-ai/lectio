@@ -100,6 +100,30 @@ stored for it. Every PDF
 page is rendered and sent to the reader; reading the text a PDF already
 carries is designed and not built.
 
+Presentations (`.pptx`, `.ppt`, `.odp`, `.key`), rich text (`.rtf`),
+open document text (`.odt`) and legacy Word files (`.doc`) are converted
+first, by a sidecar that holds an office suite. A server with no sidecar
+refuses them, and a legacy Excel file (`.xls`) is refused either way.
+The sidecar runs a large program on a file somebody else wrote, so it
+is run with no network, on a socket the server shares with it:
+
+```sh
+podman build -f deploy/converter/Dockerfile -t lectio-convert .
+podman volume create lectio-convert
+podman run -d --network none -v lectio-convert:/run/lectio \
+  -e LECTIO_CONVERT_ADDR=unix:/run/lectio/convert.sock lectio-convert
+```
+
+A server in a container that mounts the same volume reaches it with
+`LECTIO_CONVERTER_URL=unix:///run/lectio/convert.sock`. For a server on
+a laptop, the sidecar can listen on a port instead. It then has a
+network, which is for your own files and not for ones you do not trust:
+
+```sh
+podman run -d -p 127.0.0.1:8090:8090 lectio-convert
+LECTIO_DEV=true LECTIO_CONVERTER_URL=http://127.0.0.1:8090 out/lectiod
+```
+
 To check a reader against a real file, end to end:
 
 ```sh

@@ -26,6 +26,8 @@ test is a claim, and no claim is listed here.
 | the worker's memory and time, from a zipped office document | a package is refused for what its directory declares before a byte is inflated, a part cannot inflate past what it declares, and markup is held to bounds on its depth, its tokens and the size of one tag | `TestAPartThatDeclaresMoreThanItsBoundIsRefusedBeforeItIsInflated`, `TestAPartThatInflatesPastWhatItDeclaresIsRefused`, `TestAPackageOfTooManyEntriesIsRefused`, `TestMarkupIsHeldToItsBounds` |
 | the worker's memory, from a workbook | the size a sheet declares and the count of strings a workbook declares are checked and never allocated for, and the cells and the text a workbook's tables may hold are bounded, so one long string named by many cells is refused | `TestWhatASheetDeclaresIsNeverAllocatedFor` |
 | the worker's files and network, from a zipped office document | a part that declares a document type or an entity is refused, and a relationship reaches a part of the same package or nothing | `TestAPartThatDeclaresAnEntityIsRefused`, `TestARelationshipThatLeavesThePackageIsNotFollowed` |
+| the server's credentials and network, from a file that is converted | conversion runs in a sidecar that holds no credential; its office suite is started with an environment that holds nothing of the sidecar's, in a scratch directory of its own, with a profile that turns macros and links off, and is killed with everything it started when it passes its time limit | `TestTheSuiteIsGivenNothingOfTheSidecar`, `TestAConversionPastItsTimeLimitIsKilledWithItsChildren` |
+| where a file that is converted is sent | the server sends it to the sidecar it was configured with and follows no redirect from it | `TestTheClientMapsWhatTheSidecarAnswers` |
 | what a parse reports about a file | a PDF's pages are counted by the engine that renders them, so a file cannot claim pages it does not have or hide ones it has | `TestPrepareCountsAPDFsPagesWithTheEngineThatRendersThem` |
 | a model credential | it is passed to a reader per call and never appears in an error, a log line, or a stored result | `TestCredentialNeverLeaves` |
 | a caller's files and parses | every operation needs a token and is scoped to its owner; another caller's file or parse is not found, whatever is asked of it | `TestACallerIsKnownAndSeesOnlyItsOwn` |
@@ -53,10 +55,14 @@ test, so none is in the table above.
 - **What a deleted file leaves.** Deleting a file deletes its snapshot.
   The page images of the parses that read it are pictures of the same
   content and stay until those parses are deleted or expire.
-- **Conversion.** Office formats are not converted by this build. When
-  they are, the converter runs with no network and none of the server's
-  credentials, because an office document can name resources for the
-  program that opens it to fetch.
+- **Conversion.** An office document can name resources for the program
+  that opens it to fetch, so the sidecar that converts must have no
+  network. It cannot take the network from itself: whoever runs it
+  does, with a container that has none or a policy that denies it all
+  traffic but the server's calls. A sidecar that is run with a network
+  is not protected by anything in the table above against a file that
+  names an address. The memory limit on its suite bounds address space;
+  the limit on the memory its container holds is the container's own.
 
 ## What is out of scope
 

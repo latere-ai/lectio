@@ -89,3 +89,17 @@ refused before it is pushed.
   keep their spans, a date reads as an ISO 8601 date, a percentage as a
   percentage, and a formula as the value the workbook stored for it;
   no formula is evaluated and no macro is opened.
+- Added: `lectio-convert`, a sidecar that converts what the server does
+  not read itself: `.doc` to `.docx`, and `.pptx`, `.ppt`, `.odp`,
+  `.key`, `.rtf` and `.odt` to PDF. `deploy/converter/Dockerfile` builds
+  its image. It holds no credential, runs its office suite with an
+  empty environment in a scratch directory under a limit on time and on
+  memory, and is meant to be run with no network: give it a socket on a
+  volume with `LECTIO_CONVERT_ADDR=unix:/path`.
+- Added: `LECTIO_CONVERTER_URL`, where the server reaches the sidecar,
+  as `http://host:port` or `unix:///path/to/socket`. With none set the
+  formats that need conversion are refused with
+  `unsupported_media_type`, as before.
+- Added: `.odt` and `.odp` files are detected.
+- Added: `make live-convert`, an opt-in test that converts a fixture of
+  every converted format through a running sidecar.
