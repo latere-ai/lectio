@@ -163,6 +163,14 @@ var families = []family{
 			return `[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,` + strconv.Itoa(20+i) + `]`
 		}))
 	}},
+	{"lists whose texts hash alike and must differ", func(n int) (string, string) {
+		// The validator frames a text in a hash with no length, so the 12
+		// pieces cut into 6 texts at other places hash alike: every pair of
+		// items is compared in full, the long list of numbers first.
+		big := join(60, func(j int) string { return strconv.Itoa(j) + ".5" })
+		return `{"type":"object","properties":{"l":{"uniqueItems":true}}}`,
+			`{"l":[` + join(min(n, len(cuts)), func(i int) string { return `[[` + big + `],` + cuts[i] + `]` }) + `]}`
+	}},
 	{"a list that must contain what it does not", func(n int) (string, string) {
 		return `{"type":"object","properties":{"l":{"contains":{"type":"string"},"minContains":3,"maxContains":4}}}`, `{"l":[` + join(n, odd) + `]}`
 	}},
@@ -290,6 +298,31 @@ func TestCountedWorkBoundsTheValidatorsTime(t *testing.T) {
 		}
 	}
 }
+
+// cuts are the 462 ways to cut the 12 pieces a to l into 6 texts, each
+// written as the 6 JSON texts with the pieces of one text joined by the
+// control character U+0004.
+var cuts = func() []string {
+	var out []string
+	pieces := strings.Split("abcdefghijkl", "")
+	var walk func(from, left int, at []int)
+	walk = func(from, left int, at []int) {
+		if left == 0 {
+			texts, start := make([]string, 0, 6), 0
+			for _, end := range append(append([]int(nil), at...), len(pieces)) {
+				texts = append(texts, `"`+strings.Join(pieces[start:end], `\u0004`)+`"`)
+				start = end
+			}
+			out = append(out, strings.Join(texts, ","))
+			return
+		}
+		for i := from; i <= len(pieces)-left; i++ {
+			walk(i+1, left-1, append(at, i))
+		}
+	}
+	walk(1, 5, nil)
+	return out
+}()
 
 // The words a random schema and a random object are made of: few, so that
 // an object often holds what its schema names.

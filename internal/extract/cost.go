@@ -504,8 +504,13 @@ func (m *meter) cost(s *jsonschema.Schema, value any) int {
 }
 
 // unique is what finding whether a list holds a value 2 times costs. A
-// list of up to fewItems is compared each item with each, and a longer one
-// is hashed, each item once, and compared where 2 hashes meet.
+// list of up to fewItems is compared each item with each. A longer one is
+// hashed, each item once, and compared in full where 2 hashes meet. Scalars
+// that differ hash apart, so a list of scalars costs its weight twice. The
+// validator frames a text in a hash with no length, so lists and objects
+// whose texts are cut at other places hash alike: a list that holds one is
+// priced as if every item met every other, its weight times half its length,
+// which is what such a reply makes the validator do.
 func (m *meter) unique(list []any) int {
 	at := reflect.ValueOf(list).Pointer()
 	w, ok := m.weights[at]
@@ -515,6 +520,15 @@ func (m *meter) unique(list []any) int {
 	}
 	if len(list) <= fewItems {
 		return min(w*len(list), MaxCheckWork+1)
+	}
+	for _, item := range list {
+		switch item.(type) {
+		case []any, map[string]any:
+			if w > (MaxCheckWork+1)/(len(list)/2) {
+				return MaxCheckWork + 1
+			}
+			return plus(w, w*(len(list)/2))
+		}
 	}
 	return plus(w, w)
 }
