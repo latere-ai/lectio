@@ -302,8 +302,12 @@ func Problems(findings []Finding) []string {
 }
 
 // encode writes a value as JSON. The values this package encodes were
-// decoded from JSON, so they encode.
+// decoded from JSON, so they encode; one that did not would be written as
+// null, which no schema that asks for an object takes.
 func encode(v any) json.RawMessage {
-	raw, _ := json.Marshal(v)
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`null`)
+	}
 	return raw
 }

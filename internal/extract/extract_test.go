@@ -626,3 +626,15 @@ func TestADocumentWithNoTextIsExtractedWithNoCall(t *testing.T) {
 		t.Fatalf("an extraction that made no call says %+v", sum)
 	}
 }
+
+// TestAValueThatDoesNotEncodeIsWrittenAsNull: every value this package
+// writes was decoded from JSON. One that could not be written is null and
+// never a text that is no JSON.
+func TestAValueThatDoesNotEncodeIsWrittenAsNull(t *testing.T) {
+	if got := encode(func() {}); string(got) != `null` {
+		t.Fatalf("a value that does not encode is written as %q", got)
+	}
+	if got := encode(map[string]any{"a": json.Number("1.50")}); string(got) != `{"a":1.50}` {
+		t.Fatalf("a number is written as %s", got)
+	}
+}
