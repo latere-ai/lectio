@@ -150,6 +150,7 @@ paths:
         "200": { description: The parse ended within the wait., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "400": { $ref: "#/components/responses/Error" }
+        "402": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "413": { $ref: "#/components/responses/Error" }

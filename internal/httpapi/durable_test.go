@@ -39,6 +39,31 @@ func TestMain(m *testing.M) { testservers.Main(m) }
 // test's process that claims from the task store as a worker process does.
 type durableBench struct {
 	srv testservers.Postgres
+	// idle starts no worker: the case claims the tasks itself, to see the
+	// order they are dispatched in.
+	idle bool
+}
+
+// durably runs the servers a test starts over the durable backend, until
+// the test ends. The test skips where no container runtime answers.
+func durably(t *testing.T, idle bool) {
+	t.Helper()
+	srv, err := testservers.StartPostgres()
+	if err != nil {
+		t.Skipf("no container runtime answered, so the durable run did not happen: %v", err)
+	}
+	over = &durableBench{srv: srv, idle: idle}
+	t.Cleanup(func() { over = nil })
+}
+
+// storeOf is the task store behind a server of a durable run.
+func storeOf(t *testing.T, e *env) *postgres.Store {
+	t.Helper()
+	b, ok := e.server.Backend.(*durable.Backend)
+	if !ok {
+		t.Fatal("the server is not over the durable backend")
+	}
+	return b.Store
 }
 
 // start makes the server durable: its backend is the task store and an
@@ -77,6 +102,9 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 	s.Backend = &durable.Backend{
 		Store: st, Objects: objects, Readers: runner.Readers, Chain: settings.ReadChain,
 		MaxDeadline: s.MaxDeadline, Poll: 5 * time.Millisecond, Log: slog.New(slog.DiscardHandler),
+	}
+	if d.idle {
+		return st.Close
 	}
 	w := &worker.Worker{
 		Store: st, Objects: objects, Pipeline: runner.Pipeline, Readers: runner.Readers,
