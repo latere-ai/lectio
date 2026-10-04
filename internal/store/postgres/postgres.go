@@ -98,6 +98,8 @@ const (
 	retryAtSQL    = `SELECT lectio_retry($1, $2, $3)`
 	eventsSQL     = `SELECT lectio_events($1, $2, $3)`
 	usageSQL      = `SELECT lectio_usage($1)`
+	queueSQL      = `SELECT lectio_queue($1)`
+	queueAtSQL    = `SELECT lectio_queue($1, $2)`
 
 	configureSQL = `SELECT lectio_configure($1)`
 	versionSQL   = `SELECT version, dirty FROM schema_migrations`
@@ -171,26 +173,6 @@ UPDATE files SET retention = CASE WHEN $2::bigint > 0 THEN $2::bigint * interval
 	parseExpireAtSQL = `SELECT lectio_parse_expire($1, $2)`
 	tasksSQL         = `SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.seq, t.task_id), '[]'::jsonb)::text
 	              FROM tasks t WHERE t.parse_id = $1`
-
-	// queueSQL reads every group with its counters per class, its parses
-	// that have not ended, and its projects, in one statement and so from
-	// one snapshot.
-	queueSQL = `
-SELECT coalesce(jsonb_agg(jsonb_build_object(
-         'group', g.group_id, 'weight', g.weight, 'max_running', g.max_running, 'max_queued', g.max_queued,
-         'parses', (SELECT count(*) FROM parses p WHERE p.group_id = g.group_id AND p.state IN ('queued', 'running')),
-         'classes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
-                       'class', s.class, 'queued', s.queued, 'running', s.running, 'vtime', s.vtime) ORDER BY s.class), '[]'::jsonb)
-                       FROM group_service s WHERE s.group_id = g.group_id),
-         'projects', (SELECT coalesce(jsonb_agg(jsonb_build_object(
-                        'project', pr.project_id, 'weight', pr.weight,
-                        'classes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
-                                      'class', s.class, 'queued', s.queued, 'running', s.running, 'vtime', s.vtime) ORDER BY s.class), '[]'::jsonb)
-                                      FROM project_service s
-                                     WHERE s.group_id = pr.group_id AND s.project_id = pr.project_id)) ORDER BY pr.project_id), '[]'::jsonb)
-                        FROM projects pr WHERE pr.group_id = g.group_id))
-       ORDER BY g.group_id), '[]'::jsonb)::text
-  FROM groups g`
 )
 
 // Migrate applies the pending migrations over the direct connection. It
@@ -822,8 +804,10 @@ type ClassQueue struct {
 
 // ProjectQueue is the queue of one project of a group.
 type ProjectQueue struct {
-	Project string       `json:"project"`
-	Weight  int          `json:"weight"`
+	Project string `json:"project"`
+	Weight  int    `json:"weight"`
+	// Parses counts the project's parses that have not ended.
+	Parses  int          `json:"parses"`
 	Classes []ClassQueue `json:"classes"`
 }
 
@@ -839,11 +823,65 @@ type GroupQueue struct {
 	Projects []ProjectQueue `json:"projects"`
 }
 
-// Queue returns the queue of every group, by group id.
-func (s *Store) Queue(ctx context.Context) ([]GroupQueue, error) {
-	var out []GroupQueue
-	if err := s.decode(ctx, &out, queueSQL, ""); err != nil {
-		return nil, fmt.Errorf("store: reading the queue: %w", err)
+// The states of a reader's breaker as a read of the queue names them.
+const (
+	// BreakerClosed admits calls.
+	BreakerClosed = "closed"
+	// BreakerOpen admits none: the reader failed too often in a row.
+	BreakerOpen = "open"
+	// BreakerTrial is past its open period: one call is admitted, and its
+	// outcome closes the breaker or opens it again.
+	BreakerTrial = "trial"
+)
+
+// ScopeQueue is one key scope of a pool that was limited: the scope of the
+// key every group shares, which is empty, or of one group's key.
+type ScopeQueue struct {
+	Scope string `json:"scope"`
+	// Ceiling is how many calls the scope may have in flight as it stands,
+	// and InFlight how many it has.
+	Ceiling  int `json:"ceiling"`
+	InFlight int `json:"in_flight"`
+	// PausedUntil is when a pause of the scope ends, and nil for a scope
+	// that is not paused.
+	PausedUntil *time.Time `json:"paused_until"`
+}
+
+// PoolQueue is the pool of one reader.
+type PoolQueue struct {
+	Reader      string `json:"reader"`
+	MaxInFlight int    `json:"max_in_flight"`
+	// InFlight counts the calls in flight, of every group or of the groups
+	// the read names.
+	InFlight int `json:"in_flight"`
+	// Breaker is BreakerClosed, BreakerOpen or BreakerTrial.
+	Breaker string       `json:"breaker"`
+	Scopes  []ScopeQueue `json:"scopes"`
+}
+
+// Queue is the queue as it stands at one instant.
+type Queue struct {
+	Groups []GroupQueue `json:"groups"`
+	Pools  []PoolQueue  `json:"pools"`
+}
+
+// Queue returns the queue: the groups with their projects, by group id, and
+// the readers' pools, by reader. Nil groups is every group that holds a
+// parse that has not ended. A list is those groups, whether they hold one
+// or not, with the pools as those groups see them: their own calls in
+// flight, their own key scopes, and the scope of the key every group
+// shares. The read is of the counters the claim keeps, and of no queued
+// task.
+func (s *Store) Queue(ctx context.Context, groups []string) (Queue, error) {
+	// A nil list encodes as the JSON null, which the function reads as
+	// every group that holds work.
+	scope, err := json.Marshal(groups)
+	if err != nil {
+		return Queue{}, fmt.Errorf("store: encoding the groups of a read of the queue: %w", err)
+	}
+	var out Queue
+	if err := s.decode(ctx, &out, queueSQL, queueAtSQL, string(scope)); err != nil {
+		return Queue{}, fmt.Errorf("store: reading the queue: %w", err)
 	}
 	return out, nil
 }

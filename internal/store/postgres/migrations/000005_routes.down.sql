@@ -3,10 +3,12 @@
 
 -- Back to a parse that fails with page_unreadable whatever its pages failed
 -- with, keeps the rows of its failed tasks alone, cannot be read again,
--- counts none of its changes, and is metered on its own row alone.
+-- counts none of its changes, and is metered on its own row alone, and to a
+-- queue that is read by a statement of the store's own.
 -- lectio_settled is the one of 000004 again and lectio_settle the one of
 -- 000002.
 
+DROP FUNCTION IF EXISTS lectio_queue(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_usage(text);
 DROP FUNCTION IF EXISTS lectio_events(text, bigint, integer);
 DROP FUNCTION IF EXISTS lectio_retry(text, text, timestamptz);

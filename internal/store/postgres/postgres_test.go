@@ -260,10 +260,11 @@ func TestSubmitRefreshesTheGroupAndTheProject(t *testing.T) {
 			t.Fatalf("a submit repeated under one id: created %t, %v", created, err)
 		}
 
-		queue, err := h.store.Queue(ctx)
+		view, err := h.store.Queue(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
+		queue := view.Groups
 		if len(queue) != 2 || queue[0].Group != "acme" || queue[1].Group != "alice" {
 			t.Fatalf("the queue is %+v", queue)
 		}
@@ -325,9 +326,9 @@ func TestReadsOfWhatIsNotThere(t *testing.T) {
 		if err != nil || len(rows) != 0 {
 			t.Fatalf("Tasks of nothing = %v, %v", rows, err)
 		}
-		queue, err := h.store.Queue(t.Context())
-		if err != nil || len(queue) != 0 {
-			t.Fatalf("the queue of an empty store = %v, %v", queue, err)
+		queue, err := h.store.Queue(t.Context(), nil)
+		if err != nil || len(queue.Groups) != 0 || len(queue.Pools) != 1 || queue.Pools[0].Reader != stub {
+			t.Fatalf("the queue of an empty store = %+v, %v", queue, err)
 		}
 	})
 }
@@ -390,7 +391,7 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 	if _, err := h.store.Tasks(ctx, "prs_a"); err == nil {
 		t.Error("Tasks on a closed store succeeded")
 	}
-	if _, err := h.store.Queue(ctx); err == nil {
+	if _, err := h.store.Queue(ctx, nil); err == nil {
 		t.Error("Queue on a closed store succeeded")
 	}
 	for name, call := range map[string]func() error{

@@ -2,8 +2,9 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- What a parse says of itself when pages of it failed, reading those pages
--- again, following a parse as it changes, and the meters (specs/003-api.md,
--- specs/004-durable-tasks.md, specs/005-parse-graph.md,
+-- again, following a parse as it changes, the meters, and the view of the
+-- queue (specs/003-api.md, specs/004-durable-tasks.md,
+-- specs/005-parse-graph.md, specs/006-fairness-and-priority.md,
 -- specs/007-model-capacity.md, specs/013-limits-and-usage.md).
 
 -- A parse that was read again has until its deadline from the retry, for as
@@ -586,4 +587,66 @@ RETURNS text LANGUAGE sql STABLE AS $$
            'key', key, 'start', start, 'pages', pages, 'calls', calls,
            'input_tokens', input_tokens, 'output_tokens', output_tokens) ORDER BY start, key), '[]'::jsonb)::text
     FROM sums;
+$$;
+
+-- lectio_queue answers the view of the queue
+-- (specs/006-fairness-and-priority.md, specs/007-model-capacity.md): each
+-- group with its weight, its bounds, its parses that have not ended and its
+-- queued and running tasks per class, the same for each of its projects,
+-- and each reader's pool with its calls in flight, its breaker and the key
+-- scopes that were limited. p_groups is a JSON array of group ids bound as
+-- text, or the JSON null for every group that holds a parse that has not
+-- ended. A read of some groups counts the calls of those groups alone and
+-- lists their scopes, and the scope of the key every group shares. It is
+-- one statement, so every number in it is of one instant, and it reads the
+-- counters the claim keeps and no queued task.
+CREATE FUNCTION lectio_queue(p_groups text, p_now timestamptz DEFAULT NULL)
+RETURNS text LANGUAGE sql STABLE AS $$
+  WITH q AS (
+    SELECT CASE WHEN jsonb_typeof(p_groups::jsonb) = 'array'
+                THEN ARRAY(SELECT jsonb_array_elements_text(p_groups::jsonb)) END AS groups,
+           coalesce(p_now, now()) AS at
+  )
+  SELECT jsonb_build_object(
+    'groups', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'group', g.group_id, 'weight', g.weight, 'max_running', g.max_running, 'max_queued', g.max_queued,
+               'parses', (SELECT count(*) FROM parses p WHERE p.group_id = g.group_id AND p.state IN ('queued', 'running')),
+               'classes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                             'class', s.class, 'queued', s.queued, 'running', s.running, 'vtime', s.vtime) ORDER BY s.class), '[]'::jsonb)
+                             FROM group_service s WHERE s.group_id = g.group_id),
+               'projects', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                              'project', pr.project_id, 'weight', pr.weight,
+                              'parses', (SELECT count(*) FROM parses p
+                                          WHERE p.group_id = pr.group_id AND p.project_id = pr.project_id
+                                            AND p.state IN ('queued', 'running')),
+                              'classes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                            'class', s.class, 'queued', s.queued, 'running', s.running, 'vtime', s.vtime) ORDER BY s.class), '[]'::jsonb)
+                                            FROM project_service s
+                                           WHERE s.group_id = pr.group_id AND s.project_id = pr.project_id)) ORDER BY pr.project_id), '[]'::jsonb)
+                              FROM projects pr WHERE pr.group_id = g.group_id))
+             ORDER BY g.group_id), '[]'::jsonb)
+        FROM groups g CROSS JOIN q
+       WHERE g.group_id = ANY (q.groups)
+          OR (q.groups IS NULL AND EXISTS (SELECT 1 FROM parses p WHERE p.group_id = g.group_id AND p.state IN ('queued', 'running')))),
+    'pools', (
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+               'reader', p.reader, 'max_in_flight', p.max_in_flight,
+               'in_flight', (SELECT count(*) FROM tasks t
+                              WHERE t.state = 'leased' AND t.calling AND t.reader = p.reader
+                                AND (q.groups IS NULL OR t.group_id = ANY (q.groups))),
+               'breaker', CASE WHEN p.opened_at IS NULL THEN 'closed'
+                               WHEN q.at < p.opened_at + cfg.breaker_open THEN 'open'
+                               ELSE 'trial' END,
+               'scopes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                            'scope', s.scope,
+                            'ceiling', lectio_ceiling(s.ceiling, s.raised_at, p.max_in_flight, cfg.pool_recovery, q.at),
+                            'paused_until', CASE WHEN s.paused_until > q.at THEN s.paused_until END,
+                            'in_flight', (SELECT count(*) FROM tasks t
+                                           WHERE t.state = 'leased' AND t.calling AND t.reader = s.reader AND t.scope = s.scope
+                                             AND (q.groups IS NULL OR t.group_id = ANY (q.groups)))) ORDER BY s.scope), '[]'::jsonb)
+                            FROM pool_scopes s
+                           WHERE s.reader = p.reader AND (q.groups IS NULL OR s.scope = '' OR s.scope = ANY (q.groups))))
+             ORDER BY p.reader), '[]'::jsonb)
+        FROM pools p CROSS JOIN q CROSS JOIN settings cfg))::text;
 $$;

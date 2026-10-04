@@ -750,7 +750,7 @@ func TestTheStoreKeepsNothingOnItsConnection(t *testing.T) {
 		if err := h.store.Cancel(ctx, "prs_a"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := h.store.Queue(ctx); err != nil {
+		if _, err := h.store.Queue(ctx, []string{"acme"}); err != nil {
 			t.Fatal(err)
 		}
 		if row, ok, err := h.store.Task(ctx, "prs_a", "page-1"); err != nil || !ok || row.State != tasks.Succeeded {
