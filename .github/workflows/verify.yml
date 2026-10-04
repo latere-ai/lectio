@@ -41,3 +41,63 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod tidy -diff
+
+  # The deploy tree. The tests that render it are in deploy_test.go and
+  # skip where kubectl is absent, and the gate runs the suite with the
+  # toolchain alone on PATH. This job is what makes that skip impossible:
+  # the runner has kubectl, so a run that skipped a test here is a run that
+  # is not doing its job.
+  deploy:
+    name: the deploy tree renders
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: kubectl version --client
+      - name: The base and every example render
+        # `shell: bash` for pipefail: without it `tee` exits 0 and a
+        # failing `go test` would be swallowed by the pipe.
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -count=1 -v . 2>&1 | tee out.txt
+          ! grep -q -- '--- SKIP' out.txt
+
+  # The server image on every push: it builds, it names its version, it
+  # stays under the size the distribution spec holds it to, it has no
+  # shell, and it starts and answers with a read-only root file system and
+  # no capability.
+  image:
+    name: the server image builds, starts and stays small
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t lectiod:candidate .
+      - name: The image reports its version
+        run: docker run --rm lectiod:candidate version | grep -q '^lectiod '
+      - name: The image is under 60 MiB and holds no shell
+        run: |
+          size=$(docker image inspect lectiod:candidate --format '{{.Size}}')
+          echo "the image is ${size} bytes"
+          [ "${size}" -lt $((60 * 1024 * 1024)) ] || { echo "the server image is over 60 MiB" >&2; exit 1; }
+          if docker run --rm --entrypoint /bin/sh lectiod:candidate -c true 2>/dev/null; then
+            echo "the server image holds a shell" >&2; exit 1
+          fi
+      - name: The image starts and answers with a read-only root file system
+        run: |
+          docker run -d --name lectiod --read-only --cap-drop ALL \
+            -e LECTIO_DEV=true -p 127.0.0.1:8080:8080 lectiod:candidate
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8080/v1/openapi.yaml > /dev/null; then
+              echo "the server answers"; exit 0
+            fi
+            sleep 0.2
+          done
+          docker logs lectiod
+          echo "the server did not answer" >&2; exit 1

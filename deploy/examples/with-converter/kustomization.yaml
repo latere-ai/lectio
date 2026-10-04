@@ -14,8 +14,13 @@
 #   kustomize edit set image lectio-convert=ghcr.io/<owner>/lectio-convert:<tag>
 #
 # The deploy archive of a release carries both already pinned by digest.
+#
+# The namespace is named here as well as in the generic overlay: the
+# component's objects join at this level, and an overlay names the
+# namespace of what it adds.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: lectio
 resources:
   - ../generic
 components:
