@@ -2,9 +2,9 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- What a parse says of itself when pages of it failed, reading those pages
--- again, and following a parse as it changes (specs/003-api.md,
+-- again, following a parse as it changes, and the meters (specs/003-api.md,
 -- specs/004-durable-tasks.md, specs/005-parse-graph.md,
--- specs/007-model-capacity.md).
+-- specs/007-model-capacity.md, specs/013-limits-and-usage.md).
 
 -- A parse that was read again has until its deadline from the retry, for as
 -- long as its submit gave it, so the time it was given is counted from here.
@@ -43,6 +43,38 @@ CREATE TRIGGER parses_changed BEFORE UPDATE ON parses FOR EACH ROW
         OR OLD.pages_done   IS DISTINCT FROM NEW.pages_done   OR OLD.pages_failed IS DISTINCT FROM NEW.pages_failed
         OR OLD.pages_reused IS DISTINCT FROM NEW.pages_reused OR (OLD.manifest IS NULL) <> (NEW.manifest IS NULL))
   EXECUTE FUNCTION lectio_changed();
+
+-- usage is the meter (specs/013-limits-and-usage.md): what was read and
+-- what it cost in model calls and tokens, summed by the hour a task settled
+-- in, the group and the owner of its parse, the kind of the task and the
+-- reader the attempt was claimed for. It is written with each settle, so a
+-- row is the sum of an hour and the table grows with the hours a group, an
+-- owner and a reader were active in, and never with pages or parses. A row
+-- holds counts and names, and no content.
+CREATE TABLE usage (
+  hour          timestamptz NOT NULL,           -- the start of the hour, in UTC, the work settled in
+  group_id      text   NOT NULL,
+  owner         text   NOT NULL,
+  kind          text   NOT NULL,                -- the kind of task: page
+  reader        text   NOT NULL DEFAULT '',     -- the reader the attempt was claimed for; '' for pages no reader read
+  pages         bigint NOT NULL DEFAULT 0,      -- pages that were read
+  calls         bigint NOT NULL DEFAULT 0,      -- model calls, the ones that failed or were told to wait included
+  input_tokens  bigint NOT NULL DEFAULT 0,
+  output_tokens bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour, group_id, owner, kind, reader)
+);
+
+-- lectio_meter adds what one settle used to the meter's row of its hour. It
+-- is the meter's one writer.
+CREATE FUNCTION lectio_meter(p_group text, p_owner text, p_kind text, p_reader text,
+                             p_pages integer, p_calls integer, p_in bigint, p_out bigint, p_now timestamptz)
+RETURNS void LANGUAGE sql AS $$
+  INSERT INTO usage AS u (hour, group_id, owner, kind, reader, pages, calls, input_tokens, output_tokens)
+  VALUES (date_trunc('hour', p_now, 'UTC'), p_group, p_owner, p_kind, coalesce(p_reader, ''), p_pages, p_calls, p_in, p_out)
+  ON CONFLICT (hour, group_id, owner, kind, reader) DO UPDATE SET
+    pages = u.pages + EXCLUDED.pages, calls = u.calls + EXCLUDED.calls,
+    input_tokens = u.input_tokens + EXCLUDED.input_tokens, output_tokens = u.output_tokens + EXCLUDED.output_tokens;
+$$;
 
 -- lectio_failure is the code a parse fails with when more of its pages
 -- failed than it allows: the code its failed pages carry when they all carry
@@ -125,6 +157,9 @@ BEGIN
       SELECT p_parse, jsonb_agg(jsonb_build_array(e.n, v_p.events + e.i) ORDER BY e.i)
         FROM jsonb_array_elements(v_pages) WITH ORDINALITY AS e(n, i);
       UPDATE parses SET events = events + v_n WHERE parse_id = p_parse;
+      -- They are pages read, under no reader and with no call, so a page
+      -- means the same in the meter for every format.
+      PERFORM lectio_meter(v_p.group_id, v_p.owner, 'page', '', v_n, 0, 0, 0, p_now);
     END IF;
     IF v_native OR v_n = 0 THEN
       PERFORM lectio_enqueue(p_parse, 'assemble', 'assemble', NULL, p_now);
@@ -223,6 +258,182 @@ BEGIN
     HAVING count(*) > 0
     ON CONFLICT (parse_id) DO UPDATE SET settled = EXCLUDED.settled;
   END IF;
+END $$;
+
+-- lectio_settle ends one attempt at a task under the fence: it matches only
+-- a task that is leased to this worker under the token the worker was given.
+-- A task that was canceled, reissued after its worker was taken for dead, or
+-- settled before matches no row, and nothing is recorded for it. It reports
+-- whether the settle was accepted.
+--
+-- What the attempt used is metered here, whatever its outcome, under the
+-- reader it was claimed for: a page that moves down the policy's chain is
+-- metered under each reader that was called for it, and a call that failed
+-- or was told to wait is counted as the call it was. A page counts as read
+-- when its task succeeds.
+--
+-- Two outcomes move a page down the policy's chain, to the reader after the
+-- one it was read by, where it has attempts of its own. A retryable failure
+-- that says the reply was not usable moves it at the second such reply, once
+-- for the page. The outcome next moves it at once and as far as the chain
+-- goes: the reader declined the page, or its endpoint rejects the request
+-- itself. A task pinned to a reader never moves, and a task with no reader
+-- left fails with the error the settle carries.
+CREATE OR REPLACE FUNCTION lectio_settle(p_worker text, p_s jsonb, p_cfg settings, p_now timestamptz)
+RETURNS boolean LANGUAGE plpgsql AS $$
+DECLARE
+  v_t         tasks%ROWTYPE;
+  v_outcome   text := p_s->>'outcome';
+  v_state     text;
+  v_error     jsonb := p_s->'error';
+  v_attempt   integer;
+  v_available timestamptz;
+  v_delay     interval;
+  v_wait      interval;
+  v_units     integer;
+  v_chain     text[];
+  v_next      integer;
+  v_moves     boolean;
+  v_chain_at  integer;
+  v_invalid   integer;
+  v_escalated boolean;
+  v_read      integer;
+  v_calls     integer := coalesce((p_s->'usage'->>'calls')::integer, 0);
+  v_in        bigint  := coalesce((p_s->'usage'->>'input_tokens')::bigint, 0);
+  v_out       bigint  := coalesce((p_s->'usage'->>'output_tokens')::bigint, 0);
+BEGIN
+  SELECT * INTO v_t FROM tasks
+   WHERE parse_id = p_s->>'parse' AND task_id = p_s->>'task'
+     AND state = 'leased' AND lease_owner = p_worker AND lease_token = (p_s->>'token')::bigint
+     FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+
+  v_attempt   := v_t.attempt;
+  v_available := v_t.available_at;
+  v_chain_at  := v_t.chain_at;
+  v_invalid   := v_t.invalid;
+  v_escalated := v_t.escalated;
+  -- The position after the reader that read the task: a reader that was
+  -- passed over at the claim is not tried again by a task that moves on.
+  v_chain := CASE v_t.kind WHEN 'page' THEN p_cfg.read_chain WHEN 'extract' THEN p_cfg.extract_chain ELSE '{}'::text[] END;
+  v_next  := coalesce(array_position(v_chain, v_t.reader), v_t.chain_at + 1);
+  v_moves := v_t.pin IS NULL AND v_next < coalesce(array_length(v_chain, 1), 0);
+  CASE v_outcome
+    WHEN 'succeeded' THEN
+      v_state := 'succeeded';
+      v_error := NULL;
+    WHEN 'permanent' THEN
+      v_state := 'failed';
+    WHEN 'retryable' THEN
+      v_attempt := v_t.attempt + 1;
+      IF coalesce((p_s->>'invalid')::boolean, false) THEN
+        v_invalid := v_t.invalid + 1;
+      END IF;
+      IF v_invalid >= 2 AND NOT v_t.escalated AND v_moves AND coalesce((p_s->>'invalid')::boolean, false) THEN
+        v_state     := 'queued';
+        v_chain_at  := v_next;
+        v_attempt   := 0;
+        v_invalid   := 0;
+        v_escalated := true;
+        v_available := p_now;
+      ELSIF v_attempt >= p_cfg.attempts THEN
+        v_state := 'failed';
+      ELSE
+        -- min(cap, base * 2^(attempt-1)), plus jitter uniform in half of it,
+        -- so tasks that failed together do not come back together.
+        v_state := 'queued';
+        v_delay := least(p_cfg.backoff_cap, p_cfg.backoff_base * power(2, least(v_attempt - 1, 30)));
+        v_available := p_now + v_delay + v_delay * (random() / 2);
+      END IF;
+    WHEN 'next' THEN
+      IF v_moves THEN
+        v_state     := 'queued';
+        v_chain_at  := v_next;
+        v_attempt   := 0;
+        v_invalid   := 0;
+        v_available := p_now;
+      ELSE
+        v_state := 'failed';
+      END IF;
+    WHEN 'wait' THEN
+      -- The reader said to wait. That is not a failure: no attempt is spent,
+      -- and the task is not looked at again until the pause ends.
+      v_state := 'queued';
+      v_error := v_t.error;
+      v_wait  := coalesce((p_s->>'retry_after_ms')::bigint, 0) * interval '1 millisecond';
+      IF v_wait <= interval '0' THEN
+        v_wait := p_cfg.pool_pause;
+      END IF;
+      v_available := lectio_limited(v_t.reader, v_t.scope, v_t.leased_at, v_wait, p_cfg, p_now);
+    WHEN 'returned' THEN
+      v_state := 'queued';
+      v_error := v_t.error;
+    ELSE
+      RAISE EXCEPTION 'lectio: the settle of %/% has the outcome %', v_t.parse_id, v_t.task_id, v_outcome;
+  END CASE;
+  IF v_state = 'failed' AND v_error IS NULL THEN
+    v_error := jsonb_build_object('code', 'internal');
+  END IF;
+
+  -- The breaker is the reader's, and reads what the call said about it: a
+  -- failure another call may repeat counts, a success resets, and a wait, a
+  -- failure of the page itself and a returned task say nothing.
+  IF v_t.reader IS NOT NULL AND p_s->>'health' = 'failure' THEN
+    UPDATE pools SET failures = failures + 1,
+           opened_at = CASE
+             WHEN opened_at IS NULL AND failures + 1 >= p_cfg.breaker_failures THEN p_now
+             -- A call claimed while the breaker was open is the trial, and a
+             -- trial that fails opens the breaker again from now.
+             WHEN opened_at IS NOT NULL AND v_t.leased_at > opened_at THEN p_now
+             ELSE opened_at END,
+           updated_at = p_now
+     WHERE reader = v_t.reader;
+  ELSIF v_t.reader IS NOT NULL AND p_s->>'health' = 'success' THEN
+    -- Written only when there is something to clear, so a reader that works
+    -- costs no write per page.
+    UPDATE pools SET failures = 0, opened_at = NULL, trial_at = NULL, updated_at = p_now
+     WHERE reader = v_t.reader AND (failures <> 0 OR opened_at IS NOT NULL);
+  END IF;
+
+  -- The charge is corrected to what the attempt used, and never below 1:
+  -- that is the worker slot it held.
+  v_units := greatest(1, coalesce((p_s->>'units')::integer, 0));
+  PERFORM lectio_correct(v_t, v_units,
+    CASE WHEN v_state = 'queued' THEN lectio_lane(v_t.kind, v_t.pin, v_chain_at) END);
+
+  UPDATE tasks SET
+         state = v_state, attempt = v_attempt, available_at = v_available, calling = false,
+         chain_at = v_chain_at, invalid = v_invalid, escalated = v_escalated,
+         lease_owner = CASE WHEN v_state = 'queued' THEN NULL ELSE lease_owner END,
+         reader      = CASE WHEN v_state = 'queued' THEN NULL ELSE reader END,
+         scope       = CASE WHEN v_state = 'queued' THEN NULL ELSE scope END,
+         charged     = CASE WHEN v_state = 'queued' THEN 0 ELSE v_units END,
+         output      = CASE WHEN v_state = 'succeeded' THEN p_s->>'output' ELSE output END,
+         result      = CASE WHEN v_state = 'succeeded' THEN nullif(p_s->'result', 'null'::jsonb) ELSE result END,
+         calls = calls + v_calls, input_tokens = input_tokens + v_in, output_tokens = output_tokens + v_out,
+         error = v_error,
+         settled_at = CASE WHEN v_state = 'queued' THEN NULL ELSE p_now END
+   WHERE parse_id = v_t.parse_id AND task_id = v_t.task_id;
+
+  -- What an attempt spent is recorded whatever its outcome: on its parse,
+  -- and in the meter with the page it read, when it read one.
+  IF v_calls <> 0 OR v_in <> 0 OR v_out <> 0 THEN
+    UPDATE parses SET calls = calls + v_calls, input_tokens = input_tokens + v_in,
+           output_tokens = output_tokens + v_out
+     WHERE parse_id = v_t.parse_id;
+  END IF;
+  v_read := CASE WHEN v_t.kind = 'page' AND v_state = 'succeeded' THEN 1 ELSE 0 END;
+  IF v_calls <> 0 OR v_in <> 0 OR v_out <> 0 OR v_read <> 0 THEN
+    PERFORM lectio_meter(v_t.group_id, (SELECT owner FROM parses WHERE parse_id = v_t.parse_id), v_t.kind, v_t.reader,
+                         v_read, v_calls, v_in, v_out, p_now);
+  END IF;
+
+  IF v_state <> 'queued' THEN
+    PERFORM lectio_settled(v_t.parse_id, v_t.kind, v_state, v_error, p_s, p_now);
+  END IF;
+  RETURN true;
 END $$;
 
 -- lectio_retry queues again the pages of an owner's parse that failed
@@ -345,4 +556,34 @@ RETURNS text LANGUAGE sql STABLE AS $$
                                 WHERE k.parse_id = p.parse_id AND (s.pair->>1)::bigint > p_after
                                ORDER BY event LIMIT p_limit) e))::text
       FROM parses p WHERE p.parse_id = p_parse), 'null');
+$$;
+
+-- lectio_usage reads the meter (specs/013-limits-and-usage.md): its sums by
+-- one key, the group, the owner or the reader, over fixed intervals of an
+-- hour or a day in UTC, for the intervals that begin in [from, to). owners
+-- and groups narrow the read to those owners and those groups, and a JSON
+-- null or no member is every one. p_query is a JSON document bound as text,
+-- and the answer a JSON array ordered by interval and key.
+CREATE FUNCTION lectio_usage(p_query text)
+RETURNS text LANGUAGE sql STABLE AS $$
+  WITH q AS (
+    SELECT j->>'by' AS by, j->>'interval' AS step, (j->>'from')::timestamptz AS since, (j->>'to')::timestamptz AS until,
+           CASE WHEN jsonb_typeof(j->'owners') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(j->'owners')) END AS owners,
+           CASE WHEN jsonb_typeof(j->'groups') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(j->'groups')) END AS groups
+      FROM (SELECT p_query::jsonb AS j) doc
+  ), sums AS (
+    SELECT CASE q.by WHEN 'owner' THEN u.owner WHEN 'reader' THEN u.reader ELSE u.group_id END AS key,
+           date_trunc(q.step, u.hour, 'UTC') AS start,
+           sum(u.pages) AS pages, sum(u.calls) AS calls,
+           sum(u.input_tokens) AS input_tokens, sum(u.output_tokens) AS output_tokens
+      FROM usage u CROSS JOIN q
+     WHERE u.hour >= q.since AND u.hour < q.until
+       AND (q.owners IS NULL OR u.owner = ANY (q.owners))
+       AND (q.groups IS NULL OR u.group_id = ANY (q.groups))
+     GROUP BY 1, 2
+  )
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'key', key, 'start', start, 'pages', pages, 'calls', calls,
+           'input_tokens', input_tokens, 'output_tokens', output_tokens) ORDER BY start, key), '[]'::jsonb)::text
+    FROM sums;
 $$;

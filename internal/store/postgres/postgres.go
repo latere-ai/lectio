@@ -97,6 +97,7 @@ const (
 	retrySQL      = `SELECT lectio_retry($1, $2)`
 	retryAtSQL    = `SELECT lectio_retry($1, $2, $3)`
 	eventsSQL     = `SELECT lectio_events($1, $2, $3)`
+	usageSQL      = `SELECT lectio_usage($1)`
 
 	configureSQL = `SELECT lectio_configure($1)`
 	versionSQL   = `SELECT version, dirty FROM schema_migrations`
@@ -843,6 +844,51 @@ func (s *Store) Queue(ctx context.Context) ([]GroupQueue, error) {
 	var out []GroupQueue
 	if err := s.decode(ctx, &out, queueSQL, ""); err != nil {
 		return nil, fmt.Errorf("store: reading the queue: %w", err)
+	}
+	return out, nil
+}
+
+// UsageQuery says which sums of the meter are read: by which key, over
+// which intervals, in which span of time, and for whom.
+type UsageQuery struct {
+	// By is the key the sums are grouped by: group, owner or reader.
+	By string `json:"by"`
+	// Interval is the length of one interval: hour or day, in UTC.
+	Interval string `json:"interval"`
+	// From and To bound the read: an interval is in the answer when it
+	// begins at or after From and before To.
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+	// Owners and Groups narrow the read to those owners and those groups.
+	// Nil is every one, and an empty list is none.
+	Owners []string `json:"owners"`
+	Groups []string `json:"groups"`
+}
+
+// UsageSum is what one key used in one interval.
+type UsageSum struct {
+	Key   string    `json:"key"`
+	Start time.Time `json:"start"`
+	// Pages are the pages read, and Calls the model calls made for them,
+	// the ones that failed or were told to wait included.
+	Pages        int64 `json:"pages"`
+	Calls        int64 `json:"calls"`
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+// Usage reads the meter: what was read and what it cost, summed by a key
+// over fixed intervals, ordered by interval and then by key. The meter is
+// written with each settle, so the read is of one small table and of no
+// task.
+func (s *Store) Usage(ctx context.Context, q UsageQuery) ([]UsageSum, error) {
+	doc, err := json.Marshal(q)
+	if err != nil {
+		return nil, fmt.Errorf("store: encoding a read of the meter: %w", err)
+	}
+	var out []UsageSum
+	if err := s.decode(ctx, &out, usageSQL, "", string(doc)); err != nil {
+		return nil, fmt.Errorf("store: reading the meter: %w", err)
 	}
 	return out, nil
 }

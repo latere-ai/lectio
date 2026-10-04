@@ -177,6 +177,21 @@ SELECT count(*) FROM (
 	if n := value[int64](h, drift); n != 0 {
 		h.t.Errorf("%d counters of queued and running tasks differ from a recount of the rows", n)
 	}
+	// The meter holds what the settles recorded on the parses: the same for
+	// the parses that are there, and more only by parses a case deleted.
+	const short = `
+SELECT count(*)
+  FROM (SELECT group_id, owner, sum(pages_done) AS pages, sum(calls) AS calls,
+               sum(input_tokens) AS input, sum(output_tokens) AS output
+          FROM parses GROUP BY group_id, owner) p
+  LEFT JOIN (SELECT group_id, owner, sum(pages) AS pages, sum(calls) AS calls,
+                    sum(input_tokens) AS input, sum(output_tokens) AS output
+               FROM usage GROUP BY group_id, owner) u USING (group_id, owner)
+ WHERE coalesce(u.pages, 0) < p.pages OR coalesce(u.calls, 0) < p.calls
+    OR coalesce(u.input, 0) < p.input OR coalesce(u.output, 0) < p.output`
+	if n := value[int64](h, short); n != 0 {
+		h.t.Errorf("the meter of %d owners holds less than their parses recorded", n)
+	}
 }
 
 // submit queues a parse. A zero member takes what a case seldom cares about:
