@@ -67,8 +67,9 @@ internal/testfixtures/    files the tests read
 internal/version/         the build's version, stamped by the linker
 deploy/base/              manifests for a cluster, with no host or account in them
 deploy/bootstrap/         the namespace and the template of the Secrets, applied by hand
+deploy/components/        the conversion sidecar for a cluster, as a part an overlay adds
 deploy/converter/         the image of the conversion sidecar
-deploy/examples/          an example overlay; a compose file: Postgres, an object store, lectiod, the stubs (not built)
+deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the stubs (not built)
 docs/                     running it, the configuration reference, the API guide (not built)
 test/                     conformance, end-to-end, soak, fixtures (not built)
 tools/                    generators and checks (not built)
@@ -246,8 +247,13 @@ disruption budget, and nothing an installation chooses. The settings
 and the Reader and Policy documents are 2 ConfigMaps an overlay
 carries, and the credentials are Secrets an operator applies by hand;
 the base reads each by name, and `deploy/README.md` lists the names and
-the keys. Every host, bucket and namespace is the overlay's. The API and the
-workers scale independently; the workers' count times `LECTIO_WORKERS`
+the keys. Every host, bucket and namespace is the overlay's.
+`deploy/components/converter` is the conversion sidecar, which an
+overlay adds: Pods of its own, since containers of one Pod share a
+network, under a policy that admits the workers' calls and has no
+egress rule, and the one variable that gives the workers its address.
+An installation without it runs no converter and refuses the formats
+that need one. The API and the workers scale independently; the workers' count times `LECTIO_WORKERS`
 is the fleet's task concurrency, and the pools bound what reaches a
 model regardless. Migrations are embedded and run by the API at start
 on the direct connection, guarded so that one replica runs them.
@@ -295,8 +301,8 @@ Built:
 - `cmd/lectio-convert` and `deploy/converter/Dockerfile`: the conversion
   sidecar and its image, which holds the suite and the one binary and
   runs as a user that is not root. `lectio-convert version` prints the
-  build's version. The image is built by hand; no workflow builds or
-  publishes it.
+  build's version, which the image's build stamps as `make build` does.
+  The image is built by hand; no workflow builds or publishes it.
 - `Dockerfile`: the server's image, `lectiod` alone on a distroless
   base, with no shell and no office suite, run as the numeric user
   65532. The build stage cross-compiles, so one file builds the image
@@ -309,11 +315,15 @@ Built:
   manifests of both roles, written against the listeners, the probes
   and the settings of the durable server, which no build has yet, so no
   cluster has run them. They render with `kubectl kustomize`.
+- `deploy/components/converter` and `deploy/examples/with-converter`:
+  the sidecar's Deployment, Service, account and policies. Its
+  container has a read-only root file system and scratch space at
+  `/tmp`. No cluster has run them, and the sidecar has not been run
+  with a read-only root file system.
 
 Remaining:
 
-- `lectio-stubs` and its image, the conversion sidecar's manifests, the
-  compose file, `docs/`, the generated configuration reference and its
+- `lectio-stubs` and its image, the compose file, `docs/`, the generated configuration reference and its
   test, the image tests, the tests of the deploy tree, and the release
   workflow.
 - Most of the test tiers. The suite today is unit tests, end-to-end

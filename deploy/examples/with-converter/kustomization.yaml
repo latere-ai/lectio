@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The generic installation with conversion: the same base and the same
+# ConfigMaps, and the component that deploys the conversion sidecar and
+# gives the workers its address. Legacy word-processing files,
+# presentations and rich text are converted and then read; without the
+# component a parse of one fails with unsupported_media_type.
+#
+# Both images are placeholders. Set them to the release you are
+# installing:
+#
+#   kustomize edit set image lectiod=ghcr.io/<owner>/lectiod:<tag>
+#   kustomize edit set image lectio-convert=ghcr.io/<owner>/lectio-convert:<tag>
+#
+# The deploy archive of a release carries both already pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../generic
+components:
+  - ../../components/converter

@@ -18,10 +18,22 @@
 # denies it every connection but the server's calls. specs/009-intake.md
 # says why.
 
-FROM docker.io/library/golang:1.27 AS build
+# The build stage runs on the machine that builds, whatever platform the
+# image is for, and cross-compiles: the binary has no cgo. TARGETOS and
+# TARGETARCH are set by the builder per platform; a builder that sets
+# neither leaves them empty, and the compiler targets the platform it runs
+# on. The version is stamped as `make build` stamps lectiod's, so
+# `lectio-convert version` names the release an image was cut from.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27 AS build
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" \
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X latere.ai/x/lectio/internal/version.Version=${VERSION} -X latere.ai/x/lectio/internal/version.Commit=${COMMIT} -X latere.ai/x/lectio/internal/version.Date=${DATE}" \
     -o /out/lectio-convert ./cmd/lectio-convert
 
 # The suite without its graphical front end: the word processor and the

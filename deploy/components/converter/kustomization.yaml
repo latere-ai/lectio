@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The conversion sidecar, as a component an overlay adds to the base:
+#
+#   components:
+#     - ../../components/converter
+#
+# It deploys lectio-convert as Pods of its own, with a Service the workers
+# reach it by, and gives the workers its address. Without it the base
+# stands as it is: the workers have no converter, and a parse of a format
+# that needs one fails with unsupported_media_type.
+#
+# The sidecar runs an office suite on a file a caller chose, so it is held
+# to the rules of specs/009-intake.md. Containers of one Pod share a
+# network, so it is not a second container of a worker: it is a Pod of its
+# own under a policy that admits the workers' calls and no connection
+# out. It holds no credential, mounts none, and runs under a limit on
+# memory; the limit on time is its own.
+#
+# The image is the placeholder `lectio-convert`, which an overlay or the
+# release pipeline points at the published image with an `images` entry.
+# The deploy archive of a release carries this file with that entry
+# appended and the image pinned to the tag by digest.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+patches:
+  - path: worker.yaml
+    target:
+      kind: Deployment
+      name: lectiod-worker

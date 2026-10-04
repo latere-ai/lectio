@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The first rule of specs/009-intake.md for a converter: it has no network.
+# An office document can name a resource outside itself and the suite
+# fetches it while it converts, so the file, and not its caller, would
+# decide where the converter connects. The cluster's network plugin has to
+# enforce NetworkPolicy, egress included, or this policy is a comment.
+---
+# The sidecar. Outbound is nothing: Egress is among the policy types and
+# there is no egress rule, so every connection the sidecar or the suite
+# opens is refused, cluster DNS included. Inbound is the workers' calls on
+# the one port, and no other Pod's.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectio-convert
+  labels:
+    app.kubernetes.io/name: lectio-convert
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectio-convert
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lectiod
+              app.kubernetes.io/component: worker
+      ports:
+        - port: 8090
+          protocol: TCP
+  egress: []
+---
+# The workers' way to the sidecar. Policies that select the same Pods add
+# up, so this one opens the sidecar's port beside what the base's policy
+# of the workers already admits, and the base's document is not patched.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod-worker-convert
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: worker
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lectio-convert
+      ports:
+        - port: 8090
+          protocol: TCP

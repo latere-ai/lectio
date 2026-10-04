@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The patch that gives the workers the sidecar's address. Only a worker
+# converts: conversion is a step of preparing a file, and the API prepares
+# none. The address is the Service's name, which resolves in the namespace
+# the overlay sets.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectiod-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: lectiod
+          env:
+            - name: LECTIO_CONVERTER_URL
+              value: "http://lectio-convert:8090"

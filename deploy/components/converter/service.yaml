@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The address the workers convert through. It is reachable by name inside
+# the namespace, and the policy beside it admits the workers alone.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lectio-convert
+  labels:
+    app.kubernetes.io/name: lectio-convert
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: lectio-convert
+  ports:
+    - name: convert
+      port: 8090
+      targetPort: convert

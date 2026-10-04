@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: 2026 Latere AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# The conversion sidecar: an office suite behind one call, a file in and
+# its conversion out. It keeps nothing between two calls, so its replicas
+# are interchangeable. One replica converts one file at a time and a call
+# that waits holds a connection; an installation that converts much runs
+# more replicas behind the same Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectio-convert
+  labels:
+    app.kubernetes.io/name: lectio-convert
+    app.kubernetes.io/component: converter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lectio-convert
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lectio-convert
+        app.kubernetes.io/component: converter
+    spec:
+      serviceAccountName: lectio-convert
+      automountServiceAccountToken: false
+      # The addresses of the namespace's Services are not written into the
+      # environment: the suite is to know of nothing it could dial.
+      enableServiceLinks: false
+      # On a stop signal the sidecar lets the conversion that is running
+      # finish, for at most LECTIO_CONVERT_TIMEOUT. The grace covers that
+      # with a margin. An installation that raises the one raises the
+      # other with it.
+      terminationGracePeriodSeconds: 130
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: lectio-convert
+          # The placeholder the overlay or the release pipeline points at
+          # the published image with an `images` entry.
+          image: lectio-convert
+          # No ConfigMap and no Secret is read: the sidecar holds no
+          # credential and is given none.
+          env:
+            - name: LECTIO_CONVERT_ADDR
+              value: ":8090"
+            # The time one conversion is given before the suite is killed.
+            # It is written here, and not left to the default, so that it
+            # sits beside the termination grace that has to cover it.
+            - name: LECTIO_CONVERT_TIMEOUT
+              value: "2m"
+          ports:
+            - name: convert
+              containerPort: 8090
+          # The sidecar answers one route, the conversion, so the probes
+          # ask whether it listens and nothing more.
+          readinessProbe:
+            tcpSocket:
+              port: convert
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: convert
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          # The sidecar bounds the address space of the suite with
+          # LECTIO_CONVERT_MEMORY_BYTES, 4 GiB unless an installation sets
+          # another. That is a bound on what the suite may map. The bound
+          # on the memory the container holds is the limit here, and a
+          # suite that passes it is killed and its conversion fails.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # The root file system is read only. Each conversion has a
+          # scratch directory of its own under /tmp, which holds the file,
+          # the suite's profile and everything the suite writes, and is
+          # removed when the conversion ends.
+          volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        # The scratch space is bounded, so a file that makes the suite
+        # write without end fills this volume and not the node's disk.
+        - name: scratch
+          emptyDir:
+            sizeLimit: 2Gi
