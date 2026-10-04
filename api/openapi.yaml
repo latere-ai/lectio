@@ -1286,6 +1286,8 @@ components:
       required: [name, state, constrained]
       properties:
         name: { type: string }
+        schema: { type: object, description: "The schema the extraction was asked with, as it was sent, its members in the order the caller wrote them." }
+        instructions: { type: string, description: "The guidance the extraction was asked with. Absent when it was asked with none." }
         state:
           type: string
           enum: [pending, succeeded, failed]

@@ -48,22 +48,24 @@ type citationView struct {
 // of a block, or, when the read asked for it, the ref with its page and
 // its box.
 type fieldView struct {
-	Name        string           `json:"name"`
-	State       string           `json:"state"`
-	Data        json.RawMessage  `json:"data,omitempty"`
-	Citations   map[string][]any `json:"citations,omitempty"`
-	Model       string           `json:"model,omitempty"`
-	Constrained bool             `json:"constrained"`
-	Attempts    int              `json:"attempts,omitempty"`
-	Windows     int              `json:"windows,omitempty"`
-	Usage       *document.Usage  `json:"usage,omitempty"`
-	Error       *document.Error  `json:"error,omitempty"`
+	Name         string           `json:"name"`
+	State        string           `json:"state"`
+	Schema       json.RawMessage  `json:"schema,omitempty"`
+	Instructions string           `json:"instructions,omitempty"`
+	Data         json.RawMessage  `json:"data,omitempty"`
+	Citations    map[string][]any `json:"citations,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	Constrained  bool             `json:"constrained"`
+	Attempts     int              `json:"attempts,omitempty"`
+	Windows      int              `json:"windows,omitempty"`
+	Usage        *document.Usage  `json:"usage,omitempty"`
+	Error        *document.Error  `json:"error,omitempty"`
 }
 
 // viewField is a field as the API returns it, each citation a ref.
 func viewField(f store.Field) fieldView {
 	out := fieldView{
-		Name: f.Name, State: f.State, Data: f.Data, Model: f.Model, Constrained: f.Constrained,
+		Name: f.Name, State: f.State, Schema: f.Schema, Instructions: f.Instructions, Data: f.Data, Model: f.Model, Constrained: f.Constrained,
 		Attempts: f.Attempts, Windows: f.Windows, Error: f.Error,
 	}
 	if f.Usage != (document.Usage{}) {

@@ -110,6 +110,10 @@ type Field struct {
 	State string `json:"state"`
 	Pin   string `json:"pin"`
 
+	// Request is what the extraction was asked with, the tasks.Field its
+	// request wrote, as the text it was kept as.
+	Request string `json:"request"`
+
 	// DeadlineAt is when the extraction fails for time. It is nil while the
 	// extraction waits for its parse to end: its time runs from when its
 	// task is queued.

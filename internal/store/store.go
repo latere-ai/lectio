@@ -590,6 +590,11 @@ type Field struct {
 	Name  string
 	State string
 
+	// Schema and Instructions are what the extraction was asked with: the
+	// caller's schema as it was sent, and the caller's guidance.
+	Schema       []byte
+	Instructions string
+
 	// Data is the object in the shape of the schema, and Citations the
 	// refs of the blocks each of its values was read from, by JSON pointer.
 	// Both are set once the extraction succeeded.

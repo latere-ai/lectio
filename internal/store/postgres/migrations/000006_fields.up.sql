@@ -375,7 +375,7 @@ END $$;
 -- what was asked.
 CREATE FUNCTION lectio_field_view(p_f fields)
 RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
-  SELECT to_jsonb(p_f) - 'request';
+  SELECT to_jsonb(p_f);
 $$;
 
 -- lectio_fields answers the extractions of a parse, by name, as a JSON

@@ -928,6 +928,11 @@ func (b *Backend) field(ctx context.Context, row postgres.Field) (store.Field, e
 	if row.Error != nil {
 		f.Error = &document.Error{Code: row.Error.Code, Detail: row.Error.Detail}
 	}
+	var asked tasks.Field
+	if err := json.Unmarshal([]byte(row.Request), &asked); err != nil {
+		return store.Field{}, fmt.Errorf("durable: the row of the extraction %s of %s holds no request: %w", row.Name, row.Parse, err)
+	}
+	f.Schema, f.Instructions = asked.Schema, asked.Instructions
 	var said extract.Summary
 	if len(row.Result) > 0 {
 		if err := json.Unmarshal(row.Result, &said); err != nil {

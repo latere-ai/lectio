@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -287,6 +288,46 @@ func TestASchemaIsCheckedWhenAnExtractionIsAsked(t *testing.T) {
 // Each object validates against its schema, and every citation resolves to
 // a block whose text contains the value. The document lists the fields,
 // and its parse is as it was but for what the calls used.
+// TestAFieldSaysWhatItWasAskedWith: an extraction returns the schema it
+// was asked with, its members in the order the caller wrote them, and its
+// guidance, while it waits and once it has ended, read alone and listed,
+// so a client can show what a field holds and ask it again.
+func TestAFieldSaysWhatItWasAskedWith(t *testing.T) {
+	e, _ := extracting(t, &textModel{}, nil)
+	pid := e.invoice()
+	const schema = `{"type":"object","properties":{"total":{"type":"number"},"number":{"type":"string"}}}`
+	got := e.do("POST", "/parses/"+pid+"/fields", `{"name":"sum","schema":`+schema+`,"instructions":"The total is the amount due."}`)
+	if got.status != http.StatusAccepted {
+		t.Fatalf("asking: %d %s", got.status, got.body)
+	}
+	asked := func(f map[string]any, when string) {
+		t.Helper()
+		raw, err := json.Marshal(f["schema"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sent, echoed any
+		if err := json.Unmarshal([]byte(schema), &sent); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &echoed); err != nil || !reflect.DeepEqual(sent, echoed) || f["instructions"] != "The total is the amount due." {
+			t.Fatalf("%s the field says it was asked with %s and %v", when, raw, f["instructions"])
+		}
+	}
+	pending := e.do("GET", "/parses/"+pid+"/fields/sum", nil)
+	if pending.status != http.StatusOK {
+		t.Fatalf("reading: %d %s", pending.status, pending.body)
+	}
+	asked(pending.json(t), "pending,")
+	// The members keep the caller's order: total before number.
+	if body := string(e.do("GET", "/parses/"+pid+"/fields/sum", nil).body); !strings.Contains(body, `"schema":{"type":"object","properties":{"total":{"type":"number"},"number":{"type":"string"}}}`) {
+		t.Fatalf("the schema is not as it was sent: %s", body)
+	}
+	asked(e.filled(pid, "sum", ""), "ended,")
+	listed := e.do("GET", "/parses/"+pid+"/fields", nil).json(t)["fields"].([]any)
+	asked(listed[0].(map[string]any), "listed,")
+}
+
 func TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain(t *testing.T) {
 	model := &textModel{}
 	e, rd := extracting(t, model, nil)
