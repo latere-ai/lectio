@@ -94,6 +94,8 @@ const (
 	submitAtSQL   = `SELECT lectio_submit($1, $2)`
 	cancelSQL     = `SELECT lectio_cancel($1)`
 	cancelAtSQL   = `SELECT lectio_cancel($1, $2)`
+	retrySQL      = `SELECT lectio_retry($1, $2)`
+	retryAtSQL    = `SELECT lectio_retry($1, $2, $3)`
 
 	configureSQL = `SELECT lectio_configure($1)`
 	versionSQL   = `SELECT version, dirty FROM schema_migrations`
@@ -608,6 +610,43 @@ func (s *Store) Cancel(ctx context.Context, parseID string) error {
 	return nil
 }
 
+// Retry queues again the pages of an owner's parse that failed, in one
+// transaction: the parse is running again when it returns, with only those
+// pages open, and the pages that were read are not read again. It is for a
+// parse that assemble ended with a failed page. One that has not ended is
+// refused with not_terminal, and one with nothing to read again with
+// conflict: it has no failed page, it ended before its pages were all read,
+// its task rows are no longer there, or its retention has ended. The parse
+// stays in its group and is held to the group's bounds as they stand: a
+// group that holds max_queued parses that have not ended is refused with
+// queue_full, and one whose day does not hold the failed pages with
+// budget_exhausted.
+func (s *Store) Retry(ctx context.Context, owner, parseID string) error {
+	answer, err := s.text(ctx, retrySQL, retryAtSQL, owner, parseID)
+	if err != nil {
+		return fmt.Errorf("store: retrying %s: %w", parseID, err)
+	}
+	switch answer {
+	case "missing":
+		return fault.New(fault.ParseNotFound, "no parse %s", parseID)
+	case "not_terminal":
+		return fault.New(fault.NotTerminal, "parse %s has not ended", parseID)
+	case "nothing":
+		return fault.New(fault.Conflict, "parse %s has no failed page to read again", parseID)
+	case "unassembled":
+		return fault.New(fault.Conflict, "parse %s ended before its pages were all read, so none of them is read again: submit it again", parseID)
+	case "gone":
+		return fault.New(fault.Conflict, "the task rows of parse %s are no longer kept, so its pages cannot be read again: submit it again", parseID)
+	case "expired":
+		return fault.New(fault.Conflict, "the retention of parse %s has ended", parseID)
+	case "queue_full":
+		return fault.New(fault.QueueFull, "the group of parse %s holds as many parses as it may", parseID)
+	case "budget_exhausted":
+		return fault.New(fault.BudgetExhausted, "the group of parse %s has too few pages left of its day for the pages that failed", parseID)
+	}
+	return nil
+}
+
 // Parse is a parse as the control plane holds it.
 type Parse struct {
 	ID               string          `json:"parse_id"`
@@ -649,6 +688,10 @@ type Parse struct {
 	MaxPages  int        `json:"max_pages"`
 	Reserved  int        `json:"reserved"`
 	ExpiresAt *time.Time `json:"expires_at"`
+
+	// RetriedAt is when the parse's failed pages were last queued again,
+	// and nil for a parse that never was retried.
+	RetriedAt *time.Time `json:"retried_at"`
 }
 
 // Terminal reports whether the parse has ended.

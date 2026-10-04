@@ -1,8 +1,13 @@
 -- SPDX-FileCopyrightText: 2026 Latere AI
 -- SPDX-License-Identifier: Apache-2.0
 
--- What a parse says of itself when pages of it failed
--- (specs/005-parse-graph.md, specs/007-model-capacity.md).
+-- What a parse says of itself when pages of it failed, and reading those
+-- pages again (specs/004-durable-tasks.md, specs/005-parse-graph.md,
+-- specs/007-model-capacity.md).
+
+-- A parse that was read again has until its deadline from the retry, for as
+-- long as its submit gave it, so the time it was given is counted from here.
+ALTER TABLE parses ADD COLUMN retried_at timestamptz;   -- when its failed pages were last queued again
 
 -- lectio_failure is the code a parse fails with when more of its pages
 -- failed than it allows: the code its failed pages carry when they all carry
@@ -119,7 +124,18 @@ BEGIN
         SET parse_id = EXCLUDED.parse_id, output = EXCLUDED.output, created_at = EXCLUDED.created_at;
     END IF;
     IF v_open = 0 THEN
-      PERFORM lectio_enqueue(p_parse, 'assemble', 'assemble', NULL, p_now);
+      -- A parse that was read again still holds the row of the assemble that
+      -- ended it. That row runs again, under the tokens after its last, so
+      -- the index it writes lies beside the earlier one and never over it.
+      UPDATE tasks SET state = 'queued', attempt = 0, expiries = 0, available_at = p_now, lease_owner = NULL,
+             charged = 0, output = NULL, result = NULL, error = NULL, settled_at = NULL
+       WHERE parse_id = p_parse AND task_id = 'assemble' AND state = 'succeeded'
+      RETURNING lane INTO v_lane;
+      IF FOUND THEN
+        PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_lane, 1, 0);
+      ELSE
+        PERFORM lectio_enqueue(p_parse, 'assemble', 'assemble', NULL, p_now);
+      END IF;
     END IF;
     RETURN;
   END IF;
@@ -134,8 +150,109 @@ BEGIN
                    'code', lectio_failure(p_parse),
                    'detail', pages_failed || ' of ' || pages_total || ' pages could not be read') END,
          index_key = p_settle->'assemble'->>'index', finished_at = p_now, expires_at = p_now + retention
-   WHERE parse_id = p_parse;
+   WHERE parse_id = p_parse
+  RETURNING * INTO STRICT v_p;
   PERFORM lectio_refund(p_parse);
-  -- The parse row keeps the counters and the document index the output keys.
-  DELETE FROM tasks WHERE parse_id = p_parse AND state = 'succeeded';
+  -- A parse with every page read keeps its counters on its own row and its
+  -- output keys in the document index, and no task row. One that ended with
+  -- a failed page keeps every row: they are what a retry queues again, and
+  -- what the assemble after it finds the pages that were read through.
+  IF v_p.pages_failed = 0 THEN
+    DELETE FROM tasks WHERE parse_id = p_parse AND state = 'succeeded';
+  END IF;
+END $$;
+
+-- lectio_retry queues again the pages of an owner's parse that failed
+-- (specs/004-durable-tasks.md). It is for a parse that assemble ended with a
+-- failed page, whether the parse failed or allowed them: the failed page
+-- rows go back to queued with their attempts, their expiries and their place
+-- in the policy's chain as a new task has them, their tokens kept, and the
+-- parse is running again with only those pages open. The pages that were
+-- read are not read again: their rows stayed, and the assemble that follows
+-- reads them where they are.
+--
+-- The parse stays in its group and is held to that group's bounds as they
+-- stand: the group's row is locked first, as a submit locks it, so a retry
+-- and a submit count the group's parses one after the other, and the failed
+-- pages are reserved again, of the day of the retry. The parse has as long
+-- from the retry as its submit gave it.
+--
+-- It answers retried, missing, not_terminal, queue_full, budget_exhausted,
+-- or why there is nothing to read again: nothing for a parse with no failed
+-- page, unassembled for one that ended before assemble did, by a cancel, its
+-- deadline or a task of its own, gone for one whose task rows are no longer
+-- all there, and expired for one whose retention has ended.
+CREATE FUNCTION lectio_retry(p_owner text, p_parse text, p_now timestamptz DEFAULT NULL)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v_now    timestamptz := coalesce(p_now, now());
+  v_day    date := (v_now AT TIME ZONE 'UTC')::date;
+  v_group  text;
+  v_p      parses%ROWTYPE;
+  v_max    integer;
+  v_budget integer;
+  v_failed integer;
+  v_rows   integer;
+  v_l      record;
+BEGIN
+  SELECT group_id INTO v_group FROM parses WHERE parse_id = p_parse AND owner = p_owner;
+  IF NOT FOUND THEN
+    RETURN 'missing';
+  END IF;
+  SELECT max_queued, pages_per_day INTO v_max, v_budget FROM groups WHERE group_id = v_group FOR UPDATE;
+  SELECT * INTO v_p FROM parses WHERE parse_id = p_parse AND owner = p_owner FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN 'missing';
+  END IF;
+  IF v_p.state IN ('queued', 'running') THEN
+    RETURN 'not_terminal';
+  END IF;
+  IF v_p.expires_at <= v_now THEN
+    -- The retention sweep may be removing what the parse wrote.
+    RETURN 'expired';
+  END IF;
+  IF v_p.index_key IS NULL THEN
+    RETURN 'unassembled';
+  END IF;
+  IF v_p.pages_failed = 0 THEN
+    RETURN 'nothing';
+  END IF;
+  SELECT count(*) FILTER (WHERE state = 'failed'), count(*) INTO v_failed, v_rows
+    FROM tasks WHERE parse_id = p_parse AND kind = 'page';
+  IF v_failed <> v_p.pages_failed OR v_rows <> v_p.pages_total THEN
+    RETURN 'gone';
+  END IF;
+
+  IF coalesce(v_max, 0) > 0
+     AND (SELECT count(*) FROM parses WHERE group_id = v_group AND state IN ('queued', 'running')) >= v_max THEN
+    RETURN 'queue_full';
+  END IF;
+  IF coalesce(v_budget, 0) > 0 AND NOT lectio_reserve(v_group, v_day, v_failed, v_budget) THEN
+    RETURN 'budget_exhausted';
+  END IF;
+
+  FOR v_l IN
+    WITH back AS (
+      UPDATE tasks SET state = 'queued', attempt = 0, expiries = 0, chain_at = 0, invalid = 0, escalated = false,
+             available_at = v_now, lease_owner = NULL, reader = NULL, scope = NULL, calling = false, charged = 0,
+             error = NULL, settled_at = NULL
+       WHERE parse_id = p_parse AND kind = 'page' AND state = 'failed'
+      RETURNING lane
+    )
+    SELECT lane, count(*)::integer AS n FROM back GROUP BY lane ORDER BY lane
+  LOOP
+    PERFORM lectio_count(v_p.group_id, v_p.project_id, v_p.class, v_l.lane, v_l.n, 0);
+  END LOOP;
+
+  -- The pages the parse read before stay counted on the day they were
+  -- reserved on. What it holds from here on is those and the pages queued
+  -- again, so what it gives back when it ends is the pages of this retry it
+  -- did not read, to the day of this retry.
+  UPDATE parses SET state = 'running', error = NULL, finished_at = NULL, expires_at = NULL, index_key = NULL,
+         pages_open = v_failed, pages_failed = 0,
+         deadline_at = v_now + (deadline_at - coalesce(retried_at, created_at)), retried_at = v_now,
+         reserved = CASE WHEN coalesce(v_budget, 0) > 0 THEN pages_done + v_failed ELSE reserved END,
+         reserved_day = CASE WHEN coalesce(v_budget, 0) > 0 THEN v_day ELSE reserved_day END
+   WHERE parse_id = p_parse;
+  RETURN 'retried';
 END $$;

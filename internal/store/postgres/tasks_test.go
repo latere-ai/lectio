@@ -86,10 +86,13 @@ func TestAParseRunsFromPrepareToItsEnd(t *testing.T) {
 			p.PagesDone != 2 || p.PagesFailed != 1 || p.PagesOpen != 0 || p.Calls != 1 || p.InputTokens != 900 || p.OutputTokens != 300 || p.FinishedAt == nil {
 			t.Fatalf("the ended parse is %+v, error %+v", p, p.Error)
 		}
-		// What was read is kept: the failed page's row stays for a retry, and
-		// the rows that succeeded are gone.
-		if rows := h.tasks("prs_a"); len(rows) != 1 || rows[0].ID != "page-3" || rows[0].State != tasks.Failed || rows[0].Error.Code != "page_unreadable" {
-			t.Fatalf("after the parse ended its tasks are %+v", rows)
+		// A parse that ended with a failed page keeps every row: the failed
+		// page's for a retry to queue again, and the others for the assemble
+		// after it, which finds the pages that were read through them.
+		rows = h.tasks("prs_a")
+		if len(rows) != 5 || rows[4].ID != "page-3" || rows[4].State != tasks.Failed || rows[4].Error.Code != "page_unreadable" ||
+			rows[2].ID != "page-1" || rows[2].State != tasks.Succeeded || rows[2].Output != first.Output {
+			t.Fatalf("after the parse ended it has %d task rows, the last %+v", len(rows), rows[len(rows)-1])
 		}
 		if got := w.exchange(4); len(got.Claims) != 0 {
 			t.Fatalf("an ended parse still had %s to claim", names(got.Claims))
