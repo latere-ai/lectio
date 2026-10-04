@@ -138,6 +138,7 @@ func ended(t *testing.T, base, id string) map[string]any {
 // parsed end to end, and what a parse wrote is in the bucket under its
 // prefix.
 func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	base, logs, stop := started(t, env(p.env("all")...))
 	internal := internalOf(t, logs)
@@ -217,6 +218,7 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 // parse submitted to the first completes on the second. A worker is ready
 // once it holds a registration.
 func TestTheRolesRunAsTwoServers(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	base, apiLogs, _ := started(t, env(p.env("api")...))
 	status, _, raw := call(t, "POST", base+"/v1/files?name=sample.csv", "dev", testfixtures.Read(t, testfixtures.CSV), "Content-Type", "text/csv")
@@ -260,6 +262,7 @@ func TestTheRolesRunAsTwoServers(t *testing.T) {
 // server needs and does not have is an error that names it, and nothing of
 // the error is a secret.
 func TestTheDurableServerDoesNotStartOnWhatItCannotRun(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -289,7 +292,9 @@ func TestTheDurableServerDoesNotStartOnWhatItCannotRun(t *testing.T) {
 		"an internal address taken":    {p.env("all", "LECTIO_INTERNAL_ADDR", taken.Addr().String()), "LECTIO_INTERNAL_ADDR"},
 		"a public address taken":       {p.env("api", "LECTIO_ADDR", taken.Addr().String()), "address already in use"},
 	} {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		// Each case fails at once, but for the worker that waits for a
+		// schema: it is given a second to.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		err := serve(ctx, nil, env(tc.env...), io.Discard, io.Discard, nil)
 		cancel()
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "lectio:lectio") {

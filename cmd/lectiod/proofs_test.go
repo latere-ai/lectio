@@ -21,6 +21,7 @@ import (
 // an image, each read by the stub reader, and the result is read back
 // through the API process, which ran none of it.
 func TestAParseCompletesOnASeparateWorkerProcess(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	api, worker := p.spawn("api"), p.spawn("worker")
 
@@ -57,6 +58,7 @@ func TestAParseCompletesOnASeparateWorkerProcess(t *testing.T) {
 // once, and the reader is called once per page plus at most once more for
 // each call that was in flight at the kill.
 func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	calls := filepath.Join(t.TempDir(), "calls")
 	api := p.spawn("api")
@@ -65,9 +67,10 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 
 	const parses, pages = 4, 3
 	ids := make([]string, parses)
-	pdf := testfixtures.Read(t, testfixtures.MultipagePDF)
+	// A TIFF of 3 frames: a process renders it with no engine to load.
+	scan := frames(pages)
 	for i := range ids {
-		ids[i] = submitted(t, api.base, "report.pdf", pdf)
+		ids[i] = submitted(t, api.base, "scan.tiff", scan)
 	}
 	held := `SELECT count(*) FROM tasks WHERE state = 'leased' AND kind = 'page' AND lease_owner = $1`
 	until(t, "the worker runs pages", 20*time.Second, func() bool { return value[int](t, conn, held, doomed.worker()) >= 2 })
@@ -75,8 +78,10 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 	killed := time.Now()
 	<-doomed.exited
 	// What the dead worker held is still leased to it: nobody has acted on
-	// its lease yet.
+	// its lease yet. Among its tasks are pages, whose calls were in flight,
+	// and there may be a prepare or an assemble.
 	inFlight := value[int](t, conn, held, doomed.worker())
+	holding := value[int](t, conn, `SELECT count(*) FROM tasks WHERE state = 'leased' AND lease_owner = $1`, doomed.worker())
 	if inFlight < 1 {
 		t.Fatalf("the worker held %d pages when it was killed", inFlight)
 	}
@@ -92,8 +97,8 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 		t.Fatalf("the dead worker's tasks were returned %v after the kill, want about one lease of 2s", lost)
 	}
 	returned := value[int](t, conn, `SELECT count(*) FROM tasks WHERE expiries = 1`)
-	if spent := value[int](t, conn, `SELECT count(*) FROM tasks WHERE expiries > 0 AND (attempt <> 0 OR expiries <> 1)`); returned != inFlight || spent != 0 {
-		t.Fatalf("%d tasks were returned with one expiry, want the %d in flight at the kill, and %d of them spent an attempt", returned, inFlight, spent)
+	if spent := value[int](t, conn, `SELECT count(*) FROM tasks WHERE expiries > 0 AND (attempt <> 0 OR expiries <> 1)`); returned != holding || spent != 0 {
+		t.Fatalf("%d tasks were returned with one expiry, want the %d the worker held at the kill, and %d of them spent an attempt", returned, holding, spent)
 	}
 	if n := value[int](t, conn, `SELECT count(*) FROM workers WHERE worker_id = $1`, doomed.worker()); n != 0 {
 		t.Fatal("the dead worker is still registered")
@@ -129,6 +134,7 @@ func TestAKilledWorkerLosesItsLeaseAndNotTheWork(t *testing.T) {
 // a new id. Both workers wrote the page, under two keys; the one the parse
 // serves is the one whose settle was accepted.
 func TestASuspendedWorkerCannotSettleAndRegistersAgain(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	api := p.spawn("api")
 	// The first worker exchanges once in 3 seconds, so a page it has read
@@ -183,6 +189,7 @@ func TestASuspendedWorkerCannotSettleAndRegistersAgain(t *testing.T) {
 // returns afterwards and its settle is refused: no output, no progress and
 // no assemble task are recorded.
 func TestAPageThatReturnsAfterACancelRecordsNothing(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	gate := t.TempDir()
 	hold := filepath.Join(gate, "hold")
@@ -236,10 +243,11 @@ func TestAPageThatReturnsAfterACancelRecordsNothing(t *testing.T) {
 // counted, removes its registration, and exits clean. Another worker takes
 // them at once.
 func TestATerminatedWorkerReturnsItsTasks(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	api := p.spawn("api")
 	worker := p.spawn("worker", delayEnv, "1m", "LECTIO_SHUTDOWN_GRACE", "500ms")
-	id := submitted(t, api.base, "report.pdf", testfixtures.Read(t, testfixtures.MultipagePDF))
+	id := submitted(t, api.base, "scan.tiff", frames(3))
 	conn := p.connect()
 	leased := `SELECT count(*) FROM tasks WHERE parse_id = $1 AND kind = 'page' AND state = 'leased'`
 	until(t, "the worker runs the 3 pages", 30*time.Second, func() bool { return value[int](t, conn, leased, id) == 3 })
@@ -279,11 +287,12 @@ func TestATerminatedWorkerReturnsItsTasks(t *testing.T) {
 // API process serves its state, its result, and the submit repeated under
 // the same idempotency key.
 func TestRestartingTheAPIChangesNothing(t *testing.T) {
+	t.Parallel()
 	p := newPlane(t)
 	first := p.spawn("api")
 	p.spawn("worker", delayEnv, "400ms", "LECTIO_WORKERS", "1")
 
-	status, file, raw := call(t, "POST", first.base+"/v1/files?name=report.pdf", "dev", testfixtures.Read(t, testfixtures.MultipagePDF), "Content-Type", "application/pdf")
+	status, file, raw := call(t, "POST", first.base+"/v1/files?name=scan.tiff", "dev", frames(3), "Content-Type", "image/tiff")
 	if status != http.StatusCreated {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
