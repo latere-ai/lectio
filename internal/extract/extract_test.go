@@ -443,7 +443,7 @@ func TestWindowsAreMergedByAMechanicalRule(t *testing.T) {
 }
 
 // TestACitedRefThatDoesNotExistIsAbsent: of a reply's citations, a ref that
-// is no ref of the text the reply was given is dropped, a ref named twice
+// is no ref of the text the reply was given is dropped, a ref named 2 times
 // is kept once, and a citation of a value that is not in the object, or of
 // a pointer that is none, is dropped whole.
 func TestACitedRefThatDoesNotExistIsAbsent(t *testing.T) {

@@ -3,7 +3,7 @@
 
 // Package figures holds what describing a parse's figures means, whoever
 // runs it: which blocks of a page a run takes, what a figure's caption is,
-// what names a description so that it is not made twice, and how a
+// what names a description so that it is made once, and how a
 // description is written onto its block. The in-process runner of a
 // development server and the tasks of the durable one both describe
 // figures through it, so the 2 servers cannot come to answer differently.

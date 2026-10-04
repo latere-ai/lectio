@@ -278,7 +278,7 @@ func TestALongDocumentIsExtractedOneWindowAClaim(t *testing.T) {
 // not satisfy the schema is not a failed attempt. The claim keeps the
 // reply and the validator's findings and settles with Continue, and the
 // next claim shows the model both, with the same window. A repaired reply
-// fills the field, which then says the model was asked twice. A reply that
+// fills the field, which then says the model was asked 2 times. A reply that
 // still fails after 2 repairs fails the field with schema_not_satisfied,
 // what the validator found, and no object.
 func TestAReplyThatFailsValidationIsRepairedInTheNextClaim(t *testing.T) {
@@ -337,7 +337,7 @@ func TestAReplyThatFailsValidationIsRepairedInTheNextClaim(t *testing.T) {
 
 // TestAValueTheDocumentDoesNotStateFailsTheFieldAndIsNeverMadeUp: a
 // required value the document does not state is absent from every reply.
-// The extraction asks again twice and then fails the field, and no object
+// The extraction asks again 2 times and then fails the field, and no object
 // with a value for it is ever written.
 func TestAValueTheDocumentDoesNotStateFailsTheFieldAndIsNeverMadeUp(t *testing.T) {
 	ext := &asking{}

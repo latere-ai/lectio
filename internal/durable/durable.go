@@ -750,7 +750,7 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 	if err := b.describe(ctx, p, pages); err != nil {
 		return err
 	}
-	// The file's bytes name a description so that it is not made twice. A
+	// The file's bytes name a description so that it is made once. A
 	// file that is gone names none, and its figures are described.
 	sha := ""
 	if file, err := b.Store.File(ctx, p.File); err == nil {
