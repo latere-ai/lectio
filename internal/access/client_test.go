@@ -7,11 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -245,24 +247,32 @@ func TestTheClientFailsClosed(t *testing.T) {
 	}
 }
 
+// resets fails the first calls of a round trip with a reset connection, the
+// way a connection the peer dropped before answering fails, and hands the
+// rest to the transport beneath it. It counts every attempt. A server that
+// hijacks and closes its connection is not used for this: what the client
+// then reads depends on which of its two loops notices first, and that
+// differs between systems.
+type resets struct {
+	fail  int32
+	calls atomic.Int32
+	next  http.RoundTripper
+}
+
+func (r *resets) RoundTrip(req *http.Request) (*http.Response, error) {
+	if r.calls.Add(1) <= r.fail {
+		return nil, &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	}
+	return r.next.RoundTrip(req)
+}
+
 // A call whose connection failed before any answer is tried once more, so
 // a connection the endpoint closed between two requests costs no request
 // its decision.
 func TestOneRetryOnAConnectionFailure(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			// Close the connection with no response line.
-			conn, _, err := http.NewResponseController(w).Hijack()
-			if err != nil {
-				t.Errorf("hijack: %v", err)
-				return
-			}
-			if err := conn.Close(); err != nil {
-				t.Errorf("close: %v", err)
-			}
-			return
-		}
+	var served atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{"allow": true}); err != nil {
 			t.Errorf("encode: %v", err)
@@ -270,30 +280,36 @@ func TestOneRetryOnAConnectionFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	az := asking(t, srv.URL, "t", nil)
-	d, err := az.Authorize(t.Context(), caller(alice), reading("prs_1", alice))
+	asking := func(rt *resets) access.Authorizer {
+		t.Helper()
+		client, err := access.NewClient(access.ClientOptions{
+			URL: srv.URL, Token: reader.NewCredential("t"), HTTP: &http.Client{Transport: rt},
+		})
+		if err != nil {
+			t.Fatalf("the client would not build: %v", err)
+		}
+		return access.NewAuthorizer(client, configured())
+	}
+
+	once := &resets{fail: 1, next: http.DefaultTransport}
+	d, err := asking(once).Authorize(t.Context(), caller(alice), reading("prs_1", alice))
 	if err != nil || !d.Allow {
 		t.Fatalf("got %+v, %v, want the allow of the second attempt", d, err)
 	}
-	if got := calls.Load(); got != 2 {
-		t.Errorf("the endpoint was called %d times, want 2", got)
+	if got := once.calls.Load(); got != 2 {
+		t.Errorf("the endpoint was tried %d times, want 2", got)
+	}
+	if got := served.Load(); got != 1 {
+		t.Errorf("the endpoint answered %d times, want the second attempt alone", got)
 	}
 
 	// A second failure is not tried a third time.
-	calls.Store(0)
-	always := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
-			_ = conn.Close()
-		}
-	}))
-	defer always.Close()
-	az = asking(t, always.URL, "t", nil)
-	if _, err := az.Authorize(t.Context(), caller(alice), reading("prs_1", alice)); fault.CodeOf(err) != fault.AuthorizerUnavailable {
+	always := &resets{fail: 1 << 30, next: http.DefaultTransport}
+	if _, err := asking(always).Authorize(t.Context(), caller(alice), reading("prs_1", alice)); fault.CodeOf(err) != fault.AuthorizerUnavailable {
 		t.Fatalf("got %v, want authorizer_unavailable", err)
 	}
-	if got := calls.Load(); got != 2 {
-		t.Errorf("an endpoint that always fails was called %d times, want 2", got)
+	if got := always.calls.Load(); got != 2 {
+		t.Errorf("an endpoint that always fails was tried %d times, want 2", got)
 	}
 }
 
