@@ -69,6 +69,7 @@ type Description struct {
     Kinds   []document.Kind // the kinds the reader can return; empty is any
     Version string          // names what in the configuration changes a result; empty makes no promise
     Text    bool            // whether the reader is handed the text the file carries for the page
+    Local   bool            // whether the reader calls no model, so a read by it is metered as no call
 }
 
 type ImageSpec struct {

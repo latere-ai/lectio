@@ -82,6 +82,11 @@ type Description struct {
 	// page: the caller hands it Page.Text for a page of a format that
 	// carries its text, beside the image.
 	Text bool `json:"text,omitempty"`
+
+	// Local reports that the reader calls no model: it reads a page in the
+	// caller's own process, from what the caller hands it. A read by it,
+	// and a page it declines, is metered as no call.
+	Local bool `json:"local,omitempty"`
 }
 
 // ImageSpec is how a page is rendered into an image.

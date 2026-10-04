@@ -390,6 +390,58 @@ func TestAPageFailsForItsOwnReasonsWithNoCall(t *testing.T) {
 	}
 }
 
+// own is a reader that calls no model: it reads the page from the file's
+// own text, or declines it.
+type own struct{ decline bool }
+
+func (own) Describe() reader.Description {
+	return reader.Description{Name: "own", Accepts: []string{"image/png"}, Text: true, Local: true}
+}
+
+func (o own) ReadPage(context.Context, reader.Page) (reader.Result, error) {
+	if o.decline {
+		return reader.Result{}, reader.Errorf(reader.Refused, "the file carries no text of its own for the page")
+	}
+	return reader.Result{
+		Blocks:    []document.Block{{Kind: document.KindText, Text: "Net 30 days.", Order: 1}},
+		TextLayer: true,
+	}, nil
+}
+
+// TestAReaderThatCallsNoModelIsMeteredAsNoCall: a page read from the file's
+// own text, and a page such a reader declines, take their place in the
+// queue's account and record no model call.
+func TestAReaderThatCallsNoModelIsMeteredAsNoCall(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		reader  own
+		outcome tasks.Outcome
+	}{
+		"read":     {own{}, tasks.Done},
+		"declined": {own{decline: true}, tasks.Next},
+	} {
+		b := newBench(t, map[string]reader.Reader{"own": tc.reader})
+		b.w.Costs = map[string]int{"own": 2}
+		b.put("sources/o/aa/fil_1", sheet(t, false), "image/png")
+		c := page("prs_a", 1, 1, "sources/o/aa/fil_1", "image/png")
+		c.Reader = "own"
+		s := b.w.run(ctx, c)
+		if s.Outcome != tc.outcome || s.Usage != (tasks.Usage{}) || s.Units != 2 {
+			t.Fatalf("%s: settled %+v, %+v", name, s, s.Error)
+		}
+		switch tc.outcome {
+		case tasks.Done:
+			if string(s.Result) != `{"blocks":1,"source":"text_layer"}` {
+				t.Fatalf("%s: the page's summary is %s", name, s.Result)
+			}
+		default:
+			if s.Error == nil || s.Error.Code != "page_unreadable" || s.Error.Detail != "the reader declined the page" {
+				t.Fatalf("%s: the page failed with %+v", name, s.Error)
+			}
+		}
+	}
+}
+
 // TestAPageIsTakenFromAnEarlierRead: a page the claim names a kept result
 // for is copied under the task's own keys, image included, marked reused,
 // and no model is called. A kept result that is gone is read again.

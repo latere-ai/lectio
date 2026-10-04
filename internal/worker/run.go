@@ -173,14 +173,18 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 
 	got, err := w.Pipeline.ReadPage(ctx, m.Manifest, working, n, rd, opt)
 	if err != nil {
-		w.failed(c, s, err)
+		w.failed(c, s, err, rd.Describe().Local)
 		return
 	}
-	// A page with nothing on it is written with no call.
+	// A page with nothing on it is written with no read, and one read from
+	// the file's own text with no call.
 	if !got.Image.Blank {
-		s.Usage, s.Units, s.Health = tasks.Usage{Calls: 1}, w.cost(c.Reader), tasks.Healthy
-		if u := got.Page.Usage; u != nil {
-			s.Usage.InputTokens, s.Usage.OutputTokens = u.InputTokens, u.OutputTokens
+		s.Units, s.Health = w.cost(c.Reader), tasks.Healthy
+		if got.Page.Source != document.SourceTextLayer {
+			s.Usage = tasks.Usage{Calls: 1}
+			if u := got.Page.Usage; u != nil {
+				s.Usage.InputTokens, s.Usage.OutputTokens = u.InputTokens, u.OutputTokens
+			}
 		}
 	}
 	got.Page.Attempts = c.Attempt + 1
@@ -284,15 +288,19 @@ func (w *Worker) cost(name string) int {
 // file itself, a page that cannot be rendered, is not the reader's: no
 // other attempt or reader changes it. Every other error is the reader's and
 // is read by its class; one that carries none is taken for a failure that
-// may pass, as the reader package says.
-func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error) {
+// may pass, as the reader package says. local says the reader calls no
+// model, so its failure is metered as no call.
+func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error, local bool) {
 	if f, ok := errors.AsType[*fault.Error](err); ok {
 		permanent(s, f.Code, "%s", f.Detail)
 		return
 	}
-	// The reader was called, and what the call spent is recorded whatever
-	// it returned.
-	s.Usage, s.Units = tasks.Usage{Calls: 1}, w.cost(c.Reader)
+	// The reader was asked, and what the read spent is recorded whatever
+	// it returned: a call, unless the reader makes none.
+	s.Units = w.cost(c.Reader)
+	if !local {
+		s.Usage = tasks.Usage{Calls: 1}
+	}
 	switch reader.ClassOf(err) {
 	case reader.RateLimited:
 		// Waiting for capacity is not failing: it spends no attempt.
@@ -306,7 +314,7 @@ func (w *Worker) failed(c tasks.Claim, s *tasks.Settle, err error) {
 		// The reader is healthy and declined this page. Another may take
 		// it; the same one would decline again.
 		s.Outcome = tasks.Next
-		s.Error = &tasks.Error{Code: string(fault.PageUnreadable), Detail: "the model declined the page"}
+		s.Error = &tasks.Error{Code: string(fault.PageUnreadable), Detail: "the reader declined the page"}
 	case reader.Misconfigured:
 		// The endpoint rejected the request itself, as it will every time:
 		// the failure is the reader's and counts against it.

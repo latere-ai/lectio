@@ -307,10 +307,12 @@ and one reader. It holds counts and names, never content.
   reader its attempt was claimed for. A page that moved down the
   policy's chain is metered under each reader that was called for it.
 - **A page counts when it is read.** A page task that succeeds adds 1
-  page, whether or not a call was made: a page with nothing on it and a
-  page taken from an earlier read are pages read, under the reader they
-  were claimed for and with no call. A page that failed adds its calls
-  and no page, and adds its page when a retry reads it.
+  page, whether or not a call was made: a page with nothing on it, a
+  page taken from an earlier read and a page read from the text its
+  file carries are pages read, under the reader they were claimed for
+  and with no call. A page that failed adds its calls and no page, and
+  adds its page when a retry reads it. A reader that calls no model
+  adds no call for a page it declines either.
 - **Native pages are pages.** The pages of a format that needs no
   reader are metered when `prepare` settles, with no call and no token,
   under the reader with no name, so a page means the same thing for

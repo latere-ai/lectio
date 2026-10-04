@@ -107,7 +107,7 @@ var kinds = []document.Kind{
 	document.KindTable, document.KindFigure, document.KindCaption, document.KindFootnote,
 }
 
-// Describe says the reader asks for the page's own text.
+// Describe says the reader asks for the page's own text and calls no model.
 func (r *Reader) Describe() reader.Description {
 	accepts := []string{"image/png", "image/jpeg"}
 	if r.cfg.Image.Format == "jpeg" {
@@ -115,7 +115,7 @@ func (r *Reader) Describe() reader.Description {
 	}
 	return reader.Description{
 		Name: r.cfg.Name, Accepts: accepts, Image: r.cfg.Image, Boxes: true,
-		Kinds: append([]document.Kind(nil), kinds...), Version: r.version, Text: true,
+		Kinds: append([]document.Kind(nil), kinds...), Version: r.version, Text: true, Local: true,
 	}
 }
 

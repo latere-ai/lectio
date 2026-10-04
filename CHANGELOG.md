@@ -93,9 +93,11 @@ refused before it is pushed.
   `reader` and `native`. Such a page names its `reader` and no `model`,
   and its `usage` is one page and no token; it counts as one page
   against a group's pages for a day. A client that switches on `source`
-  needs the new case. In the Go packages: `reader.Description` has
-  `Text`, `reader.Page` has `Text`, `reader.Result` has `TextLayer`,
-  and `document.SourceTextLayer` is the new source. A `text` reader's
+  needs the new case. `GET /usage` counts such a page as a page and no
+  call, and counts no call for a page the reader declines. In the Go
+  packages: `reader.Description` has `Text` and `Local`, `reader.Page`
+  has `Text`, `reader.Result` has `TextLayer`, and
+  `document.SourceTextLayer` is the new source. A `text` reader's
   `maxInFlight` is 64 unless its document sets it. On the typeset file
   of the quality corpus the reader alone is within the bars a model is
   held to: 0.55% character error, 97.4% of kinds, every table cell.
