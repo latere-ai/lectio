@@ -112,9 +112,11 @@ result. Lectio never dereferences it.
 ### The snapshot
 
 The source is stored once per owner under its content hash:
-`sources/<owner key>/<sha256>`, where the owner key is a hash of the
-owner string, so one tenant's upload of a file is never served to
-another and the key reveals neither. The File row holds the size, the
+`sources/<owner key>/<sha256>/<file>`, where the owner key is a hash of
+the owner string, so one tenant's upload of a file is never served to
+another and the key reveals neither. The key ends in the file's id, so
+the delete of a file and an upload of the same bytes at the same
+instant never meet on one object. The File row holds the size, the
 hash, the detected media type, the name, and `expires_at`. Parses refer
 to the File. Reuse of results ([[005-parse-graph]]) keys on the hash,
 so the same bytes arriving by upload and by URL are one piece of work.
@@ -178,6 +180,12 @@ Built:
 - `origin` stored, returned and filterable, and `DELETE` of a file and
   of a parse, with a file that a parse which has not ended reads being
   refused.
+- In the durable server: the snapshot in the bucket under the key
+  above, with the file's row in Postgres, one per owner and digest; the
+  delete of a file marks its row, removes the object and then the row;
+  and the delete of a parse removes every object under its prefix and
+  then its rows, so a delete that stops halfway leaves a row to delete
+  again and never an object nothing names.
 
 Remaining:
 
@@ -185,8 +193,8 @@ Remaining:
   is `422 source_unreachable` on the submit. Fetching in `prepare`,
   where it fails the parse, comes with the durable tasks
   ([[004-durable-tasks]]).
-- The snapshot in an object store. Files are held in memory, keyed by
-  owner and content hash.
+- In a development server files are held in memory, keyed by owner and
+  content hash.
 - Retention: `expires_at`, `?retain=`, every row of the retention
   table, and the sweep. Nothing expires; a restart deletes everything.
 - `output.images` and `LECTIO_KEEP_PAGE_IMAGES`: every page image is

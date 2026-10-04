@@ -285,26 +285,54 @@ Built:
   `allow_failed_pages`, records the index's key, and deletes the rows
   of the tasks that succeeded. A failed `prepare` or `assemble` fails
   the parse. Store tests prove the first, second and ninth rows of the
-  table below. No worker runs these tasks yet, so a development server
-  still drives a parse through the runner.
+  table below.
+- `internal/worker`: the tasks as a worker runs them. `prepare` reads
+  the file from the bucket, runs `Prepare`, writes the working copy
+  when the file was opened or converted and the pages of a native
+  format, and settles with the manifest. A page task takes the result
+  of the same read when its claim names one, and otherwise runs
+  `ReadPage` with the reader it was claimed for and writes the image
+  and the result under its token. `assemble` reads every page by the
+  key its task recorded, runs the passes, writes again the pages they
+  changed and the pages that failed, and writes the index. A page that
+  failed has no result of its task's own: `assemble` writes it from the
+  task's error.
+- The table of reader errors, as settles. Rate limited is a wait with
+  the time the endpoint named; retryable spends an attempt and counts
+  against the reader's breaker; invalid spends an attempt, and the task
+  store moves the page to the next reader at the second one, once;
+  budget and permanent fail the page at once; refused and
+  misconfigured move the page down the chain with no limit, the second
+  counting against the breaker; and a failure of the file fails the
+  page with the file's own code. The task store holds the page's
+  position in the chain, and a pinned page never moves. Proven by a
+  table test of the worker and by store tests of each move, on a direct
+  connection, in exec mode and behind a pooler.
+- Reuse by page in the durable server ([[002-object-model]]): the read
+  key is kept per owner in the database and looked up in the claim.
+- Proven with processes ([[004-durable-tasks]]): the third, fourth and
+  eighth rows of the table below.
 
 Remaining:
 
-- A worker that runs the tasks. In a development server nothing is a
-  row: the runner keeps its queue in memory, so a restart loses every
-  parse that had not ended ([[004-durable-tasks]]).
+- In a development server nothing is a row: the runner keeps its queue
+  in memory, so a restart loses every parse that had not ended
+  ([[004-durable-tasks]]).
 - At the end of a parse, rolling the tasks' usage into the meter and
   giving back the pages that were reserved and not read
   ([[013-limits-and-usage]]). The parse row carries the calls and
   tokens of every settle.
-- Output keys that carry a token, and the document index listing them:
-  the memory store keeps one result per page.
-- `retry`, and `extract-<name>` tasks.
+- `retry`, and `extract-<name>` tasks. The fifth row of the table below
+  waits for `retry`.
+- The row of the table of reader errors as an end-to-end test with a
+  counting stub: it is proven at the worker and at the store, and not
+  yet through both at once.
 - The fingerprint covers the page selection, the reader chain and the
   languages. The instruction's version and the policy's version are
   not in it yet.
-- The working copy cache on a worker's disk: the runner holds the
-  working copy in memory.
+- The working copy cache on a worker's disk: a worker holds working
+  copies in memory, within `LECTIO_CACHE_BYTES`, and the memory row of
+  the table below is not measured.
 
 ## Acceptance criteria
 

@@ -16,14 +16,16 @@ Tenants share the workers and the model's rate limit by weight, with an
 interactive class ahead of a batch class, and no tenant can queue its
 way past another.
 
-> **Status: design under review, scaffold in place.** The specs in
-> [`specs/`](specs/README.md) are the design, and none is final. What
-> runs today is the whole parsing path and the whole HTTP contract in
-> one process with nothing durable: the object model, the interface a
-> model sits behind with its first adapters, intake, PDF rendering,
-> assembly, and a development server. It has read real PDFs end to end
-> with models running locally. The durable tasks and the fair queue are
-> designed and not built. Each spec says what of it exists.
+> **Status: design under review, first durable server in place.** The
+> specs in [`specs/`](specs/README.md) are the design, and none is
+> final. Two servers run today. The development server is the whole
+> parsing path and the whole HTTP contract in one process with nothing
+> durable. The durable server keeps parses and their tasks in Postgres
+> and bytes in an S3 bucket, with the API and the workers as separate
+> processes: a worker that is killed loses its lease and not the work.
+> It takes one static token; signing in with an issuer, limits per
+> tenant, retry, extraction and the usage meter are designed and not
+> built. Each spec says what of it exists.
 
 ## Run it
 
@@ -134,6 +136,55 @@ It parses the file with that reader and writes the Markdown, each
 page's blocks and each page's image to `LECTIO_LIVE_OUT` when it is
 set. It calls a model, so it is never part of `make check`.
 
+## Run it durably
+
+Without `LECTIO_DEV`, `lectiod` keeps its work in Postgres and its
+bytes in an S3 bucket. For a try on one machine, both run in
+containers. The values below are examples; use your own.
+
+```sh
+podman run -d --name lectio-db -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_USER=lectio -e POSTGRES_PASSWORD=example -e POSTGRES_DB=lectio \
+  postgres:16-alpine
+
+# Any S3 compatible server does. A directory under its data path is a bucket.
+podman run -d --name lectio-objects -p 127.0.0.1:9000:9000 \
+  -e MINIO_ROOT_USER=example -e MINIO_ROOT_PASSWORD=example-secret \
+  --entrypoint sh minio/minio -c 'mkdir -p /data/lectio && exec minio server /data'
+
+export LECTIO_DATABASE_URL='postgres://lectio:example@127.0.0.1:5432/lectio?sslmode=disable'
+export LECTIO_BUCKET=lectio LECTIO_S3_ENDPOINT=http://127.0.0.1:9000 LECTIO_S3_REGION=us-east-1
+export LECTIO_S3_ACCESS_KEY=example LECTIO_S3_SECRET_KEY=example-secret LECTIO_S3_PATH_STYLE=true
+export LECTIO_DEV_TOKEN=choose-a-token
+
+make build
+out/lectiod                 # the API and a worker in one process
+```
+
+The same requests as above then work against `http://localhost:8080/v1`
+with that token, and a parse survives a restart of the process. To run
+the roles apart, as a deployment does, start one process of each with
+the same settings:
+
+```sh
+LECTIO_ROLE=api out/lectiod
+LECTIO_ROLE=worker LECTIO_INTERNAL_ADDR=:8082 out/lectiod
+```
+
+The API applies the database schema when it starts. A worker serves no
+public address. Each process answers `/livez` and `/readyz` on
+`LECTIO_INTERNAL_ADDR`, `:8081` unless set. Workers can be added,
+stopped and killed while parses run: a stopped worker gives its pages
+back at once, and a killed one loses them after `LECTIO_TASK_LEASE`,
+60 seconds unless set, to the workers that are left. With a
+transaction-mode pooler in front of the database, name the pooler in
+`LECTIO_DATABASE_POOL_URL` and keep the direct address in
+`LECTIO_DATABASE_URL`. Every setting is in
+[`specs/016-distribution.md`](specs/016-distribution.md).
+
+The durable server does not describe figures yet, and it takes the one
+token of `LECTIO_DEV_TOKEN` until signing in with an issuer is built.
+
 ## Build and deploy it
 
 ```sh
@@ -152,8 +203,9 @@ with one Deployment for the API and one for the workers, a component
 that adds the sidecar with no way out to any network, and 2 example
 overlays. The base names no host, registry or secret value; an
 installation's overlay does. The manifests and the compose file are
-written for the durable server and wait for it, as the status above
-says.
+written for the durable server with callers who sign in through an
+issuer; the server takes one static token until that is wired in, as
+the status above says.
 
 A release publishes both images, signed and with a bill of materials
 and provenance attested, and attaches the deploy tree with both images

@@ -186,7 +186,7 @@ itself. There is no expiry on the task row and no heartbeat per task.
 |---|---|
 | `LECTIO_TASK_LEASE` | 60s, the length of a worker's lease |
 | `LECTIO_WORKER_FLUSH` | 200ms, the shortest time between two exchanges of one worker |
-| `LECTIO_WORKER_POLL` | 1s idle, backing off to 5s with jitter |
+| `LECTIO_WORKER_POLL` | 1s idle, backing off to 5s with jitter, and never past a quarter of the lease |
 | `LECTIO_SWEEP_INTERVAL` | 30s |
 
 Every timestamp in this spec is the database's `now()`; a worker's
@@ -462,9 +462,14 @@ Built:
 - `internal/store/postgres/migrations`: the tables above, and the
   functions that are their only writers: `lectio_register`,
   `lectio_submit`, `lectio_cancel` and `lectio_exchange`, which renews,
-  settles under the fence, reports, claims and runs the sweeps for dead
-  workers and for deadlines, in that order, under one
-  `pg_advisory_xact_lock`. Step 5 of the exchange, a slot taken and
+  settles under the fence, reports, returns the claims of a reply its
+  worker never read, claims and runs the sweeps for dead workers and
+  for deadlines, in that order, under one `pg_advisory_xact_lock`. A
+  second migration holds how far along the policy's chain a task is
+  and the outcome that moves it ([[005-parse-graph]],
+  [[007-model-capacity]]), and a third the files, the members of a parse
+  its caller chose, the reads kept by page, and the part of a parse a
+  claim carries. Step 5 of the exchange, a slot taken and
   given back per call of a task that makes several, is not built: a
   task holds the slot of its claim until it settles. The sweeps for
   settled tasks past their retention and for orphaned outputs are not
@@ -473,8 +478,20 @@ Built:
 - `internal/store/postgres`: `Migrate` over the direct URL, refusing a
   schema that is dirty or newer than the binary, and a store with
   `Open` over the serving URL, `Register`, `Exchange`, `Submit`,
-  `Cancel`, and the reads `Parse`, `Tasks` and `Queue`. `internal/config`
-  reads both URLs. No command opens the store yet.
+  `Cancel`, the reads `Parse`, `Tasks` and `Queue`, and what the API
+  serves from: files, an owner's parses with their filters and paging,
+  and the delete of each. `internal/config` reads both URLs and
+  `lectiod` opens the store with them.
+
+- `internal/worker`: the worker process. It registers, makes one
+  exchange at most once per `LECTIO_WORKER_FLUSH` and at least once per
+  quarter of its lease, runs each claim on a goroutine of its own, ends
+  the call of a task the reply names as lost, abandons everything and
+  registers again when the reply says the fleet gave it up, runs a task
+  that must run alone with nothing else, and keeps its settles when the
+  store does not answer. On a termination signal it claims nothing,
+  lets its tasks finish for `LECTIO_SHUTDOWN_GRACE`, and gives the rest
+  back as returned in an exchange that removes its registration.
 
 Proven at the store, by the tests of `internal/store/postgres`, each
 on a direct connection, in the query mode that prepares nothing, and
@@ -502,18 +519,35 @@ that settles one task and claims one takes 1.5 ms at the median and
 2.2 ms at the 99th percentile, and a poll against a full pool, which
 claims nothing, 0.7 ms and 1.3 ms. The time grows with the number of
 groups that hold queued work, which the claim orders once per task it
-hands out, and not with the rows. The criteria that need a process to
-kill, an object store, or a fleet are not proven: the rows of the table below
-that name a process-level test, a soak or a throughput test.
+hands out, and not with the rows.
 
-Remaining: everything that runs. There is no worker process and no
-object store, and the store has no twin in memory, so `internal/run`,
-the in-process runner,
-still stands in for this spec in a development server: it holds the
-page-level shape of the work, ordering by class and priority, retry by
-the reader's error class, a rate limit that spends no attempt, cancel
-and deadline, and it keeps its queue in memory, so nothing is durable,
-no task is a row, and a restart loses every parse that had not ended.
+Proven with processes, by the tests of `cmd/lectiod`, which run the
+server as processes over one Postgres and one bucket with a lease of 2
+seconds: a worker killed with `SIGKILL` keeps its tasks for one lease
+and no longer, another worker returns them with one expiry and no
+attempt counted and completes them, and the reader is called once per
+page plus at most once per call in flight at the kill; a worker
+suspended with `SIGSTOP` past its lease, with a page read and not
+settled, has its settle refused when it resumes and registers under a
+new id, while the page another worker read meanwhile is the one the
+task's row and the document index name, both objects being in the
+bucket; a page whose call returns after its parse was canceled has its
+settle refused, with no output, no progress and no `assemble` task; a
+worker sent `SIGTERM` gives its tasks back within the grace period with
+no attempt and no expiry counted and removes its registration; and an
+API process that is killed and replaced serves the same parse.
+
+Not proven: the soak, the throughput row, the row that blocks the
+database connection, which is proven at the store with a virtual clock
+and not with a connection that is cut, and the orphan sweep of the
+third row, which is not built.
+
+Remaining: the sweeps for settled tasks past their retention and for
+orphaned outputs, retry, and step 5 of the exchange. The store has no
+twin in memory, so `internal/run`, the in-process runner, still stands
+in for this spec in a development server: it holds the page-level
+shape of the work and keeps its queue in memory, so there nothing is
+durable and a restart loses every parse that had not ended.
 
 ## Acceptance criteria
 

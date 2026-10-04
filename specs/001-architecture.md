@@ -196,7 +196,8 @@ says so at start.
 
 ## Implementation status
 
-Built: the path of one parse, in one process and in memory.
+Built: the path of one parse, twice. A development server runs it in
+one process and in memory:
 
 ```mermaid
 flowchart LR
@@ -235,19 +236,57 @@ flowchart LR
   specialized engine behind the layout adapter and a general vision
   model behind the chat adapter ([[008-readers]]).
 
-Built beside it and opened by no command yet: the task store over
-Postgres, `internal/store/postgres`, with the exchange as one function
-in the database ([[004-durable-tasks]]). At the store, invariants 3, 4,
-5 and 6 hold and are proven by its tests: a stale worker settles
-nothing, the tenant is chosen before the task, a task with no room is
-not claimed and writes nothing, and a cancel refuses every later
-settle.
+The durable server runs it as the components above, without
+`LECTIO_DEV`:
 
-Remaining: both roles as separate processes over that store, the
-object store, the issuer, the authorizer and the key source, and with
-them invariants 1, 2, 7 and 9 and the part of invariant 3 that covers
-object keys. A development server keeps the in-process runner. Each is
-the subject of the spec linked above.
+```mermaid
+flowchart LR
+  subgraph apirole["lectiod, role api"]
+    api["internal/httpapi over internal/durable"]
+  end
+  subgraph workerrole["lectiod, role worker"]
+    wrk["internal/worker: the exchange loop"]
+    steps["internal/parse, internal/assemble"]
+  end
+  pg[("internal/store/postgres")]
+  obj[("internal/blob: a bucket")]
+  rd["reader: chat, layout or stub"]
+  api --> pg
+  api --> obj
+  wrk --> pg
+  wrk --> steps --> rd
+  wrk --> obj
+```
+
+- `lectiod` runs as `api`, as `worker`, and as both
+  ([[016-distribution]]). The API writes a parse and its `prepare` task
+  in one transaction and holds no parse in memory. A worker claims
+  tasks through the exchange, runs `prepare`, each page and `assemble`
+  from what its claim carries, writes each output to the bucket under a
+  key that carries the claim's token, and settles
+  ([[004-durable-tasks]], [[005-parse-graph]]).
+- Invariants 1, 2, 3 and 6 hold across processes and are proven by
+  tests that run the server as processes and kill, suspend, terminate
+  and restart them: a killed worker's tasks return after one lease and
+  are completed by another with no attempt spent and no page succeeded
+  twice; a worker suspended past its lease cannot settle and registers
+  again; of two results two workers wrote for one page, the parse serves
+  the one whose settle was accepted; a page whose call returns after a
+  cancel records nothing; and an API process that is killed and
+  replaced serves the same parse. At the store, invariants 4 and 5 hold
+  and are proven by its tests: the tenant is chosen before the task,
+  and a task with no room is not claimed and writes nothing.
+
+Remaining: the issuer, the authorizer and the key source, and with
+them invariant 9: the durable server takes one static token until they
+are wired in ([[012-identity-and-authorization]]). Invariant 7: a
+worker holds a working copy and the image of each page it reads in
+heap, and `assemble` holds every page of its document; an upload is
+held whole by the API. The start-up criterion below holds for the
+database and the bucket and for no setting of an issuer or a model
+endpoint, and the memory criterion is not measured. A development
+server keeps the in-process runner. Each is the subject of the spec
+linked above.
 
 ## Not in this spec
 

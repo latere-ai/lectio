@@ -6,11 +6,42 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: the durable server. Without `LECTIO_DEV`, `lectiod` keeps
+  parses and their tasks in Postgres and bytes in an S3 bucket, and
+  `LECTIO_ROLE` says whether a process serves the API (`api`), runs the
+  tasks (`worker`), or does both (`all`, the default). The API applies
+  the schema at start and holds no parse in memory, so it can be
+  restarted while parses run. A worker that is stopped gives its pages
+  back at once; one that is killed loses them to the other workers
+  after `LECTIO_TASK_LEASE`, and no page is recorded twice. It takes
+  the one token of `LECTIO_DEV_TOKEN`, describes no figures yet
+  (`501 not_implemented`), and serves every other built route.
+- Added: `/livez`, `/readyz` and `/version` on `LECTIO_INTERNAL_ADDR`
+  (default `:8081`) in the durable server. A process is ready when the
+  database answers and, for a worker, the task store answered it within
+  a third of its lease.
+- Added: the bucket's settings, `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`,
+  `LECTIO_S3_ENDPOINT`, `LECTIO_S3_REGION`, `LECTIO_S3_ACCESS_KEY`,
+  `LECTIO_S3_SECRET_KEY` and `LECTIO_S3_PATH_STYLE`, and the worker's and
+  the queue's: `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`,
+  `LECTIO_SWEEP_INTERVAL`, `LECTIO_WORKER_FLUSH`, `LECTIO_WORKER_POLL`,
+  `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` and `LECTIO_CACHE_BYTES`.
+  `LECTIO_KEYS` takes `static` and nothing else.
+- Changed: in the durable server a Reader's `maxInFlight` and `cost`
+  are applied. `maxInFlight` bounds the reader's calls in flight across
+  every worker, 8 when a document names none. `cost` is a whole number:
+  a fraction is refused when the documents are loaded.
+- Changed: a page waits for a reader that is only busy. It goes to the
+  next reader of the Policy's chain only when the first cannot be
+  called at all, its key paused by a rate limit or its breaker open, so
+  load alone never sends pages to a costlier reader.
+- Changed: `POST /parses/{parse}/figures` lists `501` among its answers
+  in `api/openapi.yaml`.
 - Added: `lectiod` reads `LECTIO_OIDC_ISSUERS`, `LECTIO_OIDC_AUDIENCE`
   (default `lectio`), `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN`
   and `LECTIO_ADMIN_SUBJECTS`, and refuses to start when one is not
-  well formed, naming the variable. Nothing uses them yet: the
-  development server still takes its one static token.
+  well formed, naming the variable. Nothing uses them yet: the server
+  still takes its one static token.
 - Added: identity and authorization as a library the server does not
   call yet (`internal/access`). A bearer is verified against the listed
   issuers and becomes a subject, `<issuer>|<sub>`, with every claim
@@ -36,8 +67,7 @@ refused before it is pushed.
   and the Reader and Policy documents as 2 ConfigMaps, and the
   credentials are Secrets applied by hand. `deploy/README.md` lists
   every name and key. The manifests are written for the durable server,
-  with its roles, its internal listener and its probes, which this
-  build does not have yet.
+  with its roles, its internal listener and its probes.
 - Added: `deploy/components/converter`, which an overlay adds to run the
   conversion sidecar in a cluster: Pods of its own, under a policy that
   admits the workers' calls and refuses every connection the sidecar
@@ -45,9 +75,9 @@ refused before it is pushed.
   conversion, as before.
 - Added: `deploy/examples/compose.yaml`, the stack on one machine:
   Postgres, an object store with its bucket, `lectiod` in the role
-  `all`, and the sidecar on a socket with no network. It needs the
-  durable server too, and an identity provider of yours, named by
-  `LECTIO_OIDC_ISSUERS`. `docs/running.md` says how to start it and run
+  `all`, and the sidecar on a socket with no network. It needs an
+  identity provider of yours, named by `LECTIO_OIDC_ISSUERS`, which the
+  server does not sign callers in through yet. `docs/running.md` says how to start it and run
   a parse against it.
 - Added: a release publishes 2 images, `ghcr.io/<owner>/lectiod:<tag>`
   and `ghcr.io/<owner>/lectio-convert:<tag>`, for linux/amd64 and

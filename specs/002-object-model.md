@@ -338,11 +338,29 @@ Built:
   block's image as a cut of its page's image.
 - Reuse by page, in the in-process runner over the memory store.
 
+- The durable layout of the table above. Files and parses are rows of
+  `internal/store/postgres`; a worker writes the working copy, each
+  page's image and result, and the document index to the bucket under
+  keys that carry a lease token, in the shapes of `internal/objects`. A
+  stored page result is an envelope around the page the API serves: it
+  holds `revision`, 1 for a first reading, and the key of the page's
+  image, and neither is in the API. The index lists each page's key and
+  revision. A page is found through its task's row while its parse
+  runs, and through the index after.
+- Reuse by page in the durable server: a row per owner and read key
+  names the stored result of a page that was read whole, the claim of a
+  page task of a parse that takes earlier reads carries that key, and
+  the worker copies the result and its image under the new parse's own
+  keys, so a parse depends on no object of another.
+
 Remaining:
 
-- The Postgres tables and the object store layout of the table above,
-  with keys that carry a lease token.
 - A cell's `box`: no adapter sets one yet.
+- The last criterion below is proven with processes and not as a store
+  conformance test: two workers write one page under two keys, and the
+  parse serves the one whose settle was accepted. The orphan sweep that
+  removes the other is not built. The row-size criterion is not
+  measured.
 - What is under Open.
 
 ## Acceptance criteria

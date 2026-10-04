@@ -48,14 +48,17 @@ reader/layout/            the adapter for a layout engine behind its own HTTP co
 reader/stub/              a deterministic reader and extractor that make no call
 internal/access/          who is calling and who decides: the verifier, the authorizer client, the owner policy
 internal/assemble/        the document-wide passes and the views
+internal/blob/            the object store: memory, a local directory, an S3 bucket; the key layout
 internal/config/          settings from the environment; Reader and Policy documents
 internal/convert/         conversion: the client a pipeline converts through, and the sidecar's service
+internal/durable/         the API's backend over the task store and the object store
 internal/fault/           the error codes
 internal/fetch/           a source URL fetched with the address check
 internal/httpapi/         the routes, held to the contract by its tests
 internal/id/              prefixed, time-ordered identifiers
 internal/intake/          detect, unwrap, pages, tiffx
 internal/native/          formats read with no model
+internal/objects/         the shapes a parse writes to the object store
 internal/parse/           the steps of a parse: Prepare and ReadPage
 internal/prompts/         every instruction sent to a model, as template files
 internal/render/          the page renderer
@@ -64,6 +67,8 @@ internal/store/           the memory store
 internal/store/postgres/  the durable task store, and its migrations
 internal/tasks/           the protocol a worker and a task store share
 internal/testfixtures/    files the tests read
+internal/testservers/     the containers the suites run against: Postgres, a pooler, an object store
+internal/worker/          a worker process: the exchange loop and the tasks of a parse
 internal/version/         the build's version, stamped by the linker
 deploy/base/              manifests for a cluster, with no host or account in them
 deploy/bootstrap/         the namespace and the template of the Secrets, applied by hand
@@ -130,28 +135,33 @@ whether the binary reads the variable today.
 
 | Variable | Default | Owner | Read today |
 |---|---|---|---|
-| `LECTIO_ROLE` | `all` | [[001-architecture]] | no |
+| `LECTIO_ROLE` | `all`: `api`, `worker` or `all` | [[001-architecture]] | yes |
+| `LECTIO_INTERNAL_ADDR` | `:8081` | this spec | yes: `/livez`, `/readyz`, `/version` |
 | `LECTIO_ADDR` | `:8080` | [[003-api]] | yes |
 | `LECTIO_BASE_PATH` | `/v1` | [[003-api]] | yes |
-| `LECTIO_INTERNAL_ADDR` | `:8081` | [[015-observability]] | no |
-| `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes, only to say what is missing |
-| `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes: read, and opened by no command yet |
-| `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX`, `LECTIO_S3_*` | none | [[002-object-model]] | no |
+| `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes: migrations, and the store where no pooled URL is named |
+| `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes |
+| `LECTIO_BUCKET`, `LECTIO_BUCKET_PREFIX` | none, none | [[002-object-model]] | yes |
+| `LECTIO_S3_ENDPOINT`, `LECTIO_S3_REGION`, `LECTIO_S3_ACCESS_KEY`, `LECTIO_S3_SECRET_KEY` | none | [[002-object-model]] | yes |
+| `LECTIO_S3_PATH_STYLE` | false | [[002-object-model]] | yes |
 | `LECTIO_OIDC_ISSUERS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
 | `LECTIO_OIDC_AUDIENCE` | `lectio` | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
 | `LECTIO_AUTHORIZER_URL`, `LECTIO_AUTHORIZER_TOKEN` | none: owner policy | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
 | `LECTIO_ADMIN_SUBJECTS` | none | [[012-identity-and-authorization]] | yes: read and checked, and used by no command yet |
 | `LECTIO_CONFIG` | none: the stub reader | [[008-readers]] | yes |
 | `LECTIO_MODEL_KEY` | none | [[013-limits-and-usage]] | yes |
-| `LECTIO_KEYS`, `LECTIO_KEYS_URL` | `static` | [[013-limits-and-usage]] | no |
-| `LECTIO_WORKERS` | 8 task slots per process | [[004-durable-tasks]] | yes: pages read at once |
-| `LECTIO_TASK_ATTEMPTS` | 5 | [[004-durable-tasks]] | yes: attempts per page |
-| `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: how long open requests get to finish |
-| `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_WORKER_POLL`, `LECTIO_SWEEP_INTERVAL`, `LECTIO_TASK_RETENTION` | see spec | [[004-durable-tasks]] | no |
+| `LECTIO_KEYS` | `static` | [[013-limits-and-usage]] | yes: `static` is the one value taken |
+| `LECTIO_KEYS_URL` | none | [[013-limits-and-usage]] | no |
+| `LECTIO_WORKERS` | 8 task slots per process | [[004-durable-tasks]] | yes |
+| `LECTIO_TASK_ATTEMPTS` | 5 | [[004-durable-tasks]] | yes |
+| `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: open requests and running tasks |
+| `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_SWEEP_INTERVAL` | 60s, 3, 30s | [[004-durable-tasks]] | yes |
+| `LECTIO_WORKER_FLUSH`, `LECTIO_WORKER_POLL` | 200ms, 1s | [[004-durable-tasks]] | yes |
+| `LECTIO_TASK_RETENTION` | 7 days | [[004-durable-tasks]] | no |
 | `LECTIO_CLASS_WEIGHTS`, `LECTIO_GROUP_DEFAULTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
-| `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | no |
+| `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | yes |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
-| `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | no |
+| `LECTIO_CACHE_BYTES` | 2 GiB | [[009-intake]] | yes: the working copies a worker holds, in memory |
 | `LECTIO_CONVERTER_URL` | none: formats that need conversion are refused | [[009-intake]] | yes |
 | `LECTIO_CONVERT_ADDR` | `:8090` | [[009-intake]] | yes, by `lectio-convert` |
 | `LECTIO_CONVERT_SUITE` | `soffice`, found on `PATH` | [[009-intake]] | yes, by `lectio-convert` |
@@ -163,7 +173,7 @@ whether the binary reads the variable today.
 | `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION`, `LECTIO_KEEP_PAGE_IMAGES` | 24h, 30 days, true | [[014-sources-and-retention]] | no |
 | `LECTIO_USAGE_DETAIL` | 35 days | [[013-limits-and-usage]] | no |
 | `LECTIO_DEV` | false | this spec | yes |
-| `LECTIO_DEV_TOKEN` | `dev` | this spec | yes |
+| `LECTIO_DEV_TOKEN` | `dev` | this spec | yes: also the durable server's one caller until a verifier is built |
 
 A value that does not parse is an error that names its variable and
 never its value: a variable may hold a secret by mistake.
@@ -203,14 +213,37 @@ tried over the memory store.
 `LECTIO_DEV=true` runs one process with the memory store, the owner
 scoping of that store, one static token (`LECTIO_DEV_TOKEN`) and the
 stub reader unless `LECTIO_CONFIG` names real ones, and logs at start
-that nothing is durable. Without it, `lectiod` refuses to start when a
-required setting is missing and names it. `lectiod version` prints the
-build's version. The command takes no other argument: it is configured
-by its environment.
+that nothing is durable. Without it, `lectiod` is the durable server:
+it refuses to start when a required setting is missing and names it,
+the database URL and the bucket's 5 settings among them.
+`lectiod version` prints the build's version. The command takes no
+other argument: it is configured by its environment.
 
-On `SIGINT` or `SIGTERM` the server stops accepting connections, gives
-open requests `LECTIO_SHUTDOWN_GRACE` to finish, and then stops the
-runner.
+`LECTIO_ROLE` says what a durable process does. `api` applies the
+schema over `LECTIO_DATABASE_URL` at start, serves the contract on
+`LECTIO_ADDR` from the task store and the bucket, and holds no parse in
+memory. `worker` runs tasks and listens on no public address; started
+before the schema is applied, it waits for it. `all` does both in one
+process. Every role serves `/livez`, `/readyz` and `/version` on
+`LECTIO_INTERNAL_ADDR`: ready means the database answers and, for a
+worker, the task store answered an exchange of it within a third of
+its lease.
+
+`LECTIO_S3_PATH_STYLE=true` addresses the bucket as the first segment
+of the path and not as a label of the host, which a server reached by
+an address needs. `LECTIO_BUCKET_PREFIX` is prepended to every key, so
+several installations share a bucket. `LECTIO_WORKER_FLUSH` is the
+shortest time between two exchanges of one worker, and
+`LECTIO_WORKER_POLL` the time an idle worker waits before it asks
+again, which backs off to 5 times that and never past a quarter of the
+lease.
+
+On `SIGINT` or `SIGTERM` the server stops accepting connections and
+gives open requests `LECTIO_SHUTDOWN_GRACE` to finish. A development
+server then stops the runner. A durable worker claims nothing more,
+lets its tasks finish for the same grace period, settles what
+finished, and gives the rest back to the queue with no counter
+changed.
 
 ### The stubs
 
@@ -280,12 +313,16 @@ Built:
 - The module, the gate and its configuration, both hooks, the verify
   workflow, the community files, and the layout above except the
   entries marked not built.
-- `cmd/lectiod`: the development server. `LECTIO_DEV=true` is the only
-  mode that starts. Without it the command names
-  `LECTIO_DATABASE_URL` when that is missing, says the durable server
-  is not built when it is set, and exits non-zero either way.
+- `cmd/lectiod`: the development server with `LECTIO_DEV=true`, and
+  without it the durable server in the 3 roles above, with its probes
+  on the internal listener, the schema applied by the API at start
+  under the migrator's own lock, and the stop described above. A
+  missing database URL or bucket setting is named and the command exits
+  non-zero.
 - `internal/config`: the settings marked as read in the table, and the
-  Reader and Policy documents ([[008-readers]]).
+  Reader and Policy documents ([[008-readers]]), each Reader a pool of
+  the task store with its `maxInFlight`, 8 when it names none, and its
+  `cost`, a whole number.
 - The Postgres declaration of the gate: `role: pooled`, since
   `internal/store/postgres` is a client and `internal/config` reads
   both URLs.
@@ -313,8 +350,8 @@ Built:
   the release workflow publishes it.
 - `deploy/base`, `deploy/bootstrap` and `deploy/examples/generic`: the
   manifests of both roles, written against the listeners, the probes
-  and the settings of the durable server, which no build has yet, so no
-  cluster has run them. They render with `kubectl kustomize`.
+  and the settings of the durable server. No cluster has run them. They
+  render with `kubectl kustomize`.
 - `deploy/components/converter` and `deploy/examples/with-converter`:
   the sidecar's Deployment, Service, account and policies. Its
   container has a read-only root file system and scratch space at
@@ -330,9 +367,10 @@ Built:
   object store with its bucket, `lectiod` in the role `all` with the
   stub reader, and the sidecar on a socket with no network. It is
   written against the settings of the durable server and has not parsed
-  a file: Postgres and the object store start and the bucket is made,
-  and `lectiod` of this build reads the stack's settings and exits,
-  since it starts with `LECTIO_DEV=true` only. The stack has no stubs
+  a file: Postgres and the object store start and the bucket is made.
+  The stack has not been started with a build that has the durable
+  server, and that server takes its one static token and not a token of
+  the issuer the stack names. The stack has no stubs
   and no identity provider: the command stops unless
   `LECTIO_OIDC_ISSUERS` names one, and a caller brings a token that
   issuer wrote.
@@ -369,23 +407,32 @@ Remaining:
   conversion sidecar, and the smoke test of the compose file.
 - In the release: the binaries for 4 platforms and the stubs' image.
   The release carries 2 images and the deploy archive.
-- Most of the test tiers. The suite today is unit tests, end-to-end
-  tests of the API and the development server in one process, and the
-  tests of `internal/store/postgres`, which start one Postgres and one
-  PgBouncer in transaction mode per test binary and run every store
-  case 3 ways: on a direct connection, in the query mode that prepares
-  and describes nothing, and through the pooler. They skip where no
-  container runtime answers. The dispatch simulation is among them: it
-  drives the exchange function one task at a time with a virtual
-  clock. There is no memory twin of the task store for a conformance
-  suite to hold to the same cases, and no soak. The live tier is 2
-  tests run by hand: `make live`, which reads a real file with a
-  configured reader, and `make live-convert`, which converts a fixture
-  of each converted format through a running sidecar.
-- `LECTIO_DEV` holds page images in memory and has no local directory
-  for objects.
-- The health probe is `GET /healthz`. Readiness and version probes
-  come with the durable server ([[015-observability]]).
+- The test tiers in part. The suite is unit tests; the tests of
+  `internal/store/postgres`, which run every store case 3 ways, on a
+  direct connection, in the query mode that prepares and describes
+  nothing, and through PgBouncer in transaction mode, and hold the
+  dispatch simulation; the conformance suite of `internal/blob` over
+  its 3 implementations; the contract's cases of `internal/httpapi`,
+  run over the memory backend and over the durable one; and the
+  end-to-end tests of `cmd/lectiod`, which run the server as processes
+  over one Postgres and one bucket and kill, suspend, terminate and
+  restart them. `internal/testservers` starts the containers, one set
+  per test binary, and the suites that need them skip where no
+  container runtime answers. There is no memory twin of the task store
+  for a conformance suite to hold to the same cases. The soak and the
+  throughput run are tests of `cmd/lectiod` that run when
+  `LECTIO_SOAK` or `LECTIO_THROUGHPUT` is set, and in no workflow. The
+  live tier is 2 tests run by hand:
+  `make live`, which reads a real file with a configured reader, and
+  `make live-convert`, which converts a fixture of each converted
+  format through a running sidecar.
+- The durable server authenticates with the one static token of
+  `LECTIO_DEV_TOKEN` until the verifier of
+  [[012-identity-and-authorization]] is wired in, and says so at start.
+- `LECTIO_DEV` holds page images in memory. The local directory for
+  objects exists in `internal/blob` and no setting selects it.
+- `GET /healthz` stays on the public listener. The object store is not
+  part of readiness yet ([[015-observability]]).
 
 ## Acceptance criteria
 
