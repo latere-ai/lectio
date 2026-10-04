@@ -257,15 +257,22 @@ func striped(t *testing.T) []byte {
 	return encoded.Bytes()
 }
 
-// submitted uploads a file and submits a parse of it that takes no earlier
-// read, and returns the parse's id without waiting for it.
+// submitted uploads a file as the tests' one caller and submits a parse of
+// it that takes no earlier read, and returns the parse's id without waiting
+// for it.
 func submitted(t *testing.T, base, name string, data []byte) string {
 	t.Helper()
-	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, token(), data, "Content-Type", "application/octet-stream")
+	return submittedAs(t, base, token(), name, data)
+}
+
+// submittedAs is submitted for the caller a bearer names.
+func submittedAs(t *testing.T, base, bearer, name string, data []byte) string {
+	t.Helper()
+	status, file, raw := call(t, "POST", base+"/v1/files?name="+name, bearer, data, "Content-Type", "application/octet-stream")
 	if status != 201 && status != 200 {
 		t.Fatalf("upload: %d %s", status, raw)
 	}
-	status, parse, raw := call(t, "POST", base+"/v1/parses", token(), []byte(`{"source":{"file":"`+file["id"].(string)+`"},"reuse":false}`))
+	status, parse, raw := call(t, "POST", base+"/v1/parses", bearer, []byte(`{"source":{"file":"`+file["id"].(string)+`"},"reuse":false}`))
 	if status != 202 && status != 200 {
 		t.Fatalf("submit: %d %s", status, raw)
 	}

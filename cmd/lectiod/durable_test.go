@@ -151,13 +151,20 @@ func parsedFile(t *testing.T, base, name string, data []byte, options string) ma
 	return ended(t, base, parse["id"].(string))
 }
 
-// ended waits for a parse to end and returns it.
+// ended waits for a parse of the tests' one caller to end and returns it.
 func ended(t *testing.T, base, id string) map[string]any {
+	t.Helper()
+	return endedAs(t, base, token(), id)
+}
+
+// endedAs waits for a parse to end, reading it with its caller's bearer, and
+// returns it.
+func endedAs(t *testing.T, base, bearer, id string) map[string]any {
 	t.Helper()
 	// A runner that shares few processors between every package's tests
 	// takes minutes for what a workstation does in seconds.
 	for deadline := time.Now().Add(5 * time.Minute); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		status, parse, raw := call(t, "GET", base+"/v1/parses/"+id, token(), nil)
+		status, parse, raw := call(t, "GET", base+"/v1/parses/"+id, bearer, nil)
 		if status != http.StatusOK {
 			t.Fatalf("reading the parse: %d %s", status, raw)
 		}
