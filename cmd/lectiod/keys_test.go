@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"latere.ai/x/lectio/internal/config"
+	"latere.ai/x/lectio/internal/keys"
 )
 
 // Whose key reads a page, in a running durable server
@@ -480,6 +484,45 @@ func TestARateLimitOnOneGroupsKeyPausesThatGroupAlone(t *testing.T) {
 	}
 	if answers := strings.Join(pagesOf(t, base, alice, limited, 3), "\n"); strings.Count(answers, `"attempts":1`) != 3 {
 		t.Fatalf("a page that waited out a rate limit was charged an attempt:\n%s", answers)
+	}
+}
+
+// TestTheKeySourceIsBuiltFromTheSettings: a process that runs tasks builds
+// the source its settings name and says which in its log, without the
+// bearer or a key: the one key of the settings for every group, or the
+// endpoint, which is asked nothing until a page is read.
+func TestTheKeySourceIsBuiltFromTheSettings(t *testing.T) {
+	static, err := config.FromEnv(env("LECTIO_ROLE", "worker", "LECTIO_MODEL_KEY", "sk-operator-do-not-print"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &buffer{}
+	source := keySource(context.Background(), static, slog.New(slog.NewJSONHandler(logs, nil)))
+	if one, ok := source.(keys.Static); !ok || one.Credential.Reveal() != "sk-operator-do-not-print" {
+		t.Fatalf("the static source is %T", source)
+	}
+
+	asked := make(chan struct{}, 1)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { asked <- struct{}{} }))
+	t.Cleanup(endpoint.Close)
+	issued, err := config.FromEnv(env("LECTIO_ROLE", "all", "LECTIO_KEYS", "endpoint", "LECTIO_KEYS_URL", endpoint.URL, "LECTIO_KEYS_TOKEN", keysBearer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source = keySource(context.Background(), issued, slog.New(slog.NewJSONHandler(logs, nil)))
+	if _, ok := source.(*keys.Endpoint); !ok || len(asked) != 0 {
+		t.Fatalf("the endpoint source is %T, and the endpoint was asked %d times at start", source, len(asked))
+	}
+	// The stub answers with no key: the source asked it, with the bearer of
+	// the settings, and reports that it cannot say yet.
+	_, err = source.Key(context.Background(), "acme", "org:acme", "prs_1")
+	if wait := keys.RetryAfterOf(err); wait <= 0 || wait > keys.RetryMin || len(asked) != 1 {
+		t.Fatalf("the source built from the settings answered %v, to be asked again in %v, after %d requests", err, wait, len(asked))
+	}
+	log := logs.String()
+	if !strings.Contains(log, `"msg":"keys","source":"static"`) || !strings.Contains(log, `"msg":"keys","source":"endpoint"`) ||
+		strings.Contains(log, keysBearer) || strings.Contains(log, "sk-operator") {
+		t.Fatalf("the log of the key source:\n%s", log)
 	}
 }
 
