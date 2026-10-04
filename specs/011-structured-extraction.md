@@ -237,8 +237,9 @@ their deadline, the worker names no extraction among the kinds of task
 it runs ([[004-durable-tasks]]), so it is handed none and the
 extractions wait for a worker that can check a reply. A claim already
 in flight that finds no check to be had within 5 seconds is returned to
-the queue with no attempt spent: its call was made and is metered, and
-the reply is not kept.
+the queue with no attempt spent: its call was made and is metered, the
+reply is not kept, and the cut of the document the claim wrote under
+its own token, which no step names, is removed.
 
 **When it runs.** A request may arrive while the parse is still
 running. It then waits, with no task, until the parse ends, and its

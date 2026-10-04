@@ -76,7 +76,7 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		// A document with no text is asked nothing.
 		step, result, findings, err := w.Bench.Empty(ctx, schema)
 		if err != nil {
-			unchecked(s)
+			w.unchecked(ctx, c, name, s)
 			return
 		}
 		w.conclude(ctx, c, s, name, in, progress, step, result, findings)
@@ -101,7 +101,7 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	}
 	step, result, findings, err := w.Bench.Take(ctx, schema, in, &progress, res)
 	if err != nil {
-		unchecked(s)
+		w.unchecked(ctx, c, name, s)
 		return
 	}
 	w.conclude(ctx, c, s, name, in, progress, step, result, findings)
@@ -112,8 +112,15 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 // No attempt is spent and nothing is kept: the call it made is metered, and
 // the task is claimed again by a worker that can check its reply. This
 // process is handed no extraction until a check of it ends.
-func unchecked(s *tasks.Settle) {
+//
+// A claim that cut the document kept the cut under its own token, and with
+// no step settled nothing names it: the next claim cuts the document again
+// under its own. So the cut, which holds the document's text, is removed.
+func (w *Worker) unchecked(ctx context.Context, c tasks.Claim, name string, s *tasks.Settle) {
 	s.Outcome = tasks.Returned
+	if err := w.Objects.Delete(ctx, blob.FieldInputKey(c.Parse, name, c.Token)); err != nil {
+		w.Log.WarnContext(ctx, "what a returned extraction kept was not removed", "parse", c.Parse, "task", c.Task, "error", err)
+	}
 }
 
 // conclude ends a claim of an extraction for the step the extraction takes

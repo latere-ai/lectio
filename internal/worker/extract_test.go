@@ -866,6 +866,24 @@ func TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker(t *testing
 	if outcomes[tasks.Permanent] != 2 || outcomes[tasks.Returned] != 1 || outcomes[tasks.Done] != 1 {
 		t.Fatalf("the tasks were settled as %v", outcomes)
 	}
+	// The extraction that was returned kept nothing: the document as it
+	// read it is removed, since no step names it. The 2 that failed keep
+	// theirs until their parse is deleted, as any field that failed does.
+	var returned string
+	for _, s := range b.store.settles() {
+		if s.Outcome == tasks.Returned {
+			returned = s.Parse
+		}
+	}
+	left := b.left()
+	if len(left) != 2 {
+		t.Fatalf("the object store holds %v", left)
+	}
+	for _, key := range left {
+		if strings.Contains(key, blob.ParsePrefix(returned)) || !strings.HasSuffix(key, ".input.json") {
+			t.Fatalf("the object store holds %s, and %s was returned", key, returned)
+		}
+	}
 	if b.w.Bench.Late() != extract.MaxChecking || warned.Load() != extract.MaxChecking {
 		t.Fatalf("%d checks are late and %d were said", b.w.Bench.Late(), warned.Load())
 	}
