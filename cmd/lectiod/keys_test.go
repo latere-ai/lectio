@@ -111,7 +111,8 @@ func (k *keyPlane) groupOf(key string) string {
 
 // gateway is a stub of a model gateway that speaks chat completions. It
 // records the bearer of every call and answers each with a page of one
-// block, or with a rate limit while a case says the bearer is limited.
+// block, with a rate limit while a case says the bearer is limited, or with
+// a refusal for budget while a case says the bearer's budget is spent.
 type gateway struct {
 	*httptest.Server
 
@@ -121,6 +122,10 @@ type gateway struct {
 	read, refused []string
 	// limited reports whether a call with the bearer is answered 429.
 	limited func(bearer string) bool
+	// spent reports whether a call with the bearer is answered 402: the
+	// key's budget is spent. unpaid are the bearers of those calls.
+	spent  func(bearer string) bool
+	unpaid []string
 }
 
 func newGateway(t *testing.T) *gateway {
@@ -133,6 +138,11 @@ func newGateway(t *testing.T) *gateway {
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		g.mu.Lock()
 		defer g.mu.Unlock()
+		if g.spent != nil && g.spent(bearer) {
+			g.unpaid = append(g.unpaid, bearer)
+			w.WriteHeader(http.StatusPaymentRequired)
+			return
+		}
 		if g.limited != nil && g.limited(bearer) {
 			g.refused = append(g.refused, bearer)
 			w.Header().Set("Retry-After", "1")
@@ -381,9 +391,10 @@ func TestAKeyEndpointThatIsDownLeavesPagesUnclaimedAndNotFailed(t *testing.T) {
 
 // TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce: a 402 fails the pages
 // of its group with budget_exhausted and a 403 with reader_unavailable, each
-// on one request for the whole parse and with no call to a reader. A
-// refusal is its group's alone: it pauses no scope, counts against no
-// reader, and another group reads beside it.
+// on one request for the whole parse and with no call to a reader, and the
+// parse fails with the code its pages failed with. A refusal is its group's
+// alone: it pauses no scope, counts against no reader, and another group
+// reads beside it.
 func TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce(t *testing.T) {
 	t.Parallel()
 	p := newPlane(t)
@@ -404,6 +415,10 @@ func TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce(t *testing.T) {
 		done := endedAs(t, base, tok, id)
 		if progress := done["progress"].(map[string]any); done["state"] != "failed" || progress["pages_failed"] != 3.0 || progress["pages_done"] != 0.0 {
 			t.Fatalf("the parse of a group the endpoint refuses ended %v", done)
+		}
+		// The parse fails with what every one of its pages failed with.
+		if code(done) != want {
+			t.Fatalf("the parse of %s failed with %v, want %s", sub, done["error"], want)
 		}
 		answers := strings.Join(pagesOf(t, base, tok, id, 3), "\n")
 		if strings.Count(answers, `"code":"`+want+`"`) != 3 || strings.Count(answers, `"state":"failed"`) != 3 {
@@ -434,6 +449,46 @@ func TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "the key endpoint refused the group a key") {
 		t.Errorf("the log does not say the group was refused:\n%s", logs.String())
+	}
+}
+
+// TestABudgetRefusalFailsTheParseWithBudgetExhausted: the reader's endpoint
+// refuses a call because the key's budget is spent. The page fails at once,
+// after that one call, with budget_exhausted, the parse fails with the code
+// of its pages and not with page_unreadable, and the breaker stays closed:
+// the reader is healthy and the tenant is out of funds.
+func TestABudgetRefusalFailsTheParseWithBudgetExhausted(t *testing.T) {
+	t.Parallel()
+	p := newPlane(t)
+	endpoint, gw := newKeyPlane(t), newGateway(t)
+	gw.mu.Lock()
+	gw.spent = func(bearer string) bool { return endpoint.groupOf(bearer) == groupOf("alice") }
+	gw.mu.Unlock()
+	base, _, _ := started(t, env(p.env("all", keyed(t, gw, endpoint.reads()...)...)...))
+
+	alice := tokenOf("alice")
+	id := submittedAs(t, base, alice, "scan.png", striped(t))
+	done := endedAs(t, base, alice, id)
+	if progress := done["progress"].(map[string]any); done["state"] != "failed" || code(done) != "budget_exhausted" || progress["pages_failed"] != 1.0 {
+		t.Fatalf("a parse whose page was refused for budget ended %v", done)
+	}
+	if page := pagesOf(t, base, alice, id, 1)[0]; !strings.Contains(page, `"code":"budget_exhausted"`) {
+		t.Fatalf("its page: %s", page)
+	}
+	// A group beside it is read by the same reader.
+	bob := tokenOf("bob")
+	if done := endedAs(t, base, bob, submittedAs(t, base, bob, "scan.png", striped(t))); done["state"] != "succeeded" {
+		t.Fatalf("a group with budget ended %v", done)
+	}
+
+	gw.mu.Lock()
+	unpaid := len(gw.unpaid)
+	gw.mu.Unlock()
+	conn := p.connect()
+	row := value[string](t, conn, `SELECT attempt || ' ' || calls FROM tasks WHERE parse_id = $1 AND task_id = 'page-1'`, id)
+	breaker := value[string](t, conn, `SELECT failures || ' ' || (opened_at IS NULL) FROM pools WHERE reader = 'gateway'`)
+	if unpaid != 1 || row != "0 1" || breaker != "0 true" {
+		t.Fatalf("the refusal cost %d calls, the page's attempts and calls are %q, and the pool is %q", unpaid, row, breaker)
 	}
 }
 

@@ -127,6 +127,59 @@ func TestAParseEndsByWhatItAllows(t *testing.T) {
 	})
 }
 
+// TestAFailedParseSaysWhatItsPagesFailedWith: a parse that fails for its
+// pages carries the code they failed with when they all failed with one, so
+// a parse whose every failed page was refused for budget fails with
+// budget_exhausted, and page_unreadable when they failed with several. A
+// page that was read does not change the code, and a parse that allows its
+// failed pages carries none.
+func TestAFailedParseSaysWhatItsPagesFailedWith(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		w := h.worker()
+		for _, tc := range []struct {
+			id      string
+			allowed int
+			// codes are what each page fails with, in page order. An empty
+			// one is a page that is read.
+			codes []string
+			want  string
+		}{
+			{"prs_budget", 0, []string{"budget_exhausted", "budget_exhausted", "budget_exhausted"}, "budget_exhausted"},
+			{"prs_reader", 0, []string{"", "reader_unavailable", "reader_unavailable"}, "reader_unavailable"},
+			{"prs_one", 0, []string{"", "", "budget_exhausted"}, "budget_exhausted"},
+			{"prs_mixed", 0, []string{"budget_exhausted", "page_unreadable", ""}, "page_unreadable"},
+			{"prs_three", 0, []string{"budget_exhausted", "reader_unavailable", "internal"}, "page_unreadable"},
+			{"prs_allowed", 3, []string{"budget_exhausted", "budget_exhausted", ""}, ""},
+		} {
+			h.reading(w, postgres.Submission{Parse: tc.id, Group: "acme", AllowFailedPages: tc.allowed}, len(tc.codes))
+			var settles []tasks.Settle
+			failed := 0
+			for i, c := range w.claim(len(tc.codes), len(tc.codes)) {
+				if tc.codes[i] == "" {
+					settles = append(settles, done(c))
+					continue
+				}
+				failed++
+				settles = append(settles, ended(c, tasks.Permanent, tc.codes[i]))
+			}
+			w.settle(settles...)
+			w.settle(done(w.claim(1, 1)[0]))
+
+			p := h.parse(tc.id)
+			if tc.want == "" {
+				if p.State != "succeeded" || p.Error != nil {
+					t.Errorf("%s: a parse that allows its failed pages ended %s with %+v", tc.id, p.State, p.Error)
+				}
+				continue
+			}
+			wantDetail := fmt.Sprintf("%d of %d pages could not be read", failed, len(tc.codes))
+			if p.State != "failed" || p.Error == nil || p.Error.Code != tc.want || p.Error.Detail != wantDetail {
+				t.Errorf("%s: pages that failed with %q ended the parse %s with %+v, want %s", tc.id, tc.codes, p.State, p.Error, tc.want)
+			}
+		}
+	})
+}
+
 // TestANativeParseWritesNoPageTask: prepare of a format that carries its own
 // structure wrote the pages itself, so its settle counts them done and
 // writes assemble, and a selection of no page does the same.
