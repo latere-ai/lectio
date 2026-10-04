@@ -6,6 +6,12 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Fixed: a release publishes its images. The pipeline of `v0.1.0` stopped
+  before it tagged them: the first bill of materials is written into a
+  directory the job had not made yet. That tag has no image under its
+  name, no deploy archive and no release page; the first release that
+  carries them is the one after it.
+
 ## v0.1.0 - 2026-10-04
 
 - Changed: `lectiod` verifies its callers and asks who decides. The

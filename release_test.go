@@ -227,6 +227,40 @@ func TestTheReleasePublishesBothImages(t *testing.T) {
 	}
 }
 
+// made matches the directories a run script creates with mkdir -p.
+var made = regexp.MustCompile(`(?m)^\s*mkdir -p ([^\n]+)$`)
+
+// TestTheReleaseMakesADirectoryBeforeAnActionWritesIntoIt: a file an
+// action of the build job writes sits in a directory an earlier step of the
+// job made. An action that writes a bill of materials opens its output file
+// and does not make the directory, so a job that makes dist only when it
+// writes the deploy archive, its last step, fails at the first bill.
+func TestTheReleaseMakesADirectoryBeforeAnActionWritesIntoIt(t *testing.T) {
+	release, _ := workflow(t, "release.yml")
+	exists := map[string]bool{".": true}
+	written := 0
+	for _, s := range steps(t, release, "build") {
+		for _, key := range []string{"output-file", "sbom-path"} {
+			file := str(dig(s, "with", key))
+			if file == "" {
+				continue
+			}
+			written++
+			if dir := filepath.Dir(file); !exists[dir] {
+				t.Errorf("the step %q names %s, and no earlier step of the job makes %s", str(dig(s, "name")), file, dir)
+			}
+		}
+		for _, m := range made.FindAllStringSubmatch(str(dig(s, "run")), -1) {
+			for dir := range strings.FieldsSeq(m[1]) {
+				exists[filepath.Clean(strings.Trim(dir, `"`))] = true
+			}
+		}
+	}
+	if written == 0 {
+		t.Fatal("no step of the build job names a file an action writes or reads; the workflow moved")
+	}
+}
+
 // imageRef matches a registry reference under ghcr.io and captures the
 // namespace segment and what follows it.
 var imageRef = regexp.MustCompile(`ghcr\.io/([^/\s"'` + "`" + `]+)/([^\s"'` + "`" + `]*)`)

@@ -132,7 +132,10 @@ jobs:
           COMMIT: ${{ steps.identity.outputs.commit }}
           DATE: ${{ steps.identity.outputs.date }}
         run: |
-          mkdir -p out
+          # out holds the build metadata of this job; dist holds what the
+          # release attaches, and the bill-of-materials action writes into
+          # it without making it.
+          mkdir -p out dist
           docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile \
             --build-arg "VERSION=${GITHUB_REF_NAME}" --build-arg "COMMIT=${COMMIT}" --build-arg "DATE=${DATE}" \
             --output "type=image,name=${REGISTRY}/${OWNER}/${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
