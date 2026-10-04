@@ -76,10 +76,14 @@ CREATE TABLE tasks (
   priority      integer  NOT NULL DEFAULT 0,
   seq           integer  NOT NULL,             -- position within the parse; orders a project's queue
   pin           text,                          -- the reader the parse named, when it named one
+  chain_at      integer  NOT NULL DEFAULT 0,   -- position in the policy's chain its candidates begin at
+  invalid       integer  NOT NULL DEFAULT 0,   -- unusable replies of the reader it is with
+  escalated     boolean  NOT NULL DEFAULT false, -- the one move for unusable replies was made
   lane          text     NOT NULL GENERATED ALWAYS AS (
                   CASE WHEN kind IN ('prepare', 'assemble') THEN ''
-                       WHEN pin IS NULL THEN kind
-                       ELSE kind || ':' || pin END) STORED, -- whose room the task waits for
+                       WHEN pin IS NOT NULL THEN kind || ':' || pin
+                       WHEN chain_at = 0 THEN kind
+                       ELSE kind || '@' || chain_at END) STORED, -- whose room the task waits for
   state         text     NOT NULL,             -- queued | leased | succeeded | failed | canceled
   attempt       integer  NOT NULL DEFAULT 0,
   expiries      integer  NOT NULL DEFAULT 0,
@@ -92,6 +96,7 @@ CREATE TABLE tasks (
   calling       boolean  NOT NULL DEFAULT false, -- holds the slot now
   charged       integer  NOT NULL DEFAULT 0,   -- fairness units charged at claim
   output        text,                          -- object key of the result that won
+  result        jsonb,                         -- what the task said of its output, kept as it came
   calls         integer  NOT NULL DEFAULT 0,   -- model calls, over every attempt
   input_tokens  bigint   NOT NULL DEFAULT 0,
   output_tokens bigint   NOT NULL DEFAULT 0,
@@ -111,7 +116,8 @@ twice is `ON CONFLICT DO NOTHING` and writes nothing the second time.
 
 `lane` names whose room a task waits for: nothing for a task that calls
 no model, the kind for a task that follows the routing policy's chain,
-and the kind with the reader for a task pinned to one. Room belongs to
+with its position once it has moved down the chain, and the kind with
+the reader for a task pinned to one. Room belongs to
 a reader and a key ([[007-model-capacity]]), so the queued tasks of one
 lane in one group have room together or have none. The claim decides
 per lane and reads the first task of each lane that has room, one probe
@@ -157,6 +163,7 @@ stateDiagram-v2
   leased --> succeeded: settle, worker alive and token matches
   leased --> queued: retryable failure, attempt + 1, backoff
   leased --> queued: the reader said to wait, attempt unchanged
+  leased --> queued: the reader cannot read it, next reader of the chain, attempt reset
   leased --> queued: its worker died, expiries + 1
   leased --> failed: permanent failure, attempts or expiries exhausted
   queued --> canceled: parse canceled

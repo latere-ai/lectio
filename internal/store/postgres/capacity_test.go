@@ -116,11 +116,13 @@ func TestAPoolAdmitsNoMoreThanItsBound(t *testing.T) {
 	})
 }
 
-// TestAPageGoesToTheNextReaderWithRoom: the slot of a page is the first
-// candidate of the policy's chain with room. A first reader that is paused,
-// open or full sends pages to the second, and a parse that named its reader
-// waits for that reader: none of its pages is read by another.
-func TestAPageGoesToTheNextReaderWithRoom(t *testing.T) {
+// TestAFullReaderIsWaitedForAndADownReaderIsPassedOver: a page waits for the
+// first reader of the policy's chain while that reader is only full, so load
+// alone never sends a tenant's pages to a costlier reader. A page goes to the
+// next reader only when the first cannot be called at all: its key is paused
+// by a rate limit, or its breaker is open. A parse that named its reader
+// waits for that reader either way: none of its pages is read by another.
+func TestAFullReaderIsWaitedForAndADownReaderIsPassedOver(t *testing.T) {
 	settings := readers(tasks.Pool{Reader: "first", MaxInFlight: 4}, tasks.Pool{Reader: "second", MaxInFlight: 100, Cost: 5})
 	everywhere(t, settings, func(t *testing.T, h *harness) {
 		w := h.worker()
@@ -128,54 +130,60 @@ func TestAPageGoesToTheNextReaderWithRoom(t *testing.T) {
 		h.reading(w, postgres.Submission{Parse: "prs_pinned", Group: "acme", Pin: "first", Priority: 1}, 6)
 
 		// The pinned parse's pages go first, by priority, and fill the first
-		// reader. With the first reader full, the pinned pages wait and the
-		// others are read by the second.
-		claims := w.claim(8, 8)
-		if got := by(claims); got["first"] != 4 || got["second"] != 4 {
-			t.Fatalf("with the first reader full the claims went to %v", got)
-		}
-		for _, c := range claims {
-			if (c.Parse == "prs_pinned") != (c.Reader == "first") || c.Scope != "" {
+		// reader. With the first reader full, every other page waits for it:
+		// the second reader has 100 slots free and is given none.
+		pinned := w.claim(8, 4)
+		for _, c := range pinned {
+			if c.Parse != "prs_pinned" || c.Reader != "first" || c.Scope != "" {
 				t.Fatalf("a claim took the slot %+v", c)
 			}
-			if c.Reader == "second" && h.task(c.Parse, c.Task).Charged != 5 {
-				t.Fatalf("a page read by the second reader is charged %d, want its cost", h.task(c.Parse, c.Task).Charged)
-			}
 		}
-		var pinned []tasks.Claim
-		for _, c := range claims {
-			if c.Parse == "prs_pinned" {
-				pinned = append(pinned, c)
-			}
+		w.claim(8, 0)
+		// A slot that frees is taken by the page that waited for it.
+		w.settle(done(pinned[0]))
+		if c := w.claim(8, 1)[0]; c.Reader != "first" || c.Parse != "prs_pinned" {
+			t.Fatalf("the slot the first reader freed went to %+v", c)
+		}
+		if n := value[int64](h, `SELECT count(*) FROM tasks WHERE reader = 'second'`); n != 0 {
+			t.Fatalf("%d pages were read by the second reader while the first was only full", n)
 		}
 
-		// The first reader's endpoint limits its key: it is paused.
-		w.settle(limited(pinned[0], 20*time.Second), done(pinned[1]), done(pinned[2]), done(pinned[3]))
+		// The first reader's endpoint limits its key: it is paused, and the
+		// pages that are not pinned are read by the second, at its cost.
+		w.settle(limited(pinned[1], 20*time.Second), done(pinned[2]), done(pinned[3]))
 		for _, c := range w.claim(4, 4) {
 			if c.Reader != "second" || c.Parse != "prs_free" {
 				t.Fatalf("while the first reader is paused a claim took %+v", c)
 			}
+			if got := h.task(c.Parse, c.Task); got.Charged != 5 || got.ChainAt != 0 {
+				t.Fatalf("a page the second reader reads for a paused first is %+v, want its cost charged and its place in the chain kept", got)
+			}
 		}
-		if n := value[int64](h, `SELECT count(*) FROM tasks WHERE parse_id = 'prs_pinned' AND state = 'queued'`); n != 3 {
-			t.Fatalf("%d pinned pages wait, want 3", n)
+		if n := value[int64](h, `SELECT count(*) FROM tasks WHERE parse_id = 'prs_pinned' AND state = 'queued'`); n != 2 {
+			t.Fatalf("%d pinned pages wait, want 2", n)
 		}
 
 		// The pause ends: the pinned pages are read by the reader they named.
 		// Its ceiling was halved to 2 by the pause and one quiet interval
-		// gave 1 back, so it admits the 3.
+		// gave 1 back, and 1 call is still in flight, so it admits the 2. It
+		// is full again, and the pages that are not pinned wait for it.
 		h.advance(40 * time.Second)
-		for _, c := range w.claim(3, 3) {
+		for _, c := range w.claim(8, 2) {
 			if c.Reader != "first" || c.Parse != "prs_pinned" {
 				t.Fatalf("after the pause a claim took %+v", c)
 			}
 		}
 
-		// 3 failures open the first reader's breaker.
+		// 3 failures open the first reader's breaker, and the pages that are
+		// not pinned are read by the second.
 		var failing []tasks.Settle
 		for _, c := range w.held {
 			if c.Reader == "first" {
 				failing = append(failing, unhealthy(c))
 			}
+		}
+		if len(failing) != 3 {
+			t.Fatalf("%d calls are in flight on the first reader, want 3", len(failing))
 		}
 		w.settle(failing...)
 		h.advance(2 * time.Second)
@@ -183,6 +191,14 @@ func TestAPageGoesToTheNextReaderWithRoom(t *testing.T) {
 			if c.Reader != "second" || c.Parse != "prs_free" {
 				t.Fatalf("while the first reader's breaker is open a claim took %+v", c)
 			}
+		}
+
+		// The open period is over: one page is the trial on the first reader,
+		// and while it is in flight the reader is still passed over.
+		h.advance(tasks.DefaultBreakerOpen)
+		claims := w.claim(3, 3)
+		if got := by(claims); got["first"] != 1 || got["second"] != 2 {
+			t.Fatalf("after the open period the claims went to %v, want the one trial on the first", got)
 		}
 	})
 }

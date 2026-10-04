@@ -538,6 +538,18 @@ type Task struct {
 	Error        *tasks.Error `json:"error"`
 	CreatedAt    time.Time    `json:"created_at"`
 	SettledAt    *time.Time   `json:"settled_at"`
+
+	// ChainAt is the position in the policy's chain the task's candidates
+	// begin at, Invalid how many unusable replies the reader it is with
+	// gave, and Escalated whether the one move for unusable replies was
+	// made. Lane names whose room the task waits for.
+	ChainAt   int    `json:"chain_at"`
+	Invalid   int    `json:"invalid"`
+	Escalated bool   `json:"escalated"`
+	Lane      string `json:"lane"`
+
+	// Result is what the task said of its output when it succeeded.
+	Result json.RawMessage `json:"result"`
 }
 
 // Tasks returns the task rows of a parse, in the order of its queue. The

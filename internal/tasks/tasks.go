@@ -109,9 +109,10 @@ func ExtractID(field string) string { return extractPrefix + field }
 // Outcome is how one attempt at a task ended.
 type Outcome string
 
-// The outcomes a worker settles a task with. The first four are the rows of
-// the table in specs/004-durable-tasks.md; a worker that dies settles
-// nothing, and the store's sweep is what returns its tasks.
+// The outcomes a worker settles a task with. Done, Retryable, Permanent and
+// Wait are the rows of the table in specs/004-durable-tasks.md; a worker
+// that dies settles nothing, and the store's sweep is what returns its
+// tasks.
 const (
 	// Done is a task that produced its output.
 	Done Outcome = "succeeded"
@@ -124,6 +125,13 @@ const (
 	// Wait is a rate-limit reply from the reader's endpoint. It spends no
 	// attempt, and pauses the key scope the call was made in.
 	Wait Outcome = "wait"
+	// Next is a reader that cannot be the one to read this page: it declined
+	// the page, or its endpoint rejects the request itself. The task goes to
+	// the reader after it in the policy's chain, with attempts of its own
+	// and no wait, however far down the chain that is. A task whose parse
+	// named its reader, and one with no reader left, fails with the error
+	// the settle carries.
+	Next Outcome = "next"
 	// Returned is a task given back unfinished by a worker that is
 	// stopping. No counter changes.
 	Returned Outcome = "returned"
@@ -132,7 +140,7 @@ const (
 // Valid reports whether o is an outcome the store knows.
 func (o Outcome) Valid() bool {
 	switch o {
-	case Done, Retryable, Permanent, Wait, Returned:
+	case Done, Retryable, Permanent, Wait, Next, Returned:
 		return true
 	}
 	return false
@@ -260,9 +268,19 @@ type Settle struct {
 	// every reader call it made. The store never corrects a charge below 1.
 	Units int `json:"units,omitempty"`
 
-	// Error is why the attempt failed, for a Retryable or a Permanent
-	// outcome. It is kept on the task when the task fails.
+	// Error is why the attempt failed, for a Retryable, a Permanent or a
+	// Next outcome. It is kept on the task when the task fails.
 	Error *Error `json:"error,omitempty"`
+
+	// Invalid says, on a Retryable outcome, that the reader answered and the
+	// answer was not usable. The second such reply from one reader sends a
+	// page to the next reader in the chain, once for the page.
+	Invalid bool `json:"invalid,omitempty"`
+
+	// Result is what the task says of its output, for a Done outcome: a
+	// small document the store keeps on the task's row as it is and never
+	// reads. A page writes the summary a list of pages is answered from.
+	Result json.RawMessage `json:"result,omitempty"`
 
 	// RetryAfter is how long the endpoint said to wait, for a Wait outcome.
 	// Zero takes the store's default pause.

@@ -114,8 +114,8 @@ repairs, does not hold a slot for its whole lease: it asks for one
 before each call and gives it back after, through the worker's
 exchange, so a long task occupies a model only while it is calling it.
 A page that escalates to the next reader ([[008-readers]]) moves its
-slot the same way: it gives back the one it held and asks for one in
-the next reader's pool.
+slot too: the settle that moves it gives back the one it held, and its
+next claim takes one in the next reader's pool.
 
 ### Admission
 
@@ -128,11 +128,14 @@ fleet so every count below is exact:
    `max_in_flight`, the group's scope is not paused, and the scope's
    in-flight count is below what the scope admits now.
 2. The candidates of a task are its `pin`, or the routing policy's
-   chain ([[008-readers]]). The task is eligible when a candidate has
-   room, and the fair queue chooses among eligible tasks
-   ([[006-fairness-and-priority]]).
-3. The claim sets `reader`, `scope` and `calling` on the task for the
-   first candidate with room.
+   chain ([[008-readers]]) from the position the task is at
+   ([[005-parse-graph]]). The task's reader is its first candidate that
+   is not passed over (Fallback, below). The task is eligible when that
+   reader has room, and the fair queue chooses among eligible tasks
+   ([[006-fairness-and-priority]]). A reader that is only full, its
+   pool or its scope at its bound, is waited for.
+3. The claim sets `reader`, `scope` and `calling` on the task for that
+   reader.
 
 A task with no room is not claimed and nothing is written for it. A
 worker with free slots and no eligible task sleeps until the earliest
@@ -204,14 +207,9 @@ none, the next claim is the trial.
 
 ### Fallback
 
-When the first candidate has no room, the next reader in the policy's
-chain is tried in the same claim: the slot goes to the first candidate
-with room, as Admission says. The first candidate has no room when its
-scope is paused, its breaker is open, or its pool or scope is full, so
-a page also goes to the next reader when the first is only busy. An
-operator who wants a second reader used for failures and never for
-load gives the first a `max_in_flight` the fleet does not reach. Two
-rules bound this:
+When the first candidate has no room because it is paused or open, the
+next reader in the policy's chain is tried in the same claim. Two rules
+bound this:
 
 - A parse that named its reader has a chain of one. It waits for that
   reader. A caller who pinned a model for a reason, the place its data
@@ -257,14 +255,18 @@ Built:
   leased row itself, the pause and the ceiling of a scope from a
   rate-limit reply, recovery and the resume ramp read from the clock,
   the breaker with its one trial, and fallback to the next reader of
-  the chain.
+  the chain when a reader is paused or open. A reader that is only full
+  is waited for: the first version of the claim gave the slot to the
+  first reader with room, which sent a tenant's pages to a costlier
+  reader under load, and that is reversed.
 
 Proven at the store, by the tests of `internal/store/postgres`, on a
 direct connection, in the query mode that prepares nothing, and through
 PgBouncer in transaction mode: 4 workers with 32 slots exchanging at
 once never hold more than a pool's `max_in_flight` of 8; a first reader
-that is paused, open or full sends pages to the second, and a pinned
-parse waits for its reader; one rate limit stops every worker's calls
+that is full is waited for while the second has room, one that is paused
+or open sends pages to the second, and a pinned parse waits for its
+reader either way; one rate limit stops every worker's calls
 in its scope for the wait it named and spends no attempt; 40 refusals
 of one pause halve the ceiling once, from 40 to 20; the scope admits a
 tenth of its ceiling one second after the pause and all of it after the
@@ -276,10 +278,10 @@ process to kill, or the worker's own loop are not proven: the rows of
 the table below that name a stub endpoint, a process-level test or an
 end-to-end test.
 
-Remaining: a slot taken and given back per call, for an extraction and
-for a page that moves to the next reader after a reply
+Remaining: a slot taken and given back per call, for an extraction
 ([[004-durable-tasks]], step 5 of the exchange): a task holds the slot
-of its claim until it settles. In a development server nothing of this
+of its claim until it settles. A page that moves to the next reader
+settles and is claimed again, so it holds no slot between the two. In a development server nothing of this
 spec applies. The in-process runner bounds the pages
 read at once by a fixed number of workers for all readers together,
 and a rate-limited page waits by itself for the delay the endpoint

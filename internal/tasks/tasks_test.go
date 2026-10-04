@@ -49,7 +49,7 @@ func TestATaskIDIsFixedByItsPlaceInTheParse(t *testing.T) {
 }
 
 func TestTheOutcomesAreTheStoresOwn(t *testing.T) {
-	for _, o := range []Outcome{Done, Retryable, Permanent, Wait, Returned} {
+	for _, o := range []Outcome{Done, Retryable, Permanent, Wait, Next, Returned} {
 		if !o.Valid() {
 			t.Errorf("%q is not valid", o)
 		}
