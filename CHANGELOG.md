@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.3.0 - 2026-10-04
+
 - Added: `POST /parses/{parse}/retry`, in the durable server. It reads
   again the pages of a parse that failed and no other: the answer is
   `202` with the parse `running` again, the pages that were read stay
