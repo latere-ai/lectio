@@ -32,6 +32,22 @@ type retaining struct {
 	failing map[string]error
 	// log is every call the sweep made, in order.
 	log []string
+	// kept are the parses the store says are no longer to be removed when
+	// the sweep comes to them.
+	kept []string
+}
+
+func (r *retaining) CloseParse(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.failing["CloseParse"]; err != nil {
+		return false, err
+	}
+	if slices.Contains(r.kept, id) {
+		return false, nil
+	}
+	r.log = append(r.log, "work "+id)
+	return true, nil
 }
 
 func (r *retaining) Expired(context.Context, int) (postgres.Expired, error) {
@@ -129,13 +145,17 @@ func objectKeys(t *testing.T, s blob.Store) []string {
 }
 
 // TestTheSweepRemovesObjectsAndThenRows: what has expired leaves no object
-// and no row, and what has not is not touched. Every object of a parse is
-// removed before its rows, and a file's object before its row.
+// and no row, and what has not is not touched. The work on a parse is
+// stopped before its objects are listed, every object of it is removed
+// before its rows, and a file's object before its row. A parse the store
+// says is no longer one to remove when the sweep comes to it is left
+// whole.
 func TestTheSweepRemovesObjectsAndThenRows(t *testing.T) {
 	w, store, objects, logged := sweeping(t)
 	w.sweep(context.Background())
 
 	want := []string{
+		"work prs_old",
 		"object " + blob.IndexKey("prs_old", 9), "object " + blob.PageKey("prs_old", 1, 7), "object " + blob.ImageKey("prs_old", 1, 7, "image/png"),
 		"rows prs_old", "object sources/a/aa/fil_old", "row fil_old",
 	}
@@ -154,6 +174,14 @@ func TestTheSweepRemovesObjectsAndThenRows(t *testing.T) {
 	if len(store.log) != len(want) || logged.Len() != 0 {
 		t.Fatalf("a sweep with nothing to remove did %v and logged %q", store.log[len(want):], logged.String())
 	}
+
+	// A parse that was listed and is no longer one to remove: nothing of
+	// it is touched.
+	store.due.Parses, store.kept = []string{"prs_new"}, []string{"prs_new"}
+	w.sweep(context.Background())
+	if len(store.log) != len(want) || !slices.Contains(objectKeys(t, objects.Store), blob.PageKey("prs_new", 1, 3)) {
+		t.Fatalf("a parse that is not to be removed: the sweep did %v", store.log[len(want):])
+	}
 }
 
 // TestAnInterruptedSweepCompletesOnTheNextRun: an object that could not be
@@ -162,6 +190,7 @@ func TestTheSweepRemovesObjectsAndThenRows(t *testing.T) {
 // failed and for a row the store did not remove.
 func TestAnInterruptedSweepCompletesOnTheNextRun(t *testing.T) {
 	for name, breakIt := range map[string]func(*retaining, *noting){
+		"a parse's work stays":    func(r *retaining, _ *noting) { r.failing["CloseParse"] = errors.New("the database does not answer") },
 		"a parse's object stays":  func(_ *retaining, o *noting) { o.failDelete = blob.PageKey("prs_old", 1, 7) },
 		"a parse's listing fails": func(_ *retaining, o *noting) { o.failList = true },
 		"a parse's rows stay":     func(r *retaining, _ *noting) { r.failing["ExpireParse"] = errors.New("the database does not answer") },
@@ -174,7 +203,11 @@ func TestAnInterruptedSweepCompletesOnTheNextRun(t *testing.T) {
 			breakIt(store, objects)
 			w.sweep(context.Background())
 
-			// Whatever stopped the sweep, no row went before its objects.
+			// Whatever stopped the sweep, no object went before the work on
+			// its parse was stopped, and no row went before its objects.
+			if strings.HasPrefix(name, "a parse's work") && len(objectKeys(t, objects.Store)) != 5 {
+				t.Fatalf("with the work not stopped the object store holds %v", objectKeys(t, objects.Store))
+			}
 			for i, step := range store.log {
 				if step == "rows prs_old" {
 					for _, key := range objectKeys(t, objects.Store) {

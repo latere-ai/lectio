@@ -558,7 +558,7 @@ func TestAWorkerOfTheReleaseBeforeRunsBesideThisOne(t *testing.T) {
 		before.earlier = true
 		before.claim(4, 0)
 		for _, task := range []string{"extract-invoice", "figure-1.2", "figure-1.3"} {
-			if row := h.task("prs_a", task); row.State != tasks.Queued || row.LeaseToken != 0 || row.Attempt != 0 {
+			if row := h.task("prs_a", task); row.State != tasks.Queued || row.LeaseOwner != "" || row.LeasedAt != nil || row.Attempt != 0 {
 				t.Fatalf("a worker of the release before touched %+v", row)
 			}
 		}
@@ -721,7 +721,8 @@ func TestAFigureRunIsOneTaskPerFigure(t *testing.T) {
 		if got.Run.State != postgres.RunRunning || got.Run.Total != 3 || got.Run.Open != 3 || !got.Run.StartedAt.Equal(h.now) || len(got.Figures) != 3 {
 			t.Fatalf("a run that just began is %+v", got)
 		}
-		if rows := h.states("prs_a"); rows != "figure-1.2:queued/0/0 figure-2.1:queued/0/0 figure-2.4:queued/0/0" {
+		// The tokens of a run's tasks start at the run's number times 2^32.
+		if rows := h.states("prs_a"); rows != "figure-1.2:queued/0/4294967296 figure-2.1:queued/0/4294967296 figure-2.4:queued/0/4294967296" {
 			t.Fatalf("the run's tasks are %s", rows)
 		}
 		refused(t, "a second run while one is in flight",
@@ -777,6 +778,12 @@ func TestAFigureRunIsOneTaskPerFigure(t *testing.T) {
 		c = w.claim(1, 1)[0]
 		if c.Context.Figure.Reuse != "" || c.Pin != stub || h.task("prs_b", "figure-1.2").Lane != "figure:stub" {
 			t.Fatalf("a run that describes again was handed %+v as %+v", c.Context.Figure, c)
+		}
+		// The task of a figure is written again by each run, and what it
+		// writes is under its token: no token of a run is one of the run
+		// before, so no key is.
+		if taken.Token != 1<<32+1 || c.Token != 2<<32+1 {
+			t.Fatalf("the figure was claimed under the token %d by the first run and %d by the second", taken.Token, c.Token)
 		}
 		// A figure that could not be described again keeps what it had.
 		w.settle(ended(c, tasks.Permanent, "figure_unreadable"))
@@ -874,9 +881,12 @@ func TestARetryWaitsForTheWorkOnItsParse(t *testing.T) {
 
 // TestADeleteDropsTheWorkOnItsParse: a delete of a parse, and the end of
 // its retention, drop its extractions and its figures that are queued or
-// running with the parse. The counters of queued and running tasks stay a
-// count of the rows, a worker that still ran one is told it lost it, and
-// its settle is refused.
+// running before the parse's objects are listed, and its rows go after.
+// From the first step on nothing of the parse is claimed, nothing new is
+// asked of it, and a worker that still ran one of its tasks is told it lost
+// it and has its settle refused, whether its call returned before the
+// objects were listed or after. The counters of queued and running tasks
+// stay a count of the rows.
 func TestADeleteDropsTheWorkOnItsParse(t *testing.T) {
 	logic(t, withDescribers(), func(t *testing.T, h *harness) {
 		ctx := context.Background()
@@ -893,12 +903,51 @@ func TestADeleteDropsTheWorkOnItsParse(t *testing.T) {
 			h.figures(id, "", false, "1.2")
 		}
 
+		// A parse within its retention is not closed, and one that is not
+		// there is not.
+		for _, id := range []string{"prs_expired", "prs_none"} {
+			if expired, err := h.store.CloseParse(ctx, id); err != nil || expired {
+				t.Fatalf("closing %s: %t, %v", id, expired, err)
+			}
+		}
+		if rows := h.states("prs_expired"); !strings.Contains(rows, "extract-running:leased") || !strings.Contains(rows, "figure-1.2:queued") {
+			t.Fatalf("a parse within its retention lost work: %s", rows)
+		}
+
+		// The first step of each: the work is dropped and the rows stay.
 		if err := h.store.DeleteParse(ctx, "alice", "prs_deleted"); err != nil {
 			t.Fatalf("deleting a parse with work on it: %v", err)
 		}
 		h.advance(2 * time.Hour)
-		if removed, err := h.store.ExpireParse(ctx, "prs_expired"); err != nil || !removed {
-			t.Fatalf("expiring a parse with work on it: %t, %v", removed, err)
+		if expired, err := h.store.CloseParse(ctx, "prs_expired"); err != nil || !expired {
+			t.Fatalf("closing a parse whose retention has ended: %t, %v", expired, err)
+		}
+		for _, id := range []string{"prs_deleted", "prs_expired"} {
+			if rows := h.states(id); strings.Contains(rows, "extract-") || strings.Contains(rows, "figure-") {
+				t.Fatalf("after the first step %s holds the tasks %s", id, rows)
+			}
+			if p := h.parse(id); p.State != "succeeded" || p.ExpiresAt.After(h.now) {
+				t.Fatalf("after the first step %s is %s and expires at %v", id, p.State, p.ExpiresAt)
+			}
+			// Nothing new is asked of it, and nothing of it is claimed.
+			err := h.store.CreateField(ctx, postgres.FieldRequest{Parse: id, Name: "late", Request: asked, Deadline: time.Hour})
+			refused(t, "an extraction of "+id, err, fault.ParseNotFound)
+			refused(t, "a figure run of "+id, h.store.StartFigures(ctx, postgres.FigureStart{Parse: id, Deadline: time.Hour}), fault.ParseNotFound)
+		}
+		h.consistent()
+
+		// The objects are listed and removed here. One worker's call
+		// returns before that and one after: both settles are refused, each
+		// when it is sent, and both tasks are lost.
+		reply := w.raw(tasks.Request{}, step(held[0]))
+		if len(reply.Refused) != 1 || reply.Refused[0].Parse != held[0].Parse || len(reply.Lost) != 1 || reply.Lost[0].Parse != held[1].Parse || len(reply.Claims) != 0 {
+			t.Fatalf("between the steps the worker's settle was refused %v and it lost %v", reply.Refused, reply.Lost)
+		}
+
+		for _, id := range []string{"prs_deleted", "prs_expired"} {
+			if removed, err := h.store.ExpireParse(ctx, id); err != nil || !removed {
+				t.Fatalf("removing the rows of %s: %t, %v", id, removed, err)
+			}
 		}
 		if removed, err := h.store.ExpireParse(ctx, "prs_expired"); err != nil || removed {
 			t.Fatalf("expiring it again: %t, %v", removed, err)
@@ -908,10 +957,10 @@ func TestADeleteDropsTheWorkOnItsParse(t *testing.T) {
 				t.Fatalf("%d rows of %s are left", n, table)
 			}
 		}
-		reply := w.raw(tasks.Request{}, filledBy(held[0]))
-		if len(reply.Refused) != 1 || len(reply.Lost) != 1 {
-			t.Fatalf("after the delete the worker's settle was refused %v and it lost %v", reply.Refused, reply.Lost)
+		if reply := w.raw(tasks.Request{}, filledBy(held[1])); len(reply.Refused) != 1 {
+			t.Fatalf("after the rows went the worker's settle was refused %v", reply.Refused)
 		}
+		w.claim(4, 0)
 		refused(t, "a delete of a parse that is not there", h.store.DeleteParse(ctx, "alice", "prs_deleted"), fault.ParseNotFound)
 		h.submit(postgres.Submission{Parse: "prs_running", Group: "acme", Owner: "alice"})
 		refused(t, "a delete of a parse that has not ended", h.store.DeleteParse(ctx, "alice", "prs_running"), fault.NotTerminal)

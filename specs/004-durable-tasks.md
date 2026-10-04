@@ -497,9 +497,9 @@ deadline. What ends such a task without a settle:
   included: its worker is told it lost it, and its settle matches no
   row.
 - **The delete of its parse, and the end of the parse's retention.**
-  Both take the lock the exchange takes, remove the tasks of the parse
-  that are queued or leased with their counters, and then remove the
-  parse, so a settle is wholly before the delete or refused by it.
+  Both take the lock the exchange takes and remove the tasks of the
+  parse that are queued or leased with their counters, before anything
+  else of the parse is removed (Removing a parse, below).
 - **Not a cancel.** A cancel is of a parse that has not ended. A parse
   that has ended answers `409 already_terminal`, and what was asked of
   it runs.
@@ -509,6 +509,55 @@ The functions that queue this work, `lectio_field_create` and
 parse's row. So each is wholly before or after the settle that ends the
 parse, a retry of it and its delete, and none waits on a row the
 exchange holds while holding one the exchange wants.
+
+### Removing a parse
+
+A delete, and the end of a parse's retention, leave nothing of the
+parse: no row and no object. The work on an ended parse makes that a
+matter of order, since such a task writes objects while it runs: the
+document as an extraction reads it, with its whole text, what the
+extraction has so far, its result, and a figure's description. A parse
+is removed in 3 steps.
+
+1. **Its work is stopped.** One statement, under the lock the exchange
+   takes, drops the parse's extractions and figures that are queued or
+   leased. A delete also ends the parse's retention at that instant.
+   From here nothing of the parse is claimed, nothing new is asked of
+   it, since an extraction, a figure run and a retry are refused for a
+   parse whose retention has ended, and every settle of its work is
+   refused.
+2. **Its objects are removed**, every key under its prefix.
+3. **Its rows are removed**, by a second statement.
+
+Each step closes a window. Were the objects listed before the tasks
+were dropped, a task could write an object after the listing and have
+its settle accepted before the rows went: a step of an extraction
+whose next claim never comes, named by a task row that is then
+deleted. Dropping the tasks first closes that, since no settle is
+accepted after the listing.
+
+A task that was leased when its parse was closed still runs, in a
+worker that learns of it at its next exchange, and it may write after
+the listing. Its settle is refused, or it is told the task is no longer
+its own, and the worker then removes what that claim wrote: the keys of
+an extraction and of a figure hold the claim's token, so they are the
+claim's alone, and a settle the store refused when it was first sent
+was never recorded, so nothing names them. That closes the second
+window. A figure's task is written again by each run, so the tokens of
+a run start at the run's number times 2^32 and no key of one run is a
+key of another.
+
+The rows go last so that a process that stops between the steps leaves
+a parse whose retention has ended, which the retention sweep lists and
+removes from the first step on, and never an object that no row names.
+A caller that asks the delete again finds the parse and finishes it.
+
+What is left for a sweep of orphaned outputs, which is not built: a
+worker that is killed, or cannot reach the object store, after it wrote
+for a task of a parse that was closed and before it removed what it
+wrote; and a settle that is refused when it is sent a second time,
+after an exchange the store did not answer. That one may have been
+recorded the first time, so what it wrote is left alone.
 
 ### Retry
 
@@ -764,9 +813,9 @@ describes figures, loses its lease and not the work.
 Remaining: the sweeps for settled tasks past their retention and for
 orphaned outputs. What a step of an extraction kept, the cut of the
 document and each claim's progress, stays in the bucket until the parse
-is deleted, for the same reason. A delete lists the parse's objects and
-removes them before it removes the rows, so an object a worker writes
-for a task of the parse between the 2 is left for that sweep. A retry
+is deleted, for the same reason. A delete and the end of a parse's
+retention leave no object of the parse but in the 2 cases named under
+Removing a parse, which are that sweep's. A retry
 leaves the index
 and the rewritten pages of the run before it in the bucket until the
 parse is deleted, since the orphan sweep is not built. The store has no
@@ -799,4 +848,7 @@ durable and a restart loses every parse that had not ended.
 | A worker killed with `SIGKILL` in the middle of an extraction of 6 calls loses the call in flight and no other: another worker makes the calls that were not made, the model is called 6 times plus at most once, and the field is filled once | `TestAnExtractionOutlivesAKilledWorker`, a process-level test; `TestAWorkerThatDiesMidExtractionLosesOneCall` at the store |
 | A worker killed with `SIGKILL` in the middle of a run that describes 3 figures loses its lease and not the run: every figure is described once, with at most the call in flight made 2 times | `TestAFigureRunOutlivesAKilledWorker`, a process-level test |
 | Work on an ended parse that is past its deadline is given up with its task removed, and a settle for it is refused; a delete of the parse and the end of its retention drop its work with every counter equal to a recount | `TestWorkOutOfTimeIsGivenUp` and `TestADeleteDropsTheWorkOnItsParse`, at the store |
+| A parse deleted while an extraction of it runs leaves no object and no row, whether the call in flight was the extraction's first or a later one: what was written before the delete goes with the parse's objects, and what the worker writes when its call returns is removed by the worker, whose settle is refused | `TestADeleteLeavesNothingOfAParseWhoseExtractionStillRuns`, through the API over the durable backend with a worker; `TestWhatARefusedExtractionWroteIsRemoved`, `TestWhatATaskTakenAwayMidCallWroteIsRemoved`, `TestWhatARefusedFigureWroteIsRemoved`, `TestASettleRefusedInTheLastExchangeRemovesWhatItWrote` and `TestASettleThatWasSentAgainKeepsWhatItWrote` of `internal/worker` |
+| The sweep stops the work on an expired parse before it lists the parse's objects, and removes the rows last | `TestTheSweepRemovesObjectsAndThenRows` and `TestAnInterruptedSweepCompletesOnTheNextRun` of `internal/worker`; `TestADeleteDropsTheWorkOnItsParse` at the store |
+| The tokens of a figure's task in a later run are above every token of the run before, so no 2 runs write one key | `TestAFigureRunIsOneTaskPerFigure`, at the store |
 | A migration's down file leaves the schema the migrations before it made | `TestTheLastMigrationIsUndoneByItsDownFile`, which compares every function's definition, every column and every index, with tasks of the new kinds queued |

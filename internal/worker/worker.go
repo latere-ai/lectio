@@ -253,6 +253,11 @@ type loop struct {
 	idle     time.Duration
 	wake     *time.Time
 	failures int
+
+	// discards are the removals of what tasks that were taken away wrote,
+	// which run beside the loop so that an object store that is slow holds
+	// no exchange back. A worker that stops waits for them.
+	discards sync.WaitGroup
 }
 
 // register records the process with the store, trying until the store
@@ -331,7 +336,7 @@ func (l *loop) wait(ctx context.Context, at time.Time) {
 		select {
 		case f := <-l.done:
 			timer.Stop()
-			l.finish(f)
+			l.finish(ctx, f)
 			if next := l.due(); next.Before(at) {
 				at = next
 			}
@@ -344,14 +349,18 @@ func (l *loop) wait(ctx context.Context, at time.Time) {
 	}
 }
 
-// finish records the end of a task's run.
-func (l *loop) finish(f finished) {
+// finish records the end of a task's run. A run of a task the store took
+// away is over here and writes nothing more, so what it wrote is removed.
+func (l *loop) finish(ctx context.Context, f finished) {
 	r, ok := l.held[f.ref]
 	if !ok {
 		return
 	}
 	delete(l.held, f.ref)
 	r.cancel()
+	if r.lost {
+		l.discard(ctx, r.claim.Parse, r.claim.Task, r.claim.Token)
+	}
 	if f.settle != nil && !r.lost {
 		if len(l.settles) == 0 {
 			l.first = time.Now()
@@ -373,9 +382,64 @@ func (l *loop) request() tasks.Request {
 	return req
 }
 
+// refused acts on the settles a reply refused. The task was canceled,
+// reissued, dropped with its parse, or settled before, and what its run
+// wrote is under keys of its own token. When the settle was sent for the
+// first time the store never took it, so nothing names those objects and
+// they are removed. A settle that was sent again, after an exchange the
+// store did not answer, may be one the store did take: what it wrote is
+// then named by a row, and is left alone.
+func (l *loop) refused(ctx context.Context, req tasks.Request, reply tasks.Reply, again bool) {
+	for _, ref := range reply.Refused {
+		l.w.Log.InfoContext(ctx, "a settle was refused", "parse", ref.Parse, "task", ref.Task)
+		if again {
+			continue
+		}
+		for _, s := range req.Settles {
+			if s.Parse == ref.Parse && s.Task == ref.Task {
+				l.discard(ctx, s.Parse, s.Task, s.Token)
+			}
+		}
+	}
+}
+
+// discard removes what a run of an extraction or of a figure wrote under
+// its token, when nothing can name it: the run's task was taken away, or
+// its settle was refused. Such a task may be one of a parse that is being
+// deleted, whose objects were listed before the run wrote, so nothing else
+// would remove what it wrote: the text of the document as the extraction
+// read it, what it had so far, its result, and a figure's description. A
+// key holds the token of one claim, so nothing another claim wrote is
+// touched. A page's result is left where it is: a parse that is read is not
+// one that is being deleted.
+func (l *loop) discard(ctx context.Context, parse, task string, token int64) {
+	var keys []string
+	if name, ok := tasks.FieldOf(task); ok {
+		keys = []string{blob.FieldInputKey(parse, name, token), blob.FieldProgressKey(parse, name, token), blob.FieldKey(parse, name, token)}
+	} else if ref, ok := tasks.FigureOf(task); ok {
+		keys = []string{blob.FigureKey(parse, ref, token)}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	l.discards.Go(func() {
+		// The removal is not ended by the signal that stops the worker.
+		bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(l.w.renewal(), time.Second))
+		defer cancel()
+		for _, key := range keys {
+			if err := l.w.Objects.Delete(bound, key); err != nil {
+				l.w.Log.WarnContext(ctx, "what a task that was taken away wrote was not removed", "parse", parse, "task", task, "error", err)
+			}
+		}
+	})
+}
+
 // exchange makes one exchange and acts on the reply.
 func (l *loop) exchange(ctx context.Context) {
 	req := l.request()
+	// Settles that an exchange the store did not answer carried are sent
+	// again in this one.
+	again := l.failures > 0
 	l.last = time.Now()
 	// The exchange is not ended by the signal that stops the worker: a
 	// statement cut off after the store ran it would leave claims in a
@@ -395,6 +459,7 @@ func (l *loop) exchange(ctx context.Context) {
 	}
 	l.failures, l.settles = 0, nil
 	l.w.seen.Store(time.Now().UnixNano())
+	l.refused(ctx, req, reply, again)
 
 	if reply.Gone {
 		// The fleet gave this process up and returned its tasks to the
@@ -409,11 +474,6 @@ func (l *loop) exchange(ctx context.Context) {
 		l.w.id.Store(nil)
 		l.register(ctx)
 		return
-	}
-	for _, ref := range reply.Refused {
-		// The task was canceled, reissued, or settled before: what this
-		// process wrote for it is under a key nothing points at.
-		l.w.Log.InfoContext(ctx, "a settle was refused", "parse", ref.Parse, "task", ref.Task)
 	}
 	for _, ref := range reply.Lost {
 		if r, ok := l.held[ref]; ok {
@@ -468,7 +528,7 @@ func (l *loop) stop(ctx context.Context) error {
 	for expired := false; len(l.held) > 0 && !expired; {
 		select {
 		case f := <-l.done:
-			l.finish(f)
+			l.finish(ctx, f)
 		case <-grace.C:
 			expired = true
 		}
@@ -487,11 +547,14 @@ func (l *loop) stop(ctx context.Context) error {
 				returned = append(returned, f.ref)
 				f.settle = &tasks.Settle{Parse: f.ref.Parse, Task: f.ref.Task, Token: r.claim.Token, Outcome: tasks.Returned}
 			}
-			l.finish(f)
+			l.finish(ctx, f)
 		case <-wait.C:
 			expired = true
 		}
 	}
+	// What was being removed for tasks that were taken away is removed
+	// before the process ends.
+	defer l.discards.Wait()
 	// A task that has still not returned is given back by the exchange
 	// itself: the store returns everything the worker holds.
 	if l.w.id.Load() == nil {
@@ -500,9 +563,11 @@ func (l *loop) stop(ctx context.Context) error {
 	final, cancel := context.WithTimeout(ctx, max(l.w.renewal(), time.Second))
 	defer cancel()
 	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Shutdown: true, Kinds: tasks.Kinds}
-	if _, err := l.w.Store.Exchange(final, l.id, req); err != nil {
+	reply, err := l.w.Store.Exchange(final, l.id, req)
+	if err != nil {
 		return fmt.Errorf("worker: the last exchange of %s: %w", l.id, err)
 	}
+	l.refused(ctx, req, reply, l.failures > 0)
 	l.w.id.Store(nil)
 	l.w.Log.InfoContext(ctx, "the worker stopped", "worker", l.id, "returned", len(returned))
 	return nil

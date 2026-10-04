@@ -54,6 +54,12 @@ refused before it is pushed.
   read and reported as not applied. With no `extract` chain an
   extraction runs only when its request names an `extractor`, and with
   no `describe` chain a run only when its request names a `describer`.
+- Changed: `DELETE /parses/{parse}` and the end of a parse's retention
+  stop the work on the parse first, then remove its objects, then its
+  rows, so an extraction or a figure that runs while its parse is
+  removed leaves no object behind: its settle is refused, and its
+  worker removes what it wrote. A delete that stops halfway is
+  finished by the retention sweep.
 - Changed: a worker names the kinds of task it runs in every exchange
   and is handed no other. A worker of `v0.3.0` names none and is handed
   `prepare`, `page` and `assemble`, so the API and the workers of this

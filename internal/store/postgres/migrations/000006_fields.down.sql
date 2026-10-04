@@ -23,6 +23,8 @@ DROP FUNCTION IF EXISTS lectio_field_create(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_fields_release(text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_drop(text, text, text);
 DROP FUNCTION IF EXISTS lectio_runs(text[], text[]);
+DROP FUNCTION IF EXISTS lectio_parse_close(text, timestamptz);
+DROP FUNCTION IF EXISTS lectio_parse_delete(text, text, timestamptz);
 DROP FUNCTION IF EXISTS lectio_claim(text, integer, boolean, settings, timestamptz, text[]);
 
 -- lectio_configure, as 000001 wrote it.
@@ -994,7 +996,7 @@ END $$;
 -- lectio_parse_delete removes an owner's parse that has ended, with its
 -- tasks and the reads kept from it. The caller removes the parse's objects
 -- first. It answers deleted, missing, or not_terminal.
-CREATE OR REPLACE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
+CREATE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
 RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM parses WHERE parse_id = p_parse AND owner = p_owner AND state IN ('succeeded', 'failed', 'canceled');

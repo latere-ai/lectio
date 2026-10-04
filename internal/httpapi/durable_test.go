@@ -47,6 +47,11 @@ type durableBench struct {
 	// in-process runner extracts nothing, so a case sets them here.
 	extractors   map[string]reader.Extractor
 	extractChain []string
+
+	// objects, when a case sets it, is put around the object store the
+	// server and its worker share, so the case sees what each of them
+	// writes and removes.
+	objects func(blob.Store) blob.Store
 }
 
 // durably runs the servers a test starts over the durable backend, until
@@ -114,7 +119,10 @@ func (d *durableBench) start(ctx context.Context, t *testing.T, s *Server, runne
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
 	}
-	objects := blob.NewMemory()
+	var objects blob.Store = blob.NewMemory()
+	if d.objects != nil {
+		objects = d.objects(objects)
+	}
 	s.Backend = &durable.Backend{
 		Store: st, Objects: objects, Readers: runner.Readers, Chain: settings.ReadChain,
 		Describers: runner.Describers, DescribeChain: settings.DescribeChain,

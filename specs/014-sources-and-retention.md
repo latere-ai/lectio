@@ -135,9 +135,14 @@ so the same bytes arriving by upload and by URL are one piece of work.
 A retention sweep, run by any worker like the other sweeps, deletes
 what has expired: objects first, then the row, so a crash between the
 two leaves a row that is swept again and never an object nothing
-points to. `DELETE /parses/{parse}` and `DELETE /files/{file}` do the
-same on demand, and a File that a non-terminal parse uses is refused
-with `409 not_terminal`.
+points to. For a parse a step comes before the 2: the work on it, an
+extraction or a figure that is queued or running, is dropped, so
+nothing writes an object of the parse that a row would name after its
+objects were listed ([[004-durable-tasks]]). `DELETE /parses/{parse}`
+and `DELETE /files/{file}` do the same on demand, and a File that a
+non-terminal parse uses is refused with `409 not_terminal`. A delete of
+a parse ends the parse's retention in its first step, so one that
+stops halfway is finished by the sweep.
 
 How long each is kept is recorded when it is created, from the allow of
 its create or the server's setting. A parse's time runs from its end:
@@ -200,17 +205,19 @@ Built:
 - In the durable server: the snapshot in the bucket under the key
   above, with the file's row in Postgres, one per owner and digest; the
   delete of a file marks its row, removes the object and then the row;
-  and the delete of a parse removes every object under its prefix and
-  then its rows, so a delete that stops halfway leaves a row to delete
-  again and never an object nothing names.
+  and the delete of a parse stops the work on it and ends its
+  retention, removes every object under its prefix and then its rows,
+  so a delete that stops halfway leaves a parse the sweep removes and
+  never an object nothing names.
 - Retention of a File and of a parse, in the durable server. The
   retention is recorded at the create, from `LECTIO_FILE_RETENTION` and
   `LECTIO_PARSE_RETENTION` or the lower `retention_seconds` of the
   allow ([[012-identity-and-authorization]]). A File's `expires_at` is
   in its API view. Every worker runs the sweep, which the store hands
-  to one of them per sweep interval: it removes an expired parse's
-  objects and then its rows, and an expired file's object and then its
-  row, and finishes a file's delete that stopped halfway.
+  to one of them per sweep interval: it stops the work on an expired
+  parse, removes its objects and then its rows, and an expired file's
+  object and then its row, and finishes a delete of a file or of a
+  parse that stopped halfway.
 
 Remaining:
 

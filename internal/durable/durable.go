@@ -338,9 +338,15 @@ func (b *Backend) Events(ctx context.Context, id string, after int64, limit int)
 	return out, nil
 }
 
-// DeleteParse removes an owner's parse that has ended: every object under
-// its prefix first, then its rows, so a delete that stops halfway leaves a
-// row to delete again and never an object nothing names.
+// DeleteParse removes an owner's parse that has ended, in 3 steps: the
+// work on it is stopped, every object under its prefix is removed, and
+// then its rows. With its extractions and its figures dropped first no
+// task of it is claimed after the objects were listed and every later
+// settle of one is refused, so a task that still runs leaves nothing that
+// a row names, and its worker removes what it wrote. With the rows removed
+// last, a delete that stops halfway leaves a parse whose retention has
+// ended, which the retention sweep removes, and never an object nothing
+// names.
 func (b *Backend) DeleteParse(ctx context.Context, owner, id string) error {
 	row, err := b.Store.ParseOf(ctx, owner, id)
 	if err != nil {
@@ -348,6 +354,9 @@ func (b *Backend) DeleteParse(ctx context.Context, owner, id string) error {
 	}
 	if !row.Terminal() {
 		return fault.New(fault.NotTerminal, "parse %s has not ended", id)
+	}
+	if err := b.Store.DeleteParse(ctx, owner, id); err != nil {
+		return err
 	}
 	keys, err := b.Objects.List(ctx, blob.ParsePrefix(id))
 	if err != nil {
@@ -358,7 +367,10 @@ func (b *Backend) DeleteParse(ctx context.Context, owner, id string) error {
 			return fmt.Errorf("durable: removing an object of %s: %w", id, err)
 		}
 	}
-	return b.Store.DeleteParse(ctx, owner, id)
+	// The sweep may have removed the rows in between: they are gone either
+	// way.
+	_, err = b.Store.ExpireParse(ctx, id)
+	return err
 }
 
 // Wait reads the parse's row until it has ended. There is no bus between

@@ -238,6 +238,9 @@ func TestAStopAndANativeParseAreChanges(t *testing.T) {
 		if err := h.store.DeleteParse(ctx, "alice", "prs_native"); err != nil {
 			t.Fatal(err)
 		}
+		if removed, err := h.store.ExpireParse(ctx, "prs_native"); err != nil || !removed {
+			t.Fatalf("removing the rows of a deleted parse: %t, %v", removed, err)
+		}
 		if n := value[int](h, `SELECT count(*) FROM page_events`); n != 0 {
 			t.Fatalf("%d page lists outlived their parse", n)
 		}

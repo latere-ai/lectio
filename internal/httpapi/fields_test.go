@@ -21,6 +21,7 @@ import (
 	"latere.ai/x/lectio/authorizer"
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/access"
+	"latere.ai/x/lectio/internal/blob"
 	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/run"
 	"latere.ai/x/lectio/internal/testfixtures"
@@ -421,6 +422,142 @@ func TestALongDocumentIsExtractedInWindowsThroughTheAPI(t *testing.T) {
 	for _, req := range model.requests() {
 		if len(req.Text) > 22 {
 			t.Fatalf("a call was given %d bytes: %q", len(req.Text), req.Text)
+		}
+	}
+}
+
+// written is an object store that records what is written under the fields
+// of a parse and what is removed, in order.
+type written struct {
+	blob.Store
+	mu  sync.Mutex
+	log []string
+}
+
+func (w *written) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	if strings.Contains(key, "/fields/") {
+		w.mu.Lock()
+		w.log = append(w.log, "put "+key)
+		w.mu.Unlock()
+	}
+	return w.Store.Put(ctx, key, data, contentType)
+}
+
+func (w *written) Delete(ctx context.Context, key string) error {
+	if strings.Contains(key, "/fields/") {
+		w.mu.Lock()
+		w.log = append(w.log, "delete "+key)
+		w.mu.Unlock()
+	}
+	return w.Store.Delete(ctx, key)
+}
+
+// did is what the store recorded for the keys of a parse.
+func (w *written) did(parse string) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, entry := range w.log {
+		if strings.Contains(entry, blob.ParsePrefix(parse)) {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// TestADeleteLeavesNothingOfAParseWhoseExtractionStillRuns: an extraction
+// writes the document as it reads it, with its whole text, and what it has
+// so far, while it runs. A parse deleted in the middle of one leaves none
+// of it, whichever came first. What the extraction wrote before the delete
+// is removed with the parse's objects, after its task was dropped. What its
+// worker writes after the delete, when the call that was in flight returns,
+// is under a key nothing lists any more: the settle is refused, and the
+// worker removes what it wrote. The same holds for a parse deleted during
+// the first call of its extraction and for one deleted during a later one.
+func TestADeleteLeavesNothingOfAParseWhoseExtractionStillRuns(t *testing.T) {
+	// The invoice is read in 5 windows, so a call returns to a step and
+	// not to a result. The first call of the first parse and the second of
+	// the second wait until their parse was deleted.
+	gates := map[int]chan struct{}{1: make(chan struct{}), 3: make(chan struct{})}
+	entered := make(chan int, 8)
+	model := &textModel{maxInput: 22}
+	model.answers = func(n int, _ reader.ExtractRequest) (reader.ExtractResult, bool) {
+		entered <- n
+		if gate := gates[n]; gate != nil {
+			<-gate
+		}
+		return reader.ExtractResult{}, false
+	}
+	kept := &written{}
+	e, _ := extracting(t, model, func(*Server, *run.Runner) {
+		over.objects = func(inner blob.Store) blob.Store {
+			kept.Store = inner
+			return kept
+		}
+	})
+	left := func(parse string) []string {
+		t.Helper()
+		keys, err := kept.List(context.Background(), blob.ParsePrefix(parse))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return keys
+	}
+	// removed waits until the worker is done with the task it ran for the
+	// parse: it removes the 3 objects a claim of an extraction can write,
+	// the result last, whether its settle was refused or it was told first
+	// that the task is no longer its own.
+	removed := func(parse string, after int) []string {
+		t.Helper()
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+			did := kept.did(parse)
+			for _, entry := range did[min(after, len(did)):] {
+				if strings.HasPrefix(entry, "delete ") && !strings.HasSuffix(entry, ".input.json") && !strings.HasSuffix(entry, ".progress.json") {
+					return did
+				}
+			}
+		}
+		t.Fatalf("what the worker wrote for %s after its delete was not removed: %v", parse, kept.did(parse))
+		return nil
+	}
+
+	for _, call := range []int{1, 3} {
+		name := map[int]string{1: "during its first call", 3: "between 2 of its calls"}[call]
+		pid := e.invoice()
+		e.ask(pid, "invoice", invoiceSchema)
+		for n := range entered {
+			if n == call {
+				break
+			}
+		}
+		// The call is in flight. What the claims before it wrote is there:
+		// the document as the extraction reads it, and, for the later call,
+		// what the first call kept.
+		before := kept.did(pid)
+		if want := map[int]int{1: 1, 3: 2}[call]; len(before) != want || !strings.HasSuffix(before[0], ".input.json") {
+			t.Fatalf("%s: before the delete the extraction wrote %v", name, before)
+		}
+		if del := e.do("DELETE", "/parses/"+pid, nil); del.status != http.StatusNoContent {
+			t.Fatalf("%s: deleting the parse: %d %s", name, del.status, del.body)
+		}
+		if keys := left(pid); len(keys) != 0 {
+			t.Fatalf("%s: after the delete the object store holds %v", name, keys)
+		}
+		for _, path := range []string{"/parses/" + pid, "/parses/" + pid + "/fields/invoice"} {
+			if got := e.do("GET", path, nil); got.status != http.StatusNotFound {
+				t.Fatalf("%s: %s of a deleted parse: %d %s", name, path, got.status, got.body)
+			}
+		}
+		if rows, err := storeOf(t, e).Tasks(context.Background(), pid); err != nil || len(rows) != 0 {
+			t.Fatalf("%s: the deleted parse has the tasks %+v, %v", name, rows, err)
+		}
+
+		// The call returns: the worker keeps what it has under its token,
+		// its settle is refused, and it removes what it wrote.
+		close(gates[call])
+		did := removed(pid, 2*len(before))
+		if keys := left(pid); len(keys) != 0 {
+			t.Fatalf("%s: after the call returned the object store holds %v, having been asked %v", name, keys, did)
 		}
 	}
 }

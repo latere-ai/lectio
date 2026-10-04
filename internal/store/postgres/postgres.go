@@ -108,8 +108,9 @@ const (
 	taskSQL  = `SELECT to_jsonb(t)::text FROM tasks t WHERE t.parse_id = $1 AND t.task_id = $2`
 	pingSQL  = `SELECT 1`
 
-	parseOfSQL     = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1 AND p.owner = $2`
-	parseDeleteSQL = `SELECT lectio_parse_delete($1, $2)`
+	parseOfSQL       = `SELECT to_jsonb(p)::text FROM parses p WHERE p.parse_id = $1 AND p.owner = $2`
+	parseDeleteSQL   = `SELECT lectio_parse_delete($1, $2)`
+	parseDeleteAtSQL = `SELECT lectio_parse_delete($1, $2, $3)`
 
 	// parsesSQL reads one page of the parses of some owners, newest first.
 	// The owners are a JSON array bound as text, or the JSON null for every
@@ -169,6 +170,8 @@ UPDATE files SET retention = CASE WHEN $2::bigint > 0 THEN $2::bigint * interval
 
 	expiredSQL       = `SELECT lectio_expired($1)`
 	expiredAtSQL     = `SELECT lectio_expired($1, $2)`
+	parseCloseSQL    = `SELECT lectio_parse_close($1)`
+	parseCloseAtSQL  = `SELECT lectio_parse_close($1, $2)`
 	parseExpireSQL   = `SELECT lectio_parse_expire($1)`
 	parseExpireAtSQL = `SELECT lectio_parse_expire($1, $2)`
 	tasksSQL         = `SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.seq, t.task_id), '[]'::jsonb)::text
@@ -1011,12 +1014,15 @@ func (s *Store) Parses(ctx context.Context, owners []string, f Filter, after str
 	return out, false, nil
 }
 
-// DeleteParse removes an owner's parse that has ended, with its task rows
-// and the reads kept from it. The caller removes the parse's objects first:
-// a delete that stops between the two leaves a row to delete again, and
-// never an object nothing names.
+// DeleteParse begins an owner's delete of a parse that has ended: the
+// parse's retention ends now, and its extractions and figures that are
+// queued or running are dropped, so nothing of the parse is claimed from
+// here on and every later settle of its work is refused. The caller then
+// removes the parse's objects and calls ExpireParse for its rows. A delete
+// that stops between the steps leaves a parse whose retention has ended,
+// which the retention sweep removes, and never an object nothing names.
 func (s *Store) DeleteParse(ctx context.Context, owner, parseID string) error {
-	answer, err := s.text(ctx, parseDeleteSQL, "", owner, parseID)
+	answer, err := s.text(ctx, parseDeleteSQL, parseDeleteAtSQL, owner, parseID)
 	switch {
 	case err != nil:
 		return fmt.Errorf("store: deleting %s: %w", parseID, err)
@@ -1164,6 +1170,19 @@ func (s *Store) Expired(ctx context.Context, limit int) (Expired, error) {
 		return Expired{}, fmt.Errorf("store: the retention sweep: %w", err)
 	}
 	return out, nil
+}
+
+// CloseParse stops the work on a parse whose retention has ended, before
+// its objects are removed: its extractions and figures that are queued or
+// running are dropped, so none writes an object after the objects were
+// listed and has it named by a row. It reports false for a parse that is
+// not there or has not expired, which is left alone.
+func (s *Store) CloseParse(ctx context.Context, parseID string) (expired bool, err error) {
+	sql, args := s.stamp(parseCloseSQL, parseCloseAtSQL, []any{parseID})
+	if err := s.pool.QueryRow(ctx, sql, args...).Scan(&expired); err != nil {
+		return false, fmt.Errorf("store: closing %s: %w", parseID, err)
+	}
+	return expired, nil
 }
 
 // ExpireParse removes the rows of a parse whose retention has ended, once

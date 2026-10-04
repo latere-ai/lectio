@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -327,7 +328,10 @@ func TestParsesAreListedForTheirOwner(t *testing.T) {
 }
 
 // TestDeleteParseRemovesItsRows: a parse that has not ended is refused. The
-// delete of one that has takes its task rows and the reads kept from it.
+// delete of one that has ends its retention at once, which is as far as it
+// goes until the parse's objects are removed: the parse is then one the
+// retention sweep removes, whoever finishes the delete. Its rows, its task
+// rows and the reads kept from it go in the step after the objects.
 func TestDeleteParseRemovesItsRows(t *testing.T) {
 	everywhere(t, defaults(), func(t *testing.T, h *harness) {
 		ctx := context.Background()
@@ -346,8 +350,23 @@ func TestDeleteParseRemovesItsRows(t *testing.T) {
 		if n := value[int64](h, `SELECT count(*) FROM reads`); n != 1 {
 			t.Fatalf("%d reads are kept before the delete, want 1", n)
 		}
-		if err := h.store.DeleteParse(ctx, "alice", "prs_a"); err != nil {
-			t.Fatal(err)
+		if removed, err := h.store.ExpireParse(ctx, "prs_a"); err != nil || removed {
+			t.Fatalf("a parse within its retention was removed: %t, %v", removed, err)
+		}
+		// A delete may be asked again before it is finished.
+		for range 2 {
+			if err := h.store.DeleteParse(ctx, "alice", "prs_a"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if p := h.parse("prs_a"); p.ExpiresAt == nil || p.ExpiresAt.After(h.now) {
+			t.Fatalf("a parse whose delete began expires at %v, and it is %v", p.ExpiresAt, h.now)
+		}
+		if due, err := h.store.Expired(ctx, 10); err != nil || !slices.Equal(due.Parses, []string{"prs_a"}) {
+			t.Fatalf("the sweep is told to remove %+v, %v", due, err)
+		}
+		if removed, err := h.store.ExpireParse(ctx, "prs_a"); err != nil || !removed {
+			t.Fatalf("removing the rows of a parse whose delete began: %t, %v", removed, err)
 		}
 		if n := value[int64](h, `SELECT (SELECT count(*) FROM parses) + (SELECT count(*) FROM tasks) + (SELECT count(*) FROM reads)`); n != 0 {
 			t.Fatalf("%d rows of the parse are left", n)

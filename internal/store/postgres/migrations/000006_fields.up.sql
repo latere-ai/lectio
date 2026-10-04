@@ -63,6 +63,7 @@ CREATE INDEX fields_deadline ON fields (deadline_at) WHERE state = 'pending' AND
 CREATE TABLE figure_runs (
   parse_id      text PRIMARY KEY REFERENCES parses ON DELETE CASCADE,
   state         text    NOT NULL,                 -- running | succeeded | failed
+  runs          integer NOT NULL DEFAULT 1,       -- how many runs the parse has had, this one counted
   redo          boolean NOT NULL DEFAULT false,   -- describes again what is described, and takes nothing kept
   total         integer NOT NULL DEFAULT 0,       -- figures the run set out to describe
   open          integer NOT NULL DEFAULT 0,       -- of them, the ones whose task has not ended
@@ -326,6 +327,7 @@ DECLARE
   v_parse text := r->>'parse';
   v_figs  jsonb := coalesce(nullif(r->'figures', 'null'::jsonb), '[]'::jsonb);
   v_n     integer;
+  v_runs  integer;
   v_p     parses%ROWTYPE;
   v_lane  text;
 BEGIN
@@ -347,9 +349,10 @@ BEGIN
           v_n, v_n, v_now, v_now + (r->>'deadline_ms')::bigint * interval '1 millisecond',
           CASE WHEN v_n = 0 THEN v_now END)
   ON CONFLICT (parse_id) DO UPDATE SET
-    state = EXCLUDED.state, redo = EXCLUDED.redo, total = EXCLUDED.total, open = EXCLUDED.open,
+    state = EXCLUDED.state, runs = u.runs + 1, redo = EXCLUDED.redo, total = EXCLUDED.total, open = EXCLUDED.open,
     done = 0, failed = 0, reused = 0, calls = 0, input_tokens = 0, output_tokens = 0,
-    started_at = EXCLUDED.started_at, deadline_at = EXCLUDED.deadline_at, finished_at = EXCLUDED.finished_at;
+    started_at = EXCLUDED.started_at, deadline_at = EXCLUDED.deadline_at, finished_at = EXCLUDED.finished_at
+  RETURNING runs INTO STRICT v_runs;
 
   -- What an earlier run lost is that run's to say and not this one's: a
   -- figure it lost and nobody described has no row from here on, and one
@@ -366,10 +369,18 @@ BEGIN
     state = 'pending', error = NULL;
 
   -- The figures of one run are one lane: they share its describer.
+  --
+  -- A figure's task is removed when it ends and written again by the next
+  -- run, and a description is stored under its task's token. So the tokens
+  -- of a run start where no earlier run's can reach, at the run's number
+  -- times 2^32: a worker that still held a figure of the run before writes,
+  -- and removes when it is told it lost the figure, under a key no task of
+  -- this run has.
   WITH written AS (
-    INSERT INTO tasks (parse_id, task_id, kind, group_id, project_id, class, priority, seq, pin, state, available_at, created_at)
+    INSERT INTO tasks (parse_id, task_id, kind, group_id, project_id, class, priority, seq, pin, state,
+                       available_at, created_at, lease_token)
     SELECT v_parse, 'figure-' || (e.fig->>'ref'), 'figure', v_p.group_id, v_p.project_id, v_p.class, v_p.priority,
-           e.i::integer, nullif(r->>'pin', ''), 'queued', v_now, v_now
+           e.i::integer, nullif(r->>'pin', ''), 'queued', v_now, v_now, v_runs::bigint << 32
       FROM jsonb_array_elements(v_figs) WITH ORDINALITY AS e(fig, i)
     ON CONFLICT DO NOTHING
     RETURNING lane
@@ -1473,23 +1484,64 @@ BEGIN
                             'claims', v_claims, 'sleep_until', v_sleep)::text;
 END $$;
 
--- lectio_parse_delete removes an owner's parse that has ended, with its
--- tasks, its extractions, its figures and what was kept from it for reuse.
--- An extraction or a figure of it that is queued or running is dropped
--- first, under the lock the exchange takes, so its settle is refused and
--- the counters of queued and running tasks stay a count of the rows. The
--- caller removes the parse's objects first. It answers deleted, missing, or
--- not_terminal.
-CREATE OR REPLACE FUNCTION lectio_parse_delete(p_owner text, p_parse text)
-RETURNS text LANGUAGE plpgsql AS $$
+-- A parse is removed in 3 steps, so that nothing of it is left: its work is
+-- stopped, then its objects are removed, then its rows. The first and the
+-- last are statements, and the objects are the caller's between them.
+--
+-- The order is what leaves no object behind. A task of the parse that is
+-- queued or running writes objects: what an extraction has so far, with the
+-- text of the document, its result, and a figure's description. Were the
+-- objects listed first, a task could write one after the listing and settle
+-- before the rows went, and the object would be named by nothing. With the
+-- tasks dropped first, under the lock the exchange takes, no task of the
+-- parse is claimed after the listing and every later settle of one is
+-- refused, which tells its worker to remove what it wrote. And with the row
+-- kept until the objects are gone, a caller that stops halfway leaves a
+-- parse whose retention has ended, which the retention sweep removes.
+
+-- lectio_parse_close is the first step for a parse whose retention has
+-- ended: it drops the extractions and the figures of the parse that are
+-- queued or running, with the counters of queued and running tasks moved
+-- with them. Nothing new is queued for the parse from here on: an
+-- extraction and a figure run are refused for a parse whose retention has
+-- ended, and so is a retry. It reports whether the parse is one to remove:
+-- false for a parse that is not there or whose retention has not ended.
+CREATE FUNCTION lectio_parse_close(p_parse text, p_now timestamptz DEFAULT NULL)
+RETURNS boolean LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM lectio_lock();
   PERFORM 1 FROM parses
-    WHERE parse_id = p_parse AND owner = p_owner AND state IN ('succeeded', 'failed', 'canceled') FOR UPDATE;
+    WHERE parse_id = p_parse AND expires_at <= coalesce(p_now, now()) AND state IN ('succeeded', 'failed', 'canceled')
+      FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  PERFORM lectio_drop(p_parse, 'extract', NULL);
+  PERFORM lectio_drop(p_parse, 'figure', NULL);
+  RETURN true;
+END $$;
+
+-- lectio_parse_delete is the first step of an owner's delete of a parse that
+-- has ended: it ends the parse's retention now and drops its extractions
+-- and its figures as lectio_parse_close does. The caller then removes the
+-- parse's objects and calls lectio_parse_expire. It answers deleted,
+-- missing, or not_terminal.
+--
+-- The function has an argument more than the one it replaces, which is
+-- dropped. A call with the 2 arguments of the release before still
+-- resolves: the parse it deletes is then removed by the retention sweep.
+DROP FUNCTION lectio_parse_delete(text, text);
+CREATE FUNCTION lectio_parse_delete(p_owner text, p_parse text, p_now timestamptz DEFAULT NULL)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  v_now timestamptz := coalesce(p_now, now());
+BEGIN
+  PERFORM lectio_lock();
+  UPDATE parses SET expires_at = least(expires_at, v_now)
+   WHERE parse_id = p_parse AND owner = p_owner AND state IN ('succeeded', 'failed', 'canceled');
   IF FOUND THEN
     PERFORM lectio_drop(p_parse, 'extract', NULL);
     PERFORM lectio_drop(p_parse, 'figure', NULL);
-    DELETE FROM parses WHERE parse_id = p_parse;
     RETURN 'deleted';
   END IF;
   IF EXISTS (SELECT 1 FROM parses WHERE parse_id = p_parse AND owner = p_owner) THEN
@@ -1498,12 +1550,11 @@ BEGIN
   RETURN 'missing';
 END $$;
 
--- lectio_parse_expire removes a parse whose retention has ended, with its
--- tasks, its extractions, its figures and what was kept from it for reuse,
--- whoever owns it. An extraction or a figure of it that is queued or running
--- is dropped first, as lectio_parse_delete drops it. The caller removes the
--- parse's objects first. It reports whether a row was removed: a parse that
--- is not there, or whose retention has not ended, is left alone.
+-- lectio_parse_expire is the last step: it removes a parse whose retention
+-- has ended, with its tasks, its extractions, its figures and what was kept
+-- from it for reuse, whoever owns it. The caller has removed the parse's
+-- objects. It reports whether a row was removed: a parse that is not there,
+-- or whose retention has not ended, is left alone.
 CREATE OR REPLACE FUNCTION lectio_parse_expire(p_parse text, p_now timestamptz DEFAULT NULL)
 RETURNS boolean LANGUAGE plpgsql AS $$
 BEGIN
