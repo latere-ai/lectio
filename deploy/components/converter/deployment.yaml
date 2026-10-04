@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The conversion sidecar: an office suite behind one call, a file in and
-# its conversion out. It keeps nothing between two calls, so its replicas
-# are interchangeable. One replica converts one file at a time and a call
+# its conversion out. It keeps nothing from one call to the next, so its
+# replicas are interchangeable. One replica converts one file at a time and a call
 # that waits holds a connection; an installation that converts much runs
 # more replicas behind the same Service.
 apiVersion: apps/v1

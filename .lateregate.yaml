@@ -48,6 +48,13 @@ identity:
   # The audience is the default of a server somebody runs themselves, and
   # no client is registered anywhere to present it.
   reached_by: self-hosted
+  # The conversion sidecar is a command of this repository, so the
+  # deployment rules would hold its container to naming an audience. It
+  # verifies no token: it takes one call from the workers, behind a
+  # network policy, and holds no credential (spec 009). Its manifest is
+  # held by deploy_test.go instead.
+  skip:
+    - deploy/components/converter/deployment.yaml
 
 # The store of spec 004 serves through LECTIO_DATABASE_POOL_URL where an
 # installation names a pooled endpoint and falls back to LECTIO_DATABASE_URL.

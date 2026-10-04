@@ -322,7 +322,10 @@ Built:
   container engine: with a read-only root file system, scratch space at
   `/tmp` and no capability it converts the fixture of each converted
   format, and with no network, on a socket it shares with the server's
-  image, a parse of the presentation fixture succeeds.
+  image, a parse of the presentation fixture succeeds. The identity
+  declaration of the gate skips the sidecar's Deployment: the sidecar is
+  a command of this repository, which the deployment rules hold to
+  naming the audience it verifies, and it verifies no token.
 
 - `deploy/examples/compose.yaml` and `docs/running.md`: Postgres, an
   object store with its bucket, `lectiod` in the role `all` with the
