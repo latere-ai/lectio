@@ -905,7 +905,7 @@ components:
       properties:
         code:
           type: string
-          enum: [file_not_found, file_too_large, invalid_pages, document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, figure_unreadable, reader_unavailable, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
+          enum: [file_not_found, file_too_large, invalid_pages, document_corrupt, unsupported_media_type, too_many_pages, source_unreachable, page_unreadable, figure_unreadable, reader_unavailable, reader_not_permitted, budget_exhausted, deadline_exceeded, schema_not_satisfied, internal]
         detail: { type: string }
 
     Usage:

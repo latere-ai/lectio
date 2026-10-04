@@ -191,7 +191,7 @@ Content-Type: application/json
 |---|---|---|
 | `200` with `{"key": "...", "expires_at": "<RFC 3339>"}` | the group's key | is read with it |
 | `402` | the group has no budget | fails at once with `budget_exhausted`, as a budget refusal of the reader's own endpoint does ([[008-readers]]) |
-| `403` | the group may not read with this operator's keys | fails at once with `reader_unavailable` |
+| `403` | the group may not read with this operator's keys | fails at once with `reader_not_permitted` |
 | a transport error, a timeout, `5xx`, `429`, `401`, any other status, a body that does not parse, a body with no key or no expiry, an expiry that is past or less than 1 minute away | the endpoint is unavailable | waits, and does not fail |
 
 `402` and `403` are about the group and no wait changes them, so they
@@ -199,8 +199,12 @@ are permanent failures of the page ([[004-durable-tasks]]): no attempt
 is spent on a retry, the page does not move to another reader, since
 every reader would be called with the same missing key, and nothing
 counts against a reader's breaker, since no reader was called. A `403`
-is reported as `reader_unavailable` and not as `page_unreadable`: the
-page is not at fault, and no reader can be called for it. A `401` is
+is reported as `reader_not_permitted`, the code a submit is refused with
+when it names a reader its group may not use: the page is not at fault,
+so it is not `page_unreadable`, and no reader failed, so it is not
+`reader_unavailable`, which a caller reads as an outage and tries again.
+What a refused group needs is its operator's permission, and a client can
+say so only when the code says so. A `401` is
 not a refusal. It says the bearer is wrong, which is the operator's to
 mend and says nothing about a tenant, so a tenant's page does not fail
 for it.
@@ -459,7 +463,7 @@ Remaining:
 | With `LECTIO_KEYS=endpoint`, pages of 2 groups are read with 2 different keys, and the stub gateway's records attribute each page to its group | `TestPagesOfTwoGroupsAreReadWithTwoKeys`: the API and a worker as 2 servers of `cmd/lectiod` over Postgres and a bucket, a stub key endpoint, and a stub gateway that speaks chat completions and records the key of every call. A parse of 3 pages and one of 2, of 2 groups: one request per group to the key endpoint, 3 calls with the first group's key and 2 with the second's |
 | No key appears in any log line, trace attribute, database row or error body | in part. The same test reads, after its run, both servers' logs, every row of every table, every object of the bucket and the pages the API answers, for the keys and for the endpoint's bearer. `TestAnAnswerThatIsNoKeyAndNoRefusalIsUnavailability` and `TestAnEndpointSourcePrintsNothingItHolds` hold what a source returns, logs and prints as to the same. No test reads a trace |
 | A key endpoint that fails, or that refuses the bearer, fails no page and spends no attempt: the pages wait unclaimed behind the group's paused scope, no reader is called, the worker stays ready, and the pages are read on their first attempt once the endpoint answers | `TestAKeyEndpointThatIsDownLeavesPagesUnclaimedAndNotFailed`, through the durable server, with the endpoint answering `503`, `401` and `503` again before it issues |
-| A `402` fails the group's pages with `budget_exhausted` and a `403` with `reader_unavailable`, on one request for a parse of 3 pages, with no reader called, no scope paused and nothing counted against a reader, while another group reads | `TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce`, through the durable server |
+| A `402` fails the group's pages with `budget_exhausted` and a `403` with `reader_not_permitted`, on one request for a parse of 3 pages, with no reader called, no scope paused and nothing counted against a reader, while another group reads | `TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce`, through the durable server |
 | A key is asked again 1 minute before it expires and not before; calls of one group that arrive while its key is asked for wait for the one request | `TestAGroupsKeyIsAskedOnceAndHeldUntilShortlyBeforeItExpires` and `TestCallsOfOneGroupWaitForOneRequest`, on a clock the test moves |
 | `401`, `5xx`, `429`, a body that is not the contract's, no key, no expiry, an expiry that is past or within the margin, a refused connection and a request that outlasts its bound are each unavailability, with a wait that doubles from 1 second to 30 | `TestAnAnswerThatIsNoKeyAndNoRefusalIsUnavailability` and `TestTheWaitGrowsWithEachAnswerInARowAndIsBounded` |
 | A worker and a process in both roles are refused at start `endpoint` with no address, with no bearer or beside a model key, and an address or a bearer beside `static`; the API reads neither and starts | `TestAKeySourceThatCannotRunIsRefused`, `TestTheAPIReadsNeitherTheEndpointNorItsBearer` and `TestTheEndpointIsReadByAProcessThatRunsTasks` of `internal/config`, and `TestAKeySourceThatCannotRunStopsAProcessThatRunsTasks` of `cmd/lectiod` |

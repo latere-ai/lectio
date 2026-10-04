@@ -284,7 +284,7 @@ func TestAPageWithNoKeyWaitsOrFailsAndCallsNoReader(t *testing.T) {
 		"a source that names no wait":   {&keys.Unavailable{Reason: "the call ended"}, tasks.Wait, "", 0},
 		"an error of no kind":           {errors.New("a source of another kind failed"), tasks.Wait, "", 0},
 		"a group with no budget":        {keys.ErrBudget, tasks.Permanent, "budget_exhausted", 0},
-		"a group that is issued no key": {fmt.Errorf("asking: %w", keys.ErrForbidden), tasks.Permanent, "reader_unavailable", 0},
+		"a group that is issued no key": {fmt.Errorf("asking: %w", keys.ErrForbidden), tasks.Permanent, "reader_not_permitted", 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rd := &stub.Reader{}

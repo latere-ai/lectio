@@ -63,6 +63,11 @@ refused before it is pushed.
   the durable server a parse that ends with a failed page now keeps the
   task rows of all its pages, which a retry needs, until the parse is
   deleted.
+- Changed: a page whose group the key endpoint refuses with `403` fails
+  with `reader_not_permitted`, where it failed with `reader_unavailable`.
+  The group may not read with the operator's keys, which no retry mends,
+  and a client can now tell that from a reader that is down. A parse whose
+  pages all failed this way fails with the same code.
 - Changed: a document has one title. A reader sees one page and calls the
   line each slide of a deck opens with a `title`; assembly now keeps the
   titles of the first page that holds one and makes a `title` on a later

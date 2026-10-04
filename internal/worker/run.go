@@ -269,7 +269,7 @@ func keyless(s *tasks.Settle, err error) {
 	case errors.Is(err, keys.ErrBudget):
 		permanent(s, fault.BudgetExhausted, "the group has no budget left to read with")
 	case errors.Is(err, keys.ErrForbidden):
-		permanent(s, fault.ReaderUnavailable, "the group is issued no key to read with")
+		permanent(s, fault.ReaderNotPermitted, "the group is issued no key to read with")
 	default:
 		s.Outcome, s.RetryAfter = tasks.Wait, keys.RetryAfterOf(err)
 	}

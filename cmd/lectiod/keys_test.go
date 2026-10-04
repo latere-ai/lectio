@@ -391,7 +391,7 @@ func TestAKeyEndpointThatIsDownLeavesPagesUnclaimedAndNotFailed(t *testing.T) {
 }
 
 // TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce: a 402 fails the pages
-// of its group with budget_exhausted and a 403 with reader_unavailable, each
+// of its group with budget_exhausted and a 403 with reader_not_permitted, each
 // on one request for the whole parse and with no call to a reader, and the
 // parse fails with the code its pages failed with. A refusal is its group's
 // alone: it pauses no scope, counts against no reader, and another group
@@ -410,7 +410,7 @@ func TestAGroupTheKeyEndpointRefusesFailsItsPagesAtOnce(t *testing.T) {
 	})
 	base, logs, _ := started(t, env(p.env("all", keyed(t, gw, endpoint.reads()...)...)...))
 
-	for sub, want := range map[string]string{"alice": "budget_exhausted", "bob": "reader_unavailable"} {
+	for sub, want := range map[string]string{"alice": "budget_exhausted", "bob": "reader_not_permitted"} {
 		tok := tokenOf(sub)
 		id := submittedAs(t, base, tok, "scan.tiff", frames(3))
 		done := endedAs(t, base, tok, id)
