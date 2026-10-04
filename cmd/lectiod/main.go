@@ -82,7 +82,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	} else {
 		log.WarnContext(ctx, "LECTIO_CONFIG is not set: pages are read by the stub reader, which calls no model and describes the page it was given")
 	}
-	for _, what := range readers.Unapplied {
+	for _, what := range append(readers.RunnerUnapplied, readers.Unapplied...) {
 		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
 	}
 	log.WarnContext(ctx, "LECTIO_DEV: files, parses and results are kept in memory and are lost when the process stops")

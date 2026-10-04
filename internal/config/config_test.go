@@ -4,11 +4,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"latere.ai/x/lectio/internal/tasks"
 )
 
 func env(pairs ...string) func(string) string {
@@ -167,8 +170,11 @@ func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
 		t.Fatalf("describers %v, chain %v", got.Describers, got.DescribeChain)
 	}
 	// What is set and not acted on is named.
-	if want := `Reader "default" maxInFlight and cost|Policy extract.chain|Policy escalate`; strings.Join(got.Unapplied, "|") != want {
+	if want := `Policy extract.chain|Policy escalate`; strings.Join(got.Unapplied, "|") != want {
 		t.Fatalf("unapplied: %q", got.Unapplied)
+	}
+	if want := `Reader "default" maxInFlight and cost`; strings.Join(got.RunnerUnapplied, "|") != want {
+		t.Fatalf("what the task store applies and the runner does not: %q", got.RunnerUnapplied)
 	}
 
 	// One file with one reader and no policy: the reader is the chain.
@@ -231,5 +237,112 @@ func TestAConfigurationThatDoesNotHoldIsRefusedWhole(t *testing.T) {
 	}
 	if _, err := Load(dir); err == nil && os.Getuid() != 0 {
 		t.Error("a file that cannot be read")
+	}
+}
+
+// TestTheDurableServersSettings: what the durable server is run with has the
+// specs' defaults, and each is read from its variable.
+func TestTheDurableServersSettings(t *testing.T) {
+	s, err := FromEnv(env())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Role != RoleAll || s.InternalAddr != ":8081" || s.Bucket != "" || s.S3PathStyle || !s.S3SecretKey.IsZero() ||
+		s.Lease != 60*time.Second || s.Expiries != 3 || s.SweepInterval != 30*time.Second || s.Flush != 200*time.Millisecond ||
+		s.Poll != time.Second || s.PoolRecovery != 30*time.Second || s.PoolResume != 10*time.Second || s.CacheBytes != 2<<30 {
+		t.Fatalf("defaults: %+v", s)
+	}
+	s, err = FromEnv(env(
+		"LECTIO_ROLE", "worker", "LECTIO_INTERNAL_ADDR", "127.0.0.1:9001", "LECTIO_KEYS", "static",
+		"LECTIO_BUCKET", "lectio", "LECTIO_BUCKET_PREFIX", "staging", "LECTIO_S3_ENDPOINT", "https://objects.example",
+		"LECTIO_S3_REGION", "us-east-1", "LECTIO_S3_ACCESS_KEY", "access", "LECTIO_S3_SECRET_KEY", " s3-secret ", "LECTIO_S3_PATH_STYLE", "true",
+		"LECTIO_TASK_LEASE", "2s", "LECTIO_TASK_EXPIRIES", "2", "LECTIO_SWEEP_INTERVAL", "500ms", "LECTIO_WORKER_FLUSH", "50ms",
+		"LECTIO_WORKER_POLL", "100ms", "LECTIO_POOL_RECOVERY", "3s", "LECTIO_POOL_RESUME", "1s", "LECTIO_CACHE_BYTES", "4096",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Role != RoleWorker || s.InternalAddr != "127.0.0.1:9001" || s.Bucket != "lectio" || s.BucketPrefix != "staging" ||
+		s.S3Endpoint != "https://objects.example" || s.S3Region != "us-east-1" || s.S3AccessKey != "access" || s.S3SecretKey.Reveal() != "s3-secret" || !s.S3PathStyle ||
+		s.Lease != 2*time.Second || s.Expiries != 2 || s.SweepInterval != 500*time.Millisecond || s.Flush != 50*time.Millisecond ||
+		s.Poll != 100*time.Millisecond || s.PoolRecovery != 3*time.Second || s.PoolResume != time.Second || s.CacheBytes != 4096 {
+		t.Fatalf("settings: %+v", s)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", s), "s3-secret") {
+		t.Fatal("the settings print the bucket's secret key")
+	}
+
+	_, err = FromEnv(env("LECTIO_ROLE", "leader", "LECTIO_KEYS", "sk-secret-endpoint", "LECTIO_S3_PATH_STYLE", "sk-secret-style", "LECTIO_TASK_LEASE", "0s"))
+	if err == nil {
+		t.Fatal("settings that do not parse were accepted")
+	}
+	for _, name := range []string{"LECTIO_ROLE", "LECTIO_KEYS", "LECTIO_S3_PATH_STYLE", "LECTIO_TASK_LEASE"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("the error does not name %s: %v", name, err)
+		}
+	}
+	if strings.Contains(err.Error(), "sk-secret") {
+		t.Fatalf("the error holds a value: %v", err)
+	}
+}
+
+// TestAReaderIsAPoolOfTheTaskStore: each Reader document is a pool, with
+// the bound and the cost it declares, and the task store is opened with
+// them and the policy's chain. A cost is a whole number of units: the fair
+// queue counts in them, so a fraction is refused and not rounded.
+func TestAReaderIsAPoolOfTheTaskStore(t *testing.T) {
+	dir := write(t, map[string]string{"readers.yaml": `
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: small }
+spec: { adapter: stub }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: large }
+spec: { adapter: stub, maxInFlight: 4, cost: 5 }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: policy }
+spec: { read: { chain: [small, large] } }
+`})
+	readers, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools := map[string]tasks.Pool{}
+	for _, p := range readers.Pools {
+		pools[p.Reader] = p
+	}
+	if len(pools) != 2 || pools["small"] != (tasks.Pool{Reader: "small", MaxInFlight: DefaultMaxInFlight, Cost: 1}) ||
+		pools["large"] != (tasks.Pool{Reader: "large", MaxInFlight: 4, Cost: 5}) {
+		t.Fatalf("the pools are %+v", readers.Pools)
+	}
+	if stub := Stub().Pools; len(stub) != 1 || stub[0].Reader != "stub" || stub[0].MaxInFlight != DefaultMaxInFlight {
+		t.Fatalf("the stub's pool is %+v", stub)
+	}
+
+	s, err := FromEnv(env("LECTIO_TASK_LEASE", "5s", "LECTIO_TASK_ATTEMPTS", "4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := s.Queue(readers).WithDefaults()
+	if err := queue.Validate(); err != nil {
+		t.Fatalf("the settings the task store is opened with: %v", err)
+	}
+	if queue.Lease != 5*time.Second || queue.Attempts != 4 || strings.Join(queue.ReadChain, ",") != "small,large" || len(queue.Pools) != 2 {
+		t.Fatalf("the task store's settings are %+v", queue)
+	}
+
+	for name, spec := range map[string]string{
+		"a fraction of a unit": `{ adapter: stub, cost: 1.5 }`,
+		"a cost below zero":    `{ adapter: stub, cost: -1 }`,
+		"a bound below zero":   `{ adapter: stub, maxInFlight: -4 }`,
+	} {
+		bad := write(t, map[string]string{"reader.yaml": "apiVersion: lectio.latere.ai/v1\nkind: Reader\nmetadata: { name: only }\nspec: " + spec + "\n"})
+		if _, err := Load(bad); err == nil || !strings.Contains(err.Error(), `Reader "only"`) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
