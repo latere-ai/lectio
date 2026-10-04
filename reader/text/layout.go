@@ -397,7 +397,7 @@ func joinLines(lines []string) string {
 		first, _ := utf8.DecodeRuneInString(text)
 		before, _ := utf8.DecodeLastRuneInString(so[:len(so)-size])
 		switch {
-		case last == '­':
+		case last == '\u00ad':
 			out.Reset()
 			out.WriteString(so[:len(so)-size])
 		case last == '-' && unicode.IsLetter(before) && unicode.IsLower(first):

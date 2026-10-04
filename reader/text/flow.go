@@ -53,6 +53,11 @@ const (
 	maxLeading = 1.9
 	pitchSlack = 1.25
 
+	// same is how far 2 lengths may differ, as a share, and be the same
+	// length: 2 sizes of type, or 2 pitches. A file writes its numbers
+	// with a few decimals.
+	same = 0.02
+
 	// indent is how far, in sizes, a line may begin from where its
 	// paragraph's lines begin and still belong to it. A paragraph's first
 	// line is indented by one size or more.
@@ -78,7 +83,7 @@ var bounds = [...]float64{
 	maxRule, snap, edgeCover, maxRules, maxCells, maxShapes,
 	lineDrift, smallType, columnGap, bulletSize, bulletReach, clusterGap, minFigure, maxFigures, maxFigureText,
 	minGutter, sideBySide, minColumnLines, minFullLines, fullLine, minColumnWords, maxStray,
-	maxLeading, pitchSlack, indent, headingScale, headingLines, titleScale, captionReach,
+	maxLeading, pitchSlack, same, indent, headingScale, headingLines, titleScale, captionReach,
 }
 
 // marker is the mark of a list item as a word of its own: a bullet, or a
@@ -103,8 +108,10 @@ type block struct {
 	size   float64
 	bold   bool
 	marked bool
-	// pitch is the distance between the baselines of its first 2 lines.
-	pitch float64
+	// pitch is the distance between the baselines of its first 2 lines,
+	// and above the distance from the line of the same type that stands
+	// over its first line, 0 when none does.
+	pitch, above float64
 }
 
 // flow puts the pieces of rows in the order they are read in. Rows that
@@ -329,22 +336,31 @@ func pitch(side []*row) float64 {
 
 // paragraphs joins pieces, in the order they are read in, into blocks. A
 // table and a figure are blocks of their own, and a line continues the
-// block before it when it is set the same way, close under it, and
-// begins where the block's lines begin.
+// block before it when it is set the same way, close under it, no
+// farther from it than the block stands from the one above, and begins
+// where the block's lines begin.
 func (p *page) paragraphs(pieces []*piece) []*block {
 	var out []*block
 	var open *block
+	// before is the line read before this one, nil across a table or a
+	// figure.
+	var before *line
 	for _, pc := range pieces {
 		if pc.raw != nil {
-			out, open = append(out, &block{raw: pc.raw, box: pc.box, label: pc.raw.Label}), nil
+			out, open, before = append(out, &block{raw: pc.raw, box: pc.box, label: pc.raw.Label}), nil, nil
 			continue
 		}
 		l := pc.line
+		previous := before
+		before = l
 		if open != nil && p.continues(open, l) {
 			open.lines, open.box = append(open.lines, l), around(open.box, l.box)
 			continue
 		}
 		open = &block{lines: []*line{l}, box: l.box, size: l.size, bold: l.bold, marked: l.marked || p.numbered(l)}
+		if previous != nil && l.baseline > previous.baseline && math.Abs(previous.size-l.size) <= same*l.size {
+			open.above = l.baseline - previous.baseline
+		}
 		out = append(out, open)
 	}
 	return out
@@ -362,11 +378,15 @@ func (p *page) continues(b *block, l *line) bool {
 	switch {
 	case l.marked || p.numbered(l):
 		return false
-	case math.Abs(l.size-b.size) > 0.02*b.size || l.bold != b.bold:
+	case math.Abs(l.size-b.size) > same*b.size || l.bold != b.bold:
 		return false
 	case pitch <= 0:
 		return false
 	case len(b.lines) == 1 && pitch > maxLeading*b.size:
+		return false
+	case len(b.lines) == 1 && b.above > 0 && pitch > (1+same)*b.above:
+		// The lines of a paragraph stand no farther apart than its first
+		// line stands from the paragraph above it.
 		return false
 	case len(b.lines) > 1 && pitch > pitchSlack*b.pitch:
 		return false

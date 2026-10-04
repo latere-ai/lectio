@@ -150,7 +150,7 @@ func TestAPageOfProseIsReadIntoItsBlocks(t *testing.T) {
 		"lines are one block of text.")
 	y = s.prose(72, y+8,
 		"A second paragraph follows after a gap. A line that ends in a hy-",
-		"phen runs on in the next, and a line that ends in a soft hy­",
+		"phen runs on in the next, and a line that ends in a soft hy\u00ad",
 		"phen loses it. A line that ends in a dash -",
 		"and one that ends in a number 3-",
 		"4 keep their space.")
@@ -160,15 +160,19 @@ func TestAPageOfProseIsReadIntoItsBlocks(t *testing.T) {
 	y = s.prose(72, y+26, "More body text, then a list:")
 	// A bullet a font draws, one the file paints, a number, and a mark of
 	// a symbol font, which has no Unicode of its own.
-	s.line(84, y+4, body, "• An item with a bullet that")
+	s.line(84, y+4, body, "\u2022 An item with a bullet that")
 	s.line(93, y+18, body, "runs over 2 lines.")
 	s.Drawings = append(s.Drawings, reader.Rect{X0: 86, Y0: y + 27, X1: 89, Y1: y + 30})
 	s.line(93, y+32, body, "An item whose bullet the file paints.")
 	s.line(84, y+46, body, "2. A numbered item.")
-	s.line(84, y+60, body, " An item of a symbol font.")
-	s.prose(72, y+82, "A paragraph after the list")
-	s.line(96, y+110, body, "An indented line begins a paragraph of its own,")
-	s.line(72, y+124, body, "and its second line begins at the margin.")
+	s.line(84, y+60, body, "\uf0b7 An item of a symbol font.")
+	// A line that begins where the item's mark does, and stands farther
+	// under the item than the item stands under the one before it, is no
+	// line of the item.
+	s.line(84, y+78, body, "A paragraph set where the marks are.")
+	s.prose(72, y+100, "A paragraph after the list")
+	s.line(96, y+128, body, "An indented line begins a paragraph of its own,")
+	s.line(72, y+142, body, "and its second line begins at the margin.")
 	s.line(303, 760, small, "7")
 
 	got := readSheet(t, s)
@@ -185,6 +189,7 @@ func TestAPageOfProseIsReadIntoItsBlocks(t *testing.T) {
 		"list_item: An item whose bullet the file paints.",
 		"list_item: A numbered item.",
 		"list_item: An item of a symbol font.",
+		"text: A paragraph set where the marks are.",
 		"text: A paragraph after the list",
 		"text: An indented line begins a paragraph of its own, and its second line begins at the margin.",
 		"text: 7",
@@ -503,7 +508,7 @@ func TestWhatAPagePaintsIsAFigure(t *testing.T) {
 	s.prose(72, 620, "A paragraph under both figures.")
 	// A note under a separator, in small type, with its mark.
 	s.rule(72, 700, 200, 700)
-	s.line(72, 712, small, "¹ A note at the foot of the page.")
+	s.line(72, 712, small, "\u00b9 A note at the foot of the page.")
 	s.line(72, 724, small, "It runs over 2 lines.")
 
 	got := readSheet(t, s)
@@ -513,7 +518,7 @@ func TestWhatAPagePaintsIsAFigure(t *testing.T) {
 		"caption: Figure 1. Largest residual at each station.",
 		"figure: peak",
 		"text: A paragraph under both figures.",
-		"footnote: ¹ A note at the foot of the page. It runs over 2 lines.",
+		"footnote: \u00b9 A note at the foot of the page. It runs over 2 lines.",
 	)
 	if box := *got[1].Box; !closeBox(box, document.Box{72.0 / 612, (y + 6) / 792, 540.0 / 612, (y + 126) / 792}) {
 		t.Errorf("the framed figure lies at %v", box)
@@ -793,13 +798,15 @@ func TestAPageWhoseTextCannotBeReadIsDeclined(t *testing.T) {
 			s.Words[2].Unmapped = 1
 		}), "no Unicode mapping"},
 		"a control character":            {page(func(s *sheet) { s.prose(72, 100, sentence, "of\u0001ce") }), "no Unicode mapping"},
-		"a replacement character":        {page(func(s *sheet) { s.prose(72, 100, sentence, "of�ce") }), "no Unicode mapping"},
-		"a character Unicode leaves out": {page(func(s *sheet) { s.prose(72, 100, sentence, "of￾ce") }), "no Unicode mapping"},
-		"private characters in a word":   {page(func(s *sheet) { s.prose(72, 100, sentence, "") }), "no Unicode mapping"},
-		"a private character in a line":  {page(func(s *sheet) { s.prose(72, 100, "The gauges  were read.") }), "no Unicode mapping"},
-		"a private character alone":      {page(func(s *sheet) { s.prose(72, 100, sentence, "") }), "no Unicode mapping"},
-		"text decoded twice":             {page(func(s *sheet) { s.prose(72, 100, "Les relevÃ©s de la marÃ©e â€“ troisiÃ¨me trimestre") }), "decoded twice"},
-		"glyphs that map to symbols":     {page(func(s *sheet) { s.prose(72, 100, "!\"#$ %&'( )*+, -./: ;<=> ?@[\\ ]^_` {|}~ ab") }), "not mostly letters"},
+		"a replacement character":        {page(func(s *sheet) { s.prose(72, 100, sentence, "of\ufffdce") }), "no Unicode mapping"},
+		"a character Unicode leaves out": {page(func(s *sheet) { s.prose(72, 100, sentence, "of\ufffece") }), "no Unicode mapping"},
+		"private characters in a word":   {page(func(s *sheet) { s.prose(72, 100, sentence, "\uf041\uf042\uf043") }), "no Unicode mapping"},
+		"a private character in a line":  {page(func(s *sheet) { s.prose(72, 100, "The gauges \uf0b7 were read.") }), "no Unicode mapping"},
+		"a private character alone":      {page(func(s *sheet) { s.prose(72, 100, sentence, "\uf0b7") }), "no Unicode mapping"},
+		"text decoded twice": {page(func(s *sheet) {
+			s.prose(72, 100, "Les relev\u00c3\u00a9s de la mar\u00c3\u00a9e \u00e2\u20ac\u201c troisi\u00c3\u00a8me trimestre")
+		}), "decoded twice"},
+		"glyphs that map to symbols": {page(func(s *sheet) { s.prose(72, 100, "!\"#$ %&'( )*+, -./: ;<=> ?@[\\ ]^_` {|}~ ab") }), "not mostly letters"},
 		"glyphs that map to the wrong letters": {page(func(s *sheet) {
 			s.prose(72, 100, strings.Repeat("Wkh jdxjhv zhuh uhdg hyhub whq plqxwhv iru wklubhhq zhhnv. ", 3))
 		}), "do not read as words"},
@@ -819,8 +826,8 @@ func TestAPageWhoseTextCannotBeReadIsDeclined(t *testing.T) {
 	// alphabet to judge.
 	for name, lines := range map[string][]string{
 		"abbreviations":    {"HTTP, SMTP, DNS, NTP, TLS and SSH are spelled in capitals; by, my, try and why are short.", "PDF XML SQL CSV RTF GPS LED USB CPU RAM ROM SSD"},
-		"one such pair":    {"A text decoded twice writes Ã© where an accented e was meant."},
-		"another script":   {"潮位计 每十分钟 读数一次", "第三季度 共十三周"},
+		"one such pair":    {"A text decoded twice writes \u00c3\u00a9 where an accented e was meant."},
+		"another script":   {"\u6f6e\u4f4d\u8ba1 \u6bcf\u5341\u5206\u949f \u8bfb\u6570\u4e00\u6b21", "\u7b2c\u4e09\u5b63\u5ea6 \u5171\u5341\u4e09\u5468"},
 		"a page of digits": {"212.4 214.9 211.2 213.6"},
 	} {
 		s := letter()
@@ -881,7 +888,7 @@ func TestTheReaderDescribesItself(t *testing.T) {
 		}
 	}
 	// Every bound a page is judged by is in the version.
-	if len(bounds) != 33 {
+	if len(bounds) != 34 {
 		t.Errorf("%d bounds are in the version; a bound added to the reader is added to them", len(bounds))
 	}
 }
