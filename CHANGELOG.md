@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.4.0 - 2026-10-04
+
 - Added: extraction with a schema, in the durable server.
   `POST /parses/{parse}/fields` takes a `name`, a JSON Schema of draft
   2020-12 whose root is an object, and optional `instructions`, and
