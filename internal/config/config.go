@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -72,6 +73,10 @@ type Settings struct {
 	// (specs/014-sources-and-retention.md).
 	FileRetention  time.Duration // LECTIO_FILE_RETENTION
 	ParseRetention time.Duration // LECTIO_PARSE_RETENTION
+
+	// GroupDefaults are the settings a group takes when the allow of its
+	// parse names none, and under the owner policy always.
+	GroupDefaults GroupDefaults // LECTIO_GROUP_DEFAULTS
 
 	// Role is what the durable server runs: the API, the worker, or both in
 	// one process. InternalAddr is where it serves its probes.
@@ -196,6 +201,9 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	duration("LECTIO_SHUTDOWN_GRACE", &s.Grace)
 	duration("LECTIO_FILE_RETENTION", &s.FileRetention)
 	duration("LECTIO_PARSE_RETENTION", &s.ParseRetention)
+	if err := s.GroupDefaults.read(getenv("LECTIO_GROUP_DEFAULTS")); err != nil {
+		errs = append(errs, err)
+	}
 	truth := func(name string, into *bool) {
 		if v := strings.TrimSpace(getenv(name)); v != "" {
 			b, err := strconv.ParseBool(v)
@@ -241,6 +249,54 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	}
 	errs = append(errs, s.readIdentity(getenv)...)
 	return s, errors.Join(errs...)
+}
+
+// GroupDefaults are the settings of a fairness group that an allow may name
+// and a server has a default for (specs/006-fairness-and-priority.md): its
+// share, its bounds, and its pages for a day. The zero value is a share of
+// 1, no bound, no budget, and priority 0 alone.
+type GroupDefaults struct {
+	Weight      int // weight: the group's share, 1 to 1000; 0 takes 1
+	MaxRunning  int // max_running: leased tasks at once; 0 is no cap
+	MaxQueued   int // max_queued: parses that have not ended; 0 is no cap
+	MaxPriority int // max_priority: the bound on a parse's priority, on both sides
+	PagesPerDay int // pages_per_day: pages counted in one day; 0 is no budget
+}
+
+// maxGroupWeight is the largest share a group may be given.
+const maxGroupWeight = 1000
+
+// read reads LECTIO_GROUP_DEFAULTS: a comma-separated list of name=value,
+// each name a member of the limits an allow carries, each value a whole
+// number of zero or more. An error names the variable and the member, and
+// never the value.
+func (g *GroupDefaults) read(raw string) error {
+	members := map[string]*int{
+		"weight": &g.Weight, "max_running": &g.MaxRunning, "max_queued": &g.MaxQueued,
+		"max_priority": &g.MaxPriority, "pages_per_day": &g.PagesPerDay,
+	}
+	seen := map[string]bool{}
+	for _, entry := range list(raw) {
+		name, value, found := strings.Cut(entry, "=")
+		name = strings.TrimSpace(name)
+		into, known := members[name]
+		switch {
+		case !found || !known:
+			return errors.New("LECTIO_GROUP_DEFAULTS has an entry that is not one of weight, max_running, max_queued, max_priority and pages_per_day, as name=value")
+		case seen[name]:
+			return fmt.Errorf("LECTIO_GROUP_DEFAULTS names %s twice", name)
+		}
+		seen[name] = true
+		n, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || n < 0 || n > math.MaxInt32 {
+			return fmt.Errorf("LECTIO_GROUP_DEFAULTS: %s is not a whole number of zero or more", name)
+		}
+		*into = n
+	}
+	if g.Weight > maxGroupWeight {
+		return fmt.Errorf("LECTIO_GROUP_DEFAULTS: weight is above %d", maxGroupWeight)
+	}
+	return nil
 }
 
 // How long what is stored is kept when no setting says otherwise.

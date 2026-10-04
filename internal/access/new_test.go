@@ -110,6 +110,26 @@ func TestTheDefaultsAreTheServersLimits(t *testing.T) {
 	}
 }
 
+// What a group takes when its allow names none is the server's setting,
+// and a development server is refused one it cannot hold.
+func TestTheGroupDefaultsAreTheServersLimits(t *testing.T) {
+	s := settings(t, "LECTIO_GROUP_DEFAULTS", "weight=4,max_running=16,max_queued=200,max_priority=10,pages_per_day=5000")
+	got := access.Defaults(s)
+	if got.Weight != 4 || got.MaxRunning != 16 || got.MaxQueued != 200 || got.MaxPriority != 10 || got.PagesPerDay != 5000 {
+		t.Errorf("the defaults are %+v", got)
+	}
+	for _, defaults := range []string{"max_running=16", "max_queued=200", "pages_per_day=5000"} {
+		a, err := access.New(settings(t, "LECTIO_DEV", "true", "LECTIO_GROUP_DEFAULTS", defaults))
+		if err == nil || !strings.Contains(err.Error(), "LECTIO_GROUP_DEFAULTS") {
+			t.Errorf("a development server with %s: %+v, %v", defaults, a, err)
+		}
+	}
+	// What a development server holds, it takes.
+	if _, err := access.New(settings(t, "LECTIO_DEV", "true", "LECTIO_GROUP_DEFAULTS", "max_priority=10,weight=2,max_queued=0")); err != nil {
+		t.Errorf("a development server with a bound on priority: %v", err)
+	}
+}
+
 // What a server cannot hold a request to follows from what it keeps its
 // work in. The durable server holds every member of the limits. A
 // development server holds no bound of a group, no budget and no

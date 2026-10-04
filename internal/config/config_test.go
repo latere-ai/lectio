@@ -36,6 +36,44 @@ func TestSettingsHaveDefaults(t *testing.T) {
 	}
 }
 
+// TestTheGroupDefaultsAreASetting: what a group takes when its allow names
+// none is a list of name=value over the members an allow may name. A
+// member the list leaves out is zero, and what does not read names the
+// variable and the member and never the value.
+func TestTheGroupDefaultsAreASetting(t *testing.T) {
+	s, err := FromEnv(env("LECTIO_GROUP_DEFAULTS", " weight=4, max_running = 16 ,max_queued=200,max_priority=10,pages_per_day=5000,"))
+	if want := (GroupDefaults{Weight: 4, MaxRunning: 16, MaxQueued: 200, MaxPriority: 10, PagesPerDay: 5000}); err != nil || s.GroupDefaults != want {
+		t.Fatalf("the group defaults: %+v, %v", s.GroupDefaults, err)
+	}
+	if s, err := FromEnv(env("LECTIO_GROUP_DEFAULTS", "max_priority=3")); err != nil || s.GroupDefaults != (GroupDefaults{MaxPriority: 3}) {
+		t.Fatalf("one member: %+v, %v", s.GroupDefaults, err)
+	}
+	if s, err := FromEnv(env()); err != nil || s.GroupDefaults != (GroupDefaults{}) {
+		t.Fatalf("none set: %+v, %v", s.GroupDefaults, err)
+	}
+	for value, want := range map[string]string{
+		"max_pages=77":                  "not one of",
+		"max_priority":                  "not one of",
+		"max_queued=77,max_queued=78":   "max_queued twice",
+		"max_running=sk-secret":         "max_running is not a whole number",
+		"pages_per_day=-77":             "pages_per_day is not a whole number",
+		"max_priority=99999999999999":   "max_priority is not a whole number",
+		"weight=1001":                   "weight is above 1000",
+		"weight=77,retention_seconds=5": "not one of",
+	} {
+		_, err := FromEnv(env("LECTIO_GROUP_DEFAULTS", value))
+		if err == nil || !strings.Contains(err.Error(), "LECTIO_GROUP_DEFAULTS") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", value, err)
+			continue
+		}
+		for _, secret := range []string{"sk-secret", "77", "78", "99999999999999", "1001"} {
+			if strings.Contains(value, secret) && strings.Contains(err.Error(), secret) {
+				t.Errorf("%q: the error repeats the value: %v", value, err)
+			}
+		}
+	}
+}
+
 // TestTheRetentionsAreSettings: how long a file and a parse are kept are
 // durations above zero, each read from its own variable.
 func TestTheRetentionsAreSettings(t *testing.T) {

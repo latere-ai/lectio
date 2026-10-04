@@ -87,7 +87,13 @@ func New(s config.Settings) (*Access, error) {
 	} else {
 		a.decider, a.Authorization = &OwnerPolicy{Admins: s.AdminSubjects}, AuthorizationOwnerPolicy
 	}
-	a.Authorizer = NewAuthorizer(a.decider, Defaults(s), FileRetention(s.FileRetention), Unenforced(unenforced(s)...))
+	// A default the server cannot hold would be passed in silence on every
+	// request, so it is refused here, at start.
+	lost := unenforced(s)
+	if g := s.GroupDefaults; len(lost) > 0 && (g.MaxRunning > 0 || g.MaxQueued > 0 || g.PagesPerDay > 0) {
+		return nil, errors.New("LECTIO_GROUP_DEFAULTS sets max_running, max_queued or pages_per_day, which a development server does not hold: it has one queue for every caller and no group")
+	}
+	a.Authorizer = NewAuthorizer(a.decider, Defaults(s), FileRetention(s.FileRetention), Unenforced(lost...))
 	return a, nil
 }
 
@@ -105,10 +111,16 @@ func unenforced(s config.Settings) []string {
 }
 
 // Defaults are the limits a server is configured with, which an allow
-// lays its own over and the owner policy applies as they are. Retention is
-// a parse's; a file's is laid under the allow of an upload.
+// lays its own over and the owner policy applies as they are: the bounds
+// on a file and on a parse, what a group takes when its allow names none,
+// and how long a parse is kept. A file's retention is laid under the allow
+// of an upload.
 func Defaults(s config.Settings) authorizer.Limits {
-	return authorizer.Limits{MaxFileBytes: s.MaxFileBytes, MaxPages: s.MaxPages, Retention: s.ParseRetention}
+	g := s.GroupDefaults
+	return authorizer.Limits{
+		Weight: g.Weight, MaxRunning: g.MaxRunning, MaxQueued: g.MaxQueued, MaxPriority: g.MaxPriority, PagesPerDay: g.PagesPerDay,
+		MaxFileBytes: s.MaxFileBytes, MaxPages: s.MaxPages, Retention: s.ParseRetention,
+	}
 }
 
 // Warm reads every issuer's key set once, so the first request does not
