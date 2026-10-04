@@ -4,9 +4,9 @@
 package extract
 
 import (
-	"bytes"
 	"fmt"
 	"regexp/syntax"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +115,6 @@ func TestASchemaThatAppliesItselfWithoutEndIsRefused(t *testing.T) {
 		"then":                        `{"type":"object","if":true,"then":{"$ref":"#"}}`,
 		"else":                        `{"type":"object","if":false,"else":{"$ref":"#"}}`,
 		"dependentSchemas":            `{"type":"object","dependentSchemas":{"a":{"$ref":"#"}}}`,
-		"a dynamic reference":         `{"type":"object","$dynamicAnchor":"node","allOf":[{"$dynamicRef":"#node"}]}`,
 	} {
 		began := time.Now()
 		_, err := Compile([]byte(schema))
@@ -163,17 +162,6 @@ func TestASchemaThatRecursThroughItsMembersIsTakenAndHeld(t *testing.T) {
 			t.Errorf("the findings %v lack %q", rules, w)
 		}
 	}
-
-	// One dynamic anchor names 1 subschema: a reference to it is the
-	// reference it reads as, and the tree it describes is held the same.
-	dynamic := compiled(t, `{"type":"object","$dynamicAnchor":"node","required":["title"],"properties":{
-	  "title":{"type":"string"},"sections":{"type":"array","items":{"$dynamicRef":"#node"}}}}`)
-	if findings := dynamic.Check([]byte(good), false); findings != nil {
-		t.Fatalf("a tree held through a dynamic reference: %+v", findings)
-	}
-	if findings := dynamic.Check([]byte(`{"title":"1","sections":[{"sections":[]}]}`), false); len(findings) != 1 || findings[0].Pointer != "/sections/0" {
-		t.Fatalf("a section with no title, through a dynamic reference: %+v", findings)
-	}
 }
 
 // TestASchemaThatSharesItsDefinitionsIsTaken: a schema as one is written
@@ -205,28 +193,124 @@ func TestASchemaThatSharesItsDefinitionsIsTaken(t *testing.T) {
 	}
 }
 
-// TestADynamicAnchorNamesOneSubschema: with 2 subschemas under one dynamic
-// anchor the object would decide which a $dynamicRef applies, and what the
-// schema applies could not be counted from the schema. It is refused. A
-// member that is named like the keyword is a member.
-func TestADynamicAnchorNamesOneSubschema(t *testing.T) {
-	shared := `{"type":"object","properties":{"a":{"$dynamicRef":"#node"}},
-	  "$defs":{"x":{"$dynamicAnchor":"node","type":"string"},
-	           "y":{"$id":"other.json","$dynamicAnchor":"node","type":"number","examples":[["node"]]}}}`
-	_, err := Compile([]byte(shared))
-	if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), `gives the dynamic anchor "node" to 2 subschemas`) {
-		t.Fatalf("2 subschemas under one dynamic anchor: %v", err)
+// TestAReferencePointsAtASchemaOfTheSchema: a reference is "#" or "#" and
+// a JSON pointer, and it points at a place the schema holds a schema in. A
+// pointer into an example, a default or a listed value would have the
+// validator apply what was never read as a schema, with keywords nobody
+// checked, so it is refused, and so is a pointer written in a second way,
+// a name, and an address.
+func TestAReferencePointsAtASchemaOfTheSchema(t *testing.T) {
+	hidden := `{"dependencies":{"a":{"$ref":"#"}}}`
+	for name, schema := range map[string]string{
+		"into an example":             `{"type":"object","examples":[` + hidden + `],"properties":{"a":{"$ref":"#/examples/0"}}}`,
+		"into a default":              `{"type":"object","default":` + hidden + `,"properties":{"a":{"$ref":"#/default"}}}`,
+		"into a listed value":         `{"type":"object","properties":{"a":{"enum":[` + hidden + `]},"b":{"$ref":"#/properties/a/enum/0"}}}`,
+		"into a fixed value":          `{"type":"object","properties":{"a":{"const":` + hidden + `},"b":{"$ref":"#/properties/a/const"}}}`,
+		"at the definitions":          `{"type":"object","properties":{"a":{"$ref":"#/$defs"}},"$defs":{"a":{"type":"string"}}}`,
+		"at the members":              `{"type":"object","properties":{"a":{"$ref":"#/properties"}}}`,
+		"at nothing":                  `{"type":"object","properties":{"a":{"$ref":"#/$defs/gone"}}}`,
+		"written with a percent":      `{"type":"object","properties":{"a":{"$ref":"#/%24defs/a"}},"$defs":{"a":{"type":"string"}}}`,
+		"with an escape that is none": `{"type":"object","properties":{"a":{"$ref":"#/$defs/a~2"}},"$defs":{"a~2":{"type":"string"}}}`,
+		"a name":                      `{"type":"object","properties":{"a":{"$ref":"#a"}},"$defs":{"a":{"type":"string"}}}`,
+		"an address":                  `{"type":"object","properties":{"a":{"$ref":"https://example.com/other.json"}}}`,
+		"a sibling":                   `{"type":"object","properties":{"a":{"$ref":"other.json#/a"}}}`,
+	} {
+		_, err := Compile([]byte(schema))
+		if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), "does not point at a schema of this schema") {
+			t.Errorf("a reference %s: %v", name, err)
+		}
 	}
-	compiled(t, `{"type":"object","properties":{"$dynamicAnchor":{"type":"string"},"b":{"properties":{"$dynamicAnchor":{"type":"string"}}}}}`)
+	for name, schema := range map[string]string{
+		"a reference that is no text": `{"type":"object","properties":{"a":{"$ref":7}}}`,
+		"schemas that are no list":    `{"type":"object","allOf":{"type":"object"}}`,
+		"members that are no object":  `{"type":"object","properties":[{"type":"string"}]}`,
+		"a schema that is a number":   `{"type":"object","properties":{"a":7}}`,
+		"a schema that is a list":     `{"type":"object","not":[{"type":"string"}]}`,
+		"a dialect in a member":       `{"type":"object","properties":{"a":{"$schema":"` + draft + `","type":"string"}}}`,
+	} {
+		if _, err := Compile([]byte(schema)); fault.CodeOf(err) != fault.InvalidSchema {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// A member's name is no keyword, whatever it is, and a name with a
+	// slash or a tilde is referred to as a pointer escapes it.
+	s := compiled(t, `{"type":"object","properties":{"$id":{"type":"string"},"dependencies":{"$ref":"#/$defs/a~1b~0c"},
+	  "x":{"$ref":"#/properties/dependencies"},"y":{"$ref":"#/properties/z/prefixItems/1"},"z":{"prefixItems":[true,{"type":"number"}]},
+	  "w":{"$ref":"#"},"v":{"$ref":"#/$defs/yes"}},
+	  "$defs":{"a/b~c":{"type":"integer"},"yes":true,"definitions":false},
+	  "format":"x","title":"t","description":"d","default":{"$ref":7},"examples":[{"x-own":1}],"$comment":"c",
+	  "deprecated":false,"readOnly":false,"writeOnly":false}`)
+	if findings := s.Check([]byte(`{"$id":"a","dependencies":3,"x":4,"y":5,"v":[]}`), false); findings != nil {
+		t.Fatalf("an object that satisfies it: %+v", findings)
+	}
+	if findings := s.Check([]byte(`{"dependencies":3.5,"y":"five","w":[]}`), false); len(findings) != 3 {
+		t.Fatalf("3 members that break it: %+v", findings)
+	}
 }
 
-// TestASubschemaInAnotherDialectIsRefused: the dialect is checked for every
-// schema of the document and not for its root alone, so no keyword of an
-// earlier draft is applied uncounted.
-func TestASubschemaInAnotherDialectIsRefused(t *testing.T) {
-	_, err := Compile([]byte(`{"type":"object","properties":{"a":{"$id":"inner.json","$schema":"http://json-schema.org/draft-07/schema#","type":"string"}}}`))
-	if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), "another dialect") {
-		t.Fatalf("a member in draft 7: %v", err)
+// TestACompiledSchemaHoldsNothingTheCountHasNoPriceFor: the keywords are
+// held from the other side too, on what the validator will read. A compiled
+// schema with a field set that the count does not know is refused by the
+// field's name, so a keyword that a later version of the validator comes to
+// apply is refused until it has a price. The same holds for a subschema
+// compiled in another dialect.
+func TestACompiledSchemaHoldsNothingTheCountHasNoPriceFor(t *testing.T) {
+	sub := &jsonschema.Schema{DraftVersion: dialect}
+	for field, s := range map[string]*jsonschema.Schema{
+		"Dependencies":          {DraftVersion: dialect, Dependencies: map[string]any{"a": sub}},
+		"RecursiveRef":          {DraftVersion: dialect, RecursiveRef: sub},
+		"RecursiveAnchor":       {DraftVersion: dialect, RecursiveAnchor: true},
+		"DynamicRef":            {DraftVersion: dialect, DynamicRef: &jsonschema.DynamicRef{Ref: sub}},
+		"DynamicAnchor":         {DraftVersion: dialect, DynamicAnchor: "node"},
+		"Anchor":                {DraftVersion: dialect, Anchor: "a"},
+		"ID":                    {DraftVersion: dialect, ID: "https://example.com/a.json"},
+		"UnevaluatedProperties": {DraftVersion: dialect, UnevaluatedProperties: sub},
+		"UnevaluatedItems":      {DraftVersion: dialect, UnevaluatedItems: sub},
+		"Items":                 {DraftVersion: dialect, Items: sub},
+		"AdditionalItems":       {DraftVersion: dialect, AdditionalItems: false},
+		"ContentSchema":         {DraftVersion: dialect, ContentSchema: sub},
+		"Format":                {DraftVersion: dialect, Format: &jsonschema.Format{Name: "date"}},
+	} {
+		if got := unmodeled(s); got != field {
+			t.Errorf("a schema with %s set names %q", field, got)
+		}
+		_, err := measure(&jsonschema.Schema{DraftVersion: dialect, Properties: map[string]*jsonschema.Schema{"a": s}})
+		if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), field) {
+			t.Errorf("a member with %s set: %v", field, err)
+		}
+	}
+	if _, err := measure(&jsonschema.Schema{DraftVersion: 7}); fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), "another dialect") {
+		t.Errorf("a schema of draft 7: %v", err)
+	}
+	// Every keyword a schema may use compiles to fields that are known.
+	s := compiled(t, `{"type":"object","title":"t","description":"d","default":1,"examples":[1],"$comment":"c","deprecated":true,
+	  "readOnly":true,"writeOnly":true,"format":"date",
+	  "properties":{"a":{"type":["string","null"],"enum":["a",null],"const":"a","minLength":1,"maxLength":2,"pattern":"a","format":"email"},
+	    "n":{"multipleOf":1,"maximum":9,"exclusiveMaximum":10,"minimum":0,"exclusiveMinimum":-1},
+	    "l":{"items":{"$ref":"#/$defs/d"},"prefixItems":[true],"contains":{"type":"number"},"minContains":0,"maxContains":9,
+	         "minItems":0,"maxItems":9,"uniqueItems":true}},
+	  "patternProperties":{"^x":false},"additionalProperties":true,"propertyNames":{"maxLength":9},
+	  "minProperties":0,"maxProperties":9,"required":["a"],"dependentRequired":{"a":["n"]},"dependentSchemas":{"a":{"type":"object"}},
+	  "allOf":[true],"anyOf":[true],"oneOf":[true],"not":false,"if":true,"then":true,"else":true,"$defs":{"d":{"type":"number"}}}`)
+	if findings := s.Check([]byte(`{"a":"a","n":3,"l":[1,2]}`), false); findings != nil {
+		t.Fatalf("an object that satisfies a schema of every keyword: %+v", findings)
+	}
+	used := map[string]bool{}
+	for _, keyword := range []string{"type", "title", "description", "default", "examples", "$comment", "deprecated", "readOnly", "writeOnly", "format",
+		"properties", "enum", "const", "minLength", "maxLength", "pattern", "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum",
+		"items", "prefixItems", "contains", "minContains", "maxContains", "minItems", "maxItems", "uniqueItems",
+		"patternProperties", "additionalProperties", "propertyNames", "minProperties", "maxProperties", "required", "dependentRequired",
+		"dependentSchemas", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "$defs", "$ref", "$schema"} {
+		used[keyword] = true
+	}
+	for _, keyword := range Keywords() {
+		if !used[keyword] {
+			t.Errorf("the keyword %s is listed and no case of this test uses it", keyword)
+		}
+	}
+	if len(Keywords()) != len(used) {
+		t.Errorf("%d keywords are listed and %d are used here", len(Keywords()), len(used))
 	}
 }
 
@@ -244,11 +328,13 @@ func deep(levels int, innermost string) string {
 // not checked: the one finding says so, no repair is asked for, and the
 // extraction is not satisfied.
 func TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema(t *testing.T) {
+	const said = "the object was not held to the schema, which costs too much to check it against: more than 1048576 units of work"
 	for name, schema := range map[string]string{
 		"2 patterns that take one member": `{"type":"object","patternProperties":{"a":{"$ref":"#"},"^a":{"$ref":"#"}}}`,
 		"2 schemas that describe one member": `{"type":"object","$ref":"#/$defs/n",
 		  "$defs":{"n":{"allOf":[{"properties":{"a":{"$ref":"#/$defs/n"}}},{"properties":{"a":{"$ref":"#/$defs/n"}}}]}}}`,
-		"a member and every member": `{"type":"object","properties":{"a":{"$ref":"#"}},"unevaluatedProperties":{"$ref":"#"}}`,
+		"a member, by its name and by nothing": `{"type":"object","$ref":"#/$defs/n",
+		  "$defs":{"n":{"allOf":[{"properties":{"a":{"$ref":"#/$defs/n"}}},{"additionalProperties":{"$ref":"#/$defs/n"}}]}}}`,
 		"an item and one of the items": `{"type":"object","properties":{"a":{"$ref":"#/$defs/l"}},
 		  "$defs":{"l":{"type":["array","object"],"items":{"$ref":"#/$defs/l"},"contains":{"$ref":"#/$defs/l"},"minContains":0,"properties":{"a":{"$ref":"#/$defs/l"}}}}}`,
 	} {
@@ -263,73 +349,100 @@ func TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema(t *testing.T) {
 		began := time.Now()
 		findings := s.Check([]byte(costly), false)
 		within(t, began, name+": an object 40 levels deep")
-		if !unchecked(findings) || findings[0].Rule != "#" || !strings.Contains(findings[0].Message, "more than 2097152 applications") {
+		if !unchecked(findings) || findings[0].Rule != "#" || findings[0].Message != said {
 			t.Errorf("%s: an object 40 levels deep: %+v", name, findings)
 			continue
 		}
-		if got := Broken(findings); got != "the object was not held to the schema: that would take more than 2097152 applications of the schema" {
+		if got := Broken(findings); got != said {
 			t.Errorf("%s: the field would say %q", name, got)
 		}
-
-		in := Input{Extractor: "text", Windows: []Window{{Text: "[1.1] a", Refs: []string{"1.1"}}}}
-		var p Progress
-		step, _, got := Take(s, in, &p, answer(costly, nil))
-		if step != Unsatisfied || !unchecked(got) || p.Repairs != 0 || p.Summary(in).Attempts != 1 {
-			t.Errorf("%s: step %d after %d repairs, %+v", name, step, p.Repairs, got)
-		}
 	}
 }
 
-// applications is the count a check of data would start from.
+// applications is the work a check of data would count.
 func applications(t *testing.T, s *Schema, data string) int {
 	t.Helper()
-	value, err := jsonschema.UnmarshalJSON(bytes.NewReader([]byte(data)))
-	if err != nil {
-		t.Fatal(err)
+	value, flaws, err := decode([]byte(data), MaxValueDepth)
+	if err != nil || len(flaws) > 0 {
+		t.Fatalf("%s: %v, %v", data, flaws, err)
 	}
-	m := &meter{measured: s.measured, counted: map[node]int{}}
-	return m.cost(s.compiled, value)
+	return s.work(value)
 }
 
-// TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost: the count takes a
-// schema for each value it is applied to: for a member its own schema,
-// every pattern its name matches, the schema for members nothing else
-// describes when nothing else does, the one for members nothing evaluated,
-// and the schema of its name; for an item its place in the prefix or the
-// schema of the rest, and the one a list must contain. A value that is
-// reached again is counted again and looked at once, and a count that has
-// looked at MaxCheckWork applications stops.
-func TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost(t *testing.T) {
+// TestTheWorkOfACheckIsCountedKeywordByKeyword: every listed keyword has a
+// price, and the count of a check is the sum of them. An application is 2
+// by itself. A member is half a unit to pass over and what its schemas
+// cost, each pattern its name is held to costs before it is matched and
+// never nothing, a number held to a bound or asked to be an integer is a
+// rational, each value a schema lists is compared, each name it requires is
+// looked up, a text held to a length or a pattern costs by its bytes, and a
+// list that must hold no value 2 times costs what it weighs. A value that
+// is reached again is counted again and looked at once, and a count that
+// has looked at MaxCheckWork applications stops.
+func TestTheWorkOfACheckIsCountedKeywordByKeyword(t *testing.T) {
+	names := make([]string, 32)
+	for i := range names {
+		names[i] = fmt.Sprintf(`"n%d"`, i)
+	}
+	text := strings.Repeat("a", 640)
+	numbers := func(n int) string { return join(n, strconv.Itoa) }
 	for name, tc := range map[string]struct {
 		schema, data string
 		want         int
 	}{
-		"an object with nothing in it":  {`{"type":"object"}`, `{}`, 1},
-		"a member":                      {`{"type":"object","properties":{"a":{"type":"string"}}}`, `{"a":"x","b":1}`, 2},
-		"a member through a reference":  {`{"type":"object","properties":{"a":{"$ref":"#/$defs/s"}},"$defs":{"s":{"type":"string"}}}`, `{"a":"x"}`, 3},
-		"a pattern that matches":        {`{"type":"object","patternProperties":{"^a":{"type":"string"},"^b":{"type":"string"}}}`, `{"a1":"x","a2":"y","c":1}`, 3},
-		"members nothing describes":     {`{"type":"object","properties":{"a":true},"additionalProperties":{"type":"number"}}`, `{"a":1,"b":2,"c":3}`, 4},
-		"members nobody may add":        {`{"type":"object","properties":{"a":true},"additionalProperties":false}`, `{"a":1,"b":2}`, 2},
-		"members nothing evaluated":     {`{"type":"object","properties":{"a":true},"unevaluatedProperties":{"type":"number"}}`, `{"a":1,"b":2}`, 4},
-		"the names of members":          {`{"type":"object","propertyNames":{"anyOf":[{"maxLength":3},{"const":"total"}]}}`, `{"a":1,"total":2}`, 7},
-		"a prefix and the rest":         {`{"type":"object","properties":{"l":{"prefixItems":[{"type":"string"}],"items":{"type":"number"}}}}`, `{"l":["x",1,2]}`, 5},
-		"a prefix and nothing after":    {`{"type":"object","properties":{"l":{"prefixItems":[{"type":"string"}]}}}`, `{"l":["x",1,2]}`, 3},
-		"what a list must contain":      {`{"type":"object","properties":{"l":{"contains":{"type":"number"},"unevaluatedItems":false}}}`, `{"l":[1,2]}`, 6},
-		"a condition and both its arms": {`{"type":"object","if":{"required":["a"]},"then":{"required":["b"]},"else":{"not":{"required":["c"]}}}`, `{}`, 5},
-		"a dependent schema":            {`{"type":"object","dependentSchemas":{"a":{"required":["b"]}}}`, `{"a":1}`, 2},
-		"an object in a list, 2 times":  {`{"type":"object","properties":{"l":{"items":{"$ref":"#/$defs/o"},"contains":{"$ref":"#/$defs/o"}}},"$defs":{"o":{"properties":{"n":{"type":"number"}}}}}`, `{"l":[{"n":1}]}`, 8},
+		"an object with nothing in it": {`{"type":"object"}`, `{}`, 2},
+		"a member":                     {`{"type":"object","properties":{"a":{"type":"string"}}}`, `{"a":"x","b":1}`, 2 + 1 + 2},
+		"a member through a reference": {`{"type":"object","properties":{"a":{"$ref":"#/$defs/s"}},"$defs":{"s":{"type":"string"}}}`, `{"a":"x"}`, 2 + 1 + 4},
+		// 3 members, each held to 2 patterns at 1 a match, and 2 of them to
+		// the schema of the pattern they match.
+		"patterns of names":         {`{"type":"object","patternProperties":{"^a":{"type":"string"},"^b":{"type":"string"}}}`, `{"a1":"x","a2":"y","c":1}`, 2 + 2 + 6 + 4},
+		"members nothing describes": {`{"type":"object","properties":{"a":true},"additionalProperties":{"type":"number"}}`, `{"a":1,"b":2,"c":3}`, 2 + 2 + 6},
+		"members nobody may add":    {`{"type":"object","properties":{"a":true},"additionalProperties":false}`, `{"a":1,"b":2}`, 2 + 1 + 2},
+		// A name is a text: 3 schemas, the one that fixes it compares 1
+		// value, and the one that bounds its length counts its bytes.
+		"the names of members":          {`{"type":"object","propertyNames":{"anyOf":[{"maxLength":3},{"const":"total"}]}}`, `{"a":1,"total":2}`, 2 + 1 + 2*(2+2+2+1+1)},
+		"a prefix and the rest":         {`{"type":"object","properties":{"l":{"prefixItems":[{"type":"string"}],"items":{"type":"number"}}}}`, `{"l":["x",1,2]}`, 2 + 1 + 2 + 6},
+		"a prefix and nothing after":    {`{"type":"object","properties":{"l":{"prefixItems":[{"type":"string"}]}}}`, `{"l":["x",1,2]}`, 2 + 1 + 2 + 2},
+		"what a list must contain":      {`{"type":"object","properties":{"l":{"contains":{"type":"number"},"minContains":1,"maxContains":2}}}`, `{"l":[1,2]}`, 2 + 1 + 2 + 4},
+		"a condition and both its arms": {`{"type":"object","if":{"required":["a"]},"then":{"required":["b"]},"else":{"not":{"required":["c"]}}}`, `{}`, 2 + 3 + 3 + 2 + 3},
+		"a schema a member brings":      {`{"type":"object","dependentSchemas":{"a":{"required":["b"]}}}`, `{"a":1}`, 2 + 1 + 3 + 1},
+		"an object in a list, 2 times": {`{"type":"object","properties":{"l":{"items":{"$ref":"#/$defs/o"},"contains":{"$ref":"#/$defs/o"}}},"$defs":{"o":{"properties":{"n":{"type":"number"}}}}}`,
+			`{"l":[{"n":1}]}`, 2 + 1 + 2 + 2*(2+1+2+1+2)},
+		"32 names required":           {`{"type":"object","required":[` + strings.Join(names, ",") + `]}`, `{}`, 2 + 16},
+		"16 texts listed":             {`{"type":"object","properties":{"a":{"enum":[` + strings.Join(names[:16], ",") + `]}}}`, `{"a":"x"}`, 2 + 1 + 2 + 16},
+		"16 numbers listed":           {`{"type":"object","properties":{"a":{"enum":[` + numbers(16) + `]}}}`, `{"a":"x"}`, 2 + 1 + 2 + 16*4},
+		"16 names a member requires":  {`{"type":"object","dependentRequired":{"a":[` + strings.Join(names[:16], ",") + `]}}`, `{}`, 2 + 8},
+		"a fixed object":              {`{"type":"object","properties":{"a":{"const":{"k":[1,"x"]}}}}`, `{"a":1}`, 2 + 1 + 2 + 1 + 1 + 1 + 4 + 1},
+		"a number within bounds":      {`{"type":"object","properties":{"a":{"minimum":0,"maximum":9,"multipleOf":3}}}`, `{"a":3}`, 2 + 1 + 2 + 4},
+		"an integer within bounds":    {`{"type":"object","properties":{"a":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":9}}}`, `{"a":3}`, 2 + 1 + 2 + 4 + 4},
+		"a text of a length":          {`{"type":"object","properties":{"a":{"minLength":1,"maxLength":700}}}`, `{"a":"` + text + `"}`, 2 + 1 + 2 + 1 + 640*2/64},
+		"a pattern of 2,003 steps":    {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + text + `"}`, 2 + 1 + 2 + 1 + 640*2003/64},
+		"a name held to a pattern":    {`{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"type":"number"}}}`, `{"` + text + `":1}`, 2 + 1 + 1 + 640*2003/64 + 2},
+		"a name held to its schema":   {`{"type":"object","propertyNames":{"pattern":"^[a-z]{1,1000}$"}}`, `{"` + text + `":1}`, 2 + 1 + 2 + 1 + 640*2003/64},
+		"a pattern through a choice":  {`{"type":"object","properties":{"a":{"anyOf":[{"pattern":"^[a-z]{1,1000}$"},{"pattern":"^[a-z]{1,1000}$"}]}}}`, `{"a":"` + text + `"}`, 2 + 1 + 6 + 1 + 640*4006/64},
+		"a pattern held to no text":   {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":640}`, 2 + 1 + 2},
+		"3 numbers that must differ":  {`{"type":"object","properties":{"l":{"uniqueItems":true}}}`, `{"l":[1,2,3]}`, 2 + 1 + 2 + 3*(1+3*4)},
+		"21 numbers that must differ": {`{"type":"object","properties":{"l":{"uniqueItems":true}}}`, `{"l":[` + numbers(21) + `]}`, 2 + 1 + 2 + 2*(1+21*4)},
+		"a list of lists that differ": {`{"type":"object","properties":{"l":{"uniqueItems":true}}}`, `{"l":[[1],{"k":"` + text + `"},"` + text + `",null,[]]}`, 2 + 1 + 2 + 5*(1+5+23+21+1+1)},
 	} {
 		if got := applications(t, compiled(t, tc.schema), tc.data); got != tc.want {
-			t.Errorf("%s: %s applied to %s counts %d, want %d", name, tc.schema, tc.data, got, tc.want)
+			t.Errorf("%s: counts %d, want %d", name, got, tc.want)
 		}
 	}
 
+	// A list that is held to 2 schemas that ask it to hold no value 2
+	// times is weighed once.
+	twice := compiled(t, `{"type":"object","properties":{"l":{"allOf":[{"uniqueItems":true},{"uniqueItems":true}]}}}`)
+	if got := applications(t, twice, `{"l":[1,2,3]}`); got != 2+1+2+2*(2+39) {
+		t.Errorf("a list held to 2 such schemas counts %d", got)
+	}
+
 	s := compiled(t, `{"type":"object","properties":{"l":{"type":"array","items":{"type":"number"}}}}`)
-	value, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"l":[1,2,3]}`))
+	value, _, err := decode([]byte(`{"l":[1,2,3]}`), MaxValueDepth)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &meter{measured: s.measured, counted: map[node]int{}, looked: MaxCheckWork - 2}
+	m := &meter{measured: s.measured, counted: map[node]int{}, weights: map[uintptr]int{}, looked: MaxCheckWork - 2}
 	if got := m.cost(s.compiled, value); got <= MaxCheckWork {
 		t.Fatalf("a count that looked at more than MaxCheckWork applications is %d", got)
 	}
@@ -347,11 +460,28 @@ func TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost(t *testing.T) {
 	    "price":{"type":"object","properties":{"amount":{"type":"number"},"currency":{"type":"string"}}},
 	    "tags":{"type":"array","items":{"type":"string"}}}}}}`)
 	data := `{"lines":[` + strings.Join(items, ",") + `]}`
-	if n := applications(t, long, data); n > MaxCheckWork/4 {
+	if n := applications(t, long, data); n > MaxCheckWork*3/4 {
 		t.Fatalf("a reply of %d bytes with 4,000 lines counts %d of the %d a check may take", len(data), n, MaxCheckWork)
 	}
 	if findings := long.Check([]byte(data), false); findings != nil {
 		t.Fatalf("a long reply that satisfies its schema: %d findings, first %+v", len(findings), findings[0])
+	}
+}
+
+// TestTheLongestCheckIsWithinWhatAModelCallTakes: an object that counts
+// just under what a check may take is checked, in a time that is small
+// beside the call that produced it. The object here is the costliest kind
+// the prices were set by, a chain of 200 references held to each number of
+// a list.
+func TestTheLongestCheckIsWithinWhatAModelCallTakes(t *testing.T) {
+	s, data, work := sized(t, families[0], MaxCheckWork)
+	if work < MaxCheckWork/2 || work > MaxCheckWork {
+		t.Fatalf("the object counts %d of %d", work, MaxCheckWork)
+	}
+	began := time.Now()
+	findings := s.Check([]byte(data), false)
+	if took := time.Since(began); findings != nil || took > 3*time.Second*slowdown {
+		t.Fatalf("%d units took %s with %d findings", work, took, len(findings))
 	}
 }
 
@@ -419,49 +549,29 @@ func TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo(t *testing.T) {
 	}
 }
 
-// TestTheWorkOfACheckCountsWhatAnApplicationLooksUp: an application is not
-// one unit of work whatever its schema holds. A pattern costs its steps for
-// every byte of the string or the name it is matched against, and the names
-// a schema requires and the values it lists are each looked up in the
-// value. Both are counted, so a long string held to a pattern of many
-// steps, and a long list of objects held to a long list of names, are not
-// checked.
-func TestTheWorkOfACheckCountsWhatAnApplicationLooksUp(t *testing.T) {
-	names := make([]string, 3200)
-	for i := range names {
-		names[i] = fmt.Sprintf(`"n%d"`, i)
-	}
-	for name, tc := range map[string]struct {
-		schema, data string
-		want         int
-	}{
-		"32 names required":           {`{"type":"object","required":[` + strings.Join(names[:32], ",") + `]}`, `{}`, 3},
-		"16 values listed":            {`{"type":"object","properties":{"a":{"enum":[` + strings.Join(names[:16], ",") + `]}}}`, `{"a":"x"}`, 3},
-		"16 names a member requires":  {`{"type":"object","dependentRequired":{"a":[` + strings.Join(names[:16], ",") + `]}}`, `{}`, 2},
-		"a pattern of 2,003 steps":    {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + strings.Repeat("a", 640) + `"}`, 2 + 640*2003/128},
-		"a name held to a pattern":    {`{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"type":"number"}}}`, `{"` + strings.Repeat("a", 640) + `":1}`, 2 + 640*2003/128},
-		"a name held to its schema":   {`{"type":"object","propertyNames":{"pattern":"^[a-z]{1,1000}$"}}`, `{"` + strings.Repeat("a", 640) + `":1}`, 2 + 640*2003/128},
-		"a pattern through a choice":  {`{"type":"object","properties":{"a":{"anyOf":[{"pattern":"^[a-z]{1,1000}$"},{"pattern":"^[a-z]{1,1000}$"}]}}}`, `{"a":"` + strings.Repeat("a", 640) + `"}`, 4 + 640*(2*2003)/128},
-		"a pattern held to no string": {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":640}`, 2},
-	} {
-		if got := applications(t, compiled(t, tc.schema), tc.data); got != tc.want {
-			t.Errorf("%s: counts %d, want %d", name, got, tc.want)
-		}
-	}
-
-	began := time.Now()
+// TestWorkPastTheBoundIsNotChecked: a long text held to a pattern of many
+// steps, a long name, a long list of numbers held to a long list of values,
+// and a long list held to a long list of names each count past what a check
+// may take, and none is held to its schema.
+func TestWorkPastTheBoundIsNotChecked(t *testing.T) {
+	names := join(3200, func(i int) string { return fmt.Sprintf(`"n%d"`, i) })
 	long := strings.Repeat("a", 200000)
+	began := time.Now()
 	for name, tc := range map[string]struct{ schema, data string }{
-		"a long string":         {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + long + `"}`},
+		"a long text":           {`{"type":"object","properties":{"a":{"pattern":"^[a-z]{1,1000}$"}}}`, `{"a":"` + long + `"}`},
 		"a long name":           {`{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"type":"number"}}}`, `{"` + long + `":1}`},
 		"a long name, by rule":  {`{"type":"object","propertyNames":{"pattern":"^[a-z]{1,1000}$"}}`, `{"` + long + `":1}`},
-		"a long list of names":  {`{"type":"object","properties":{"l":{"items":{"required":[` + strings.Join(names, ",") + `]}}}}`, `{"l":[` + strings.TrimSuffix(strings.Repeat(`{},`, 12000), ",") + `]}`},
-		"a long list in a list": {`{"type":"object","properties":{"l":{"prefixItems":[{"required":[` + strings.Join(names, ",") + `]}],"items":{"required":[` + strings.Join(names, ",") + `]},"contains":{"type":"object"}}}}`, `{"l":[` + strings.TrimSuffix(strings.Repeat(`{},`, 12000), ",") + `]}`},
+		"a long list of names":  {`{"type":"object","properties":{"l":{"items":{"required":[` + names + `]}}}}`, `{"l":[` + join(1200, func(int) string { return `{}` }) + `]}`},
+		"a long list in a list": {`{"type":"object","properties":{"l":{"prefixItems":[{"required":[` + names + `]}],"items":{"required":[` + names + `]},"contains":{"type":"object"}}}}`, `{"l":[` + join(1200, func(int) string { return `{}` }) + `]}`},
+		"numbers that differ":   {`{"type":"object","properties":{"l":{"uniqueItems":true}}}`, `{"l":[` + join(140000, strconv.Itoa) + `]}`},
+		"many members":          {`{"type":"object","allOf":[` + join(200, func(int) string { return `{"type":"object"}` }) + `]}`, `{` + join(12000, func(i int) string { return fmt.Sprintf(`"m%d":1`, i) }) + `}`},
 	} {
 		s := compiled(t, tc.schema)
 		if findings := s.Check([]byte(tc.data), false); !unchecked(findings) {
 			t.Errorf("%s: %d findings, want the object not to be checked", name, len(findings))
 		}
 	}
-	within(t, began, "not checking 5 objects")
+	if took := time.Since(began); took > 2*time.Second*slowdown {
+		t.Errorf("not checking 7 objects took %s", took)
+	}
 }

@@ -318,3 +318,57 @@ func TestASettleRefusedInTheLastExchangeRemovesWhatItWrote(t *testing.T) {
 		t.Fatalf("the last exchange was %+v", final)
 	}
 }
+
+// TestASettleOnItsFirstSendIsRemovedBesideOnesSentAgain: after an exchange
+// the store did not answer, its settles are sent again, and a task that
+// finished since rides with them on its first send. When the store refuses
+// both, the one that was sent again may have been recorded and keeps what
+// it wrote, and the one on its first send was never taken, so what it wrote
+// is removed.
+func TestASettleOnItsFirstSendIsRemovedBesideOnesSentAgain(t *testing.T) {
+	release := make(chan struct{})
+	ext := &asking{answers: func(_ int, req reader.ExtractRequest) (reader.ExtractResult, error) {
+		// The extraction of the second parse waits until the first one's
+		// settle was sent and not answered.
+		if strings.HasSuffix(req.Credential.Reveal(), "/prs_b") {
+			<-release
+		}
+		return honest(req.Text, false), nil
+	}}
+	b, kept := long(t, ext)
+	index := b.assembled("prs_b",
+		leaf(1, "Invoice INV-0043", "Item bolt 3"), leaf(2, "Item nut 4", "Item gear 9"),
+		leaf(3, "Item bolt 3", "Item cog 1"), leaf(4, "Total: 17", "Paid in full"))
+	b.store.queue = append(b.store.queue, extraction("prs_b", "invoice", 9, index, invoiceSchema, ""))
+	failed := false
+	b.store.script = func(_ int, req tasks.Request, reply *tasks.Reply) error {
+		if len(req.Settles) == 0 {
+			return nil
+		}
+		if !failed {
+			failed = true
+			close(release)
+			return errors.New("the database does not answer")
+		}
+		// The second parse's settle is there before the store answers.
+		if len(req.Settles) < 2 {
+			return errors.New("the database does not answer")
+		}
+		return refusing(0, req, reply)
+	}
+	stop := b.run()
+	gone := "delete " + blob.FieldKey("prs_b", "invoice", 9)
+	eventually(t, "what the second extraction wrote is removed", func() bool { return slices.Contains(kept.did(), gone) })
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{blob.FieldInputKey("prs_a", "invoice", 5), blob.FieldProgressKey("prs_a", "invoice", 5)}
+	if left := b.left(); !slices.Equal(left, want) {
+		t.Fatalf("the object store holds %v, want what the settle that was sent again wrote, and was asked %v", left, kept.did())
+	}
+	for _, entry := range kept.did() {
+		if strings.HasPrefix(entry, "delete ") && strings.Contains(entry, "prs_a") {
+			t.Fatalf("what a settle that was sent again wrote was removed: %s", entry)
+		}
+	}
+}

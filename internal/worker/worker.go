@@ -26,11 +26,13 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/store/postgres"
@@ -91,6 +93,11 @@ type Worker struct {
 	// Keys resolves the key a group's pages are read with. Nil means every
 	// call is made without one.
 	Keys keys.Source
+
+	// Bench holds a reply to its schema off the goroutine of the task that
+	// asked, for a bounded time, among a bounded number of checks. Nil
+	// takes one of the defaults of internal/extract.
+	Bench *extract.Bench
 
 	// Slots is how many tasks the process runs at once. Zero takes
 	// DefaultSlots.
@@ -164,6 +171,11 @@ func (w *Worker) init() {
 		}
 		if w.Log == nil {
 			w.Log = slog.Default()
+		}
+		if w.Bench == nil {
+			w.Bench = &extract.Bench{Left: func() {
+				w.Log.Warn("a reply could not be held to its schema in the time a check has, and the check was left to run: the count of its work was wrong about it")
+			}}
 		}
 		w.cache = newCache(w.CacheBytes)
 	})
@@ -241,8 +253,12 @@ type loop struct {
 	held map[tasks.Ref]*running
 	done chan finished
 	// settles are the tasks that finished since the last exchange, and
-	// first when the earliest of them did.
+	// first when the earliest of them did. The first carried of them rode
+	// in an exchange the store did not answer, and may have been recorded
+	// by it: they are sent again, and the ones after them are sent for the
+	// first time.
 	settles []tasks.Settle
+	carried int
 	first   time.Time
 
 	// last is when the last exchange was sent, idle the poll interval of a
@@ -371,9 +387,21 @@ func (l *loop) finish(ctx context.Context, f finished) {
 	}
 }
 
+// kinds are the kinds of task the worker runs now: all of them, and no
+// extraction while every check of the process is taken by one that passed
+// its deadline. An extraction it were handed then would make its call and
+// have no check for the reply, so it is left in the queue for a worker
+// that has one, or for this one when a check ends.
+func (w *Worker) kinds() []tasks.Kind {
+	if w.Bench.Late() < extract.MaxChecking {
+		return tasks.Kinds
+	}
+	return slices.DeleteFunc(slices.Clone(tasks.Kinds), func(k tasks.Kind) bool { return k == tasks.Extract })
+}
+
 // request is what the worker says in an exchange.
 func (l *loop) request() tasks.Request {
-	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Free: l.free(), Idle: len(l.held) == 0, Kinds: tasks.Kinds}
+	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Free: l.free(), Idle: len(l.held) == 0, Kinds: l.w.kinds()}
 	for ref, r := range l.held {
 		if !r.lost {
 			req.Held = append(req.Held, tasks.Held{Parse: ref.Parse, Task: ref.Task, Token: r.claim.Token})
@@ -386,17 +414,16 @@ func (l *loop) request() tasks.Request {
 // reissued, dropped with its parse, or settled before, and what its run
 // wrote is under keys of its own token. When the settle was sent for the
 // first time the store never took it, so nothing names those objects and
-// they are removed. A settle that was sent again, after an exchange the
-// store did not answer, may be one the store did take: what it wrote is
-// then named by a row, and is left alone.
-func (l *loop) refused(ctx context.Context, req tasks.Request, reply tasks.Reply, again bool) {
+// they are removed. A settle that was sent again, one of the first carried
+// of the request, rode in an exchange the store did not answer and may be
+// one the store did take: what it wrote is then named by a row, and is left
+// alone. A settle that finished after that exchange is sent for the first
+// time beside them, and is removed as any first one is.
+func (l *loop) refused(ctx context.Context, req tasks.Request, reply tasks.Reply, carried int) {
 	for _, ref := range reply.Refused {
 		l.w.Log.InfoContext(ctx, "a settle was refused", "parse", ref.Parse, "task", ref.Task)
-		if again {
-			continue
-		}
-		for _, s := range req.Settles {
-			if s.Parse == ref.Parse && s.Task == ref.Task {
+		for i, s := range req.Settles {
+			if i >= carried && s.Parse == ref.Parse && s.Task == ref.Task {
 				l.discard(ctx, s.Parse, s.Task, s.Token)
 			}
 		}
@@ -437,9 +464,6 @@ func (l *loop) discard(ctx context.Context, parse, task string, token int64) {
 // exchange makes one exchange and acts on the reply.
 func (l *loop) exchange(ctx context.Context) {
 	req := l.request()
-	// Settles that an exchange the store did not answer carried are sent
-	// again in this one.
-	again := l.failures > 0
 	l.last = time.Now()
 	// The exchange is not ended by the signal that stops the worker: a
 	// statement cut off after the store ran it would leave claims in a
@@ -452,14 +476,15 @@ func (l *loop) exchange(ctx context.Context) {
 		// refused then, and nothing is recorded twice. The tasks keep
 		// running: a store that does not answer expires no lease.
 		l.failures++
+		l.carried = len(req.Settles)
 		if ctx.Err() == nil {
 			l.w.Log.WarnContext(ctx, "the task store did not answer an exchange", "worker", l.id, "error", err)
 		}
 		return
 	}
-	l.failures, l.settles = 0, nil
+	l.refused(ctx, req, reply, l.carried)
+	l.failures, l.settles, l.carried = 0, nil, 0
 	l.w.seen.Store(time.Now().UnixNano())
-	l.refused(ctx, req, reply, again)
 
 	if reply.Gone {
 		// The fleet gave this process up and returned its tasks to the
@@ -562,12 +587,12 @@ func (l *loop) stop(ctx context.Context) error {
 	}
 	final, cancel := context.WithTimeout(ctx, max(l.w.renewal(), time.Second))
 	defer cancel()
-	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Shutdown: true, Kinds: tasks.Kinds}
+	req := tasks.Request{Settles: l.settles, Held: []tasks.Held{}, Shutdown: true, Kinds: l.w.kinds()}
 	reply, err := l.w.Store.Exchange(final, l.id, req)
 	if err != nil {
 		return fmt.Errorf("worker: the last exchange of %s: %w", l.id, err)
 	}
-	l.refused(ctx, req, reply, l.failures > 0)
+	l.refused(ctx, req, reply, l.carried)
 	l.w.id.Store(nil)
 	l.w.Log.InfoContext(ctx, "the worker stopped", "worker", l.id, "returned", len(returned))
 	return nil

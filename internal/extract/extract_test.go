@@ -240,10 +240,11 @@ func TestASchemaIsCheckedWhenItArrives(t *testing.T) {
 		"a root with no type":       {`{"properties":{}}`, "root"},
 		"a type that is none":       {`{"type":"object","properties":{"a":{"type":"money"}}}`, "does not compile"},
 		"a pattern that is none":    {`{"type":"object","properties":{"a":{"type":"string","pattern":"(unclosed"}}}`, "does not compile"},
-		"a reference to an address": {`{"type":"object","properties":{"a":{"$ref":"https://example.com/other.json"}}}`, "does not compile"},
-		"a reference to a file":     {`{"type":"object","properties":{"a":{"$ref":"file:///etc/hostname"}}}`, "does not compile"},
-		"a reference to a sibling":  {`{"type":"object","properties":{"a":{"$ref":"other.json"}}}`, "does not compile"},
-		"a reference to nothing":    {`{"type":"object","properties":{"a":{"$ref":"#/$defs/gone"}}}`, "does not compile"},
+		"a reference to an address": {`{"type":"object","properties":{"a":{"$ref":"https://example.com/other.json"}}}`, "does not point at a schema"},
+		"a reference to a file":     {`{"type":"object","properties":{"a":{"$ref":"file:///etc/hostname"}}}`, "does not point at a schema"},
+		"a reference to a sibling":  {`{"type":"object","properties":{"a":{"$ref":"other.json"}}}`, "does not point at a schema"},
+		"a reference to nothing":    {`{"type":"object","properties":{"a":{"$ref":"#/$defs/gone"}}}`, "does not point at a schema"},
+		"a keyword nobody listed":   {`{"type":"object","properties":{"a":{"type":"string","nullable":true}}}`, `the keyword "nullable"`},
 	} {
 		_, err := Compile([]byte(tc.schema))
 		detail := fault.DetailOf(err)

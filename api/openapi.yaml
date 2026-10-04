@@ -581,20 +581,51 @@ paths:
 
         The schema is checked when the request arrives. One that does not
         compile, is larger than 64 KiB, nests deeper than 16 levels, is
-        of another dialect than draft 2020-12, does not describe an
-        object at its root, or refers to anything outside itself is
-        `invalid_schema`. So is one that applies more than 256
-        subschemas to one value through `$ref`, `$dynamicRef`, `allOf`,
-        `anyOf`, `oneOf`, `not`, `if`, `then`, `else` and
-        `dependentSchemas`, each counted as often as it is reached, one
-        that applies a subschema to the value it is itself applied to
-        without end, one whose patterns compile to more than 16,384
-        steps together, where a repetition with a count is as many
-        copies of what it repeats, and one that gives one
-        `$dynamicAnchor` to 2 subschemas. A schema that recurs through
-        its members or its items is taken. An object that would take
-        more work to check than 2,097,152 applications of the schema
-        fails the extraction with `schema_not_satisfied`. A second request with a name the parse already
+        of another dialect than draft 2020-12, or does not describe an
+        object at its root is `invalid_schema`.
+
+        A schema uses these keywords of draft 2020-12 and no other, and
+        one that uses another is `invalid_schema` with the keyword named:
+        `$schema` at the root, `$defs`, `$ref`, `$comment`; `allOf`,
+        `anyOf`, `oneOf`, `not`, `if`, `then`, `else`,
+        `dependentSchemas`; `properties`, `patternProperties`,
+        `additionalProperties`, `propertyNames`, `items`, `prefixItems`,
+        `contains`; `type`, `enum`, `const`; `multipleOf`, `maximum`,
+        `exclusiveMaximum`, `minimum`, `exclusiveMinimum`; `maxLength`,
+        `minLength`, `pattern`; `maxItems`, `minItems`, `uniqueItems`,
+        `maxContains`, `minContains`; `maxProperties`, `minProperties`,
+        `required`, `dependentRequired`; and `title`, `description`,
+        `default`, `examples`, `deprecated`, `readOnly`, `writeOnly` and
+        `format`, which say something and are not checked. The names
+        under `properties`, `patternProperties`, `$defs` and
+        `dependentSchemas` are the caller's. Not taken, among others:
+        `$id`, `$anchor`, `$dynamicRef`, `$dynamicAnchor`,
+        `$recursiveRef`, `dependencies`, `definitions`,
+        `unevaluatedProperties`, `unevaluatedItems`, and a keyword of
+        the caller's own.
+
+        A `$ref` is `#`, or `#` and a JSON pointer to a schema of the
+        same document, and anything else is `invalid_schema`. So is a
+        number written in more than 32 characters or outside what a
+        machine number holds, a schema that applies more than 256
+        subschemas to one value through `$ref`, `allOf`, `anyOf`,
+        `oneOf`, `not`, `if`, `then`, `else` and `dependentSchemas`,
+        each counted as often as it is reached, one that applies a
+        subschema to the value it is itself applied to without end, and
+        one whose patterns compile to more than 16,384 steps together,
+        where a repetition with a count is as many copies of what it
+        repeats. A schema that recurs through its members or its items
+        is taken.
+
+        The reply of the model is held to the schema within bounds too.
+        A number in it is at most 32 characters and a machine number,
+        and it nests 64 levels at most, or it does not satisfy the
+        schema. An object that would take more than 1,048,576 units of
+        work to check, where applying a schema to a value is 2, or whose
+        check does not end in 5 seconds, fails the extraction with
+        `schema_not_satisfied`.
+
+        A second request with a name the parse already
         has is `conflict`, and so is one for a parse that holds 64
         extractions. With no extractor configured, or one named that is
         not, it is `reader_not_found`.

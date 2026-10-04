@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -815,5 +816,81 @@ func TestALineWrittenAsAnInstructionIsData(t *testing.T) {
 	}
 	if string(injected.Data) != string(clean.Data) || !slices.Equal(injected.Citations["/total"], clean.Citations["/total"]) {
 		t.Fatalf("the document with the line yields %s, %v", injected.Data, injected.Citations)
+	}
+}
+
+// TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker: a
+// validation that began cannot be stopped, so a reply is held to its schema
+// off the task's goroutine, for a bounded time. With a validator that never
+// returns, the 2 extractions that get a check fail their fields with
+// schema_not_satisfied and why, each with its call metered, and give their
+// slots back. The third has no check to be had, and is returned to the
+// queue with no attempt spent. A page that runs beside them is read and
+// settled, and from then on the worker names no extraction among the kinds
+// it runs, until the checks it left running end.
+func TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker(t *testing.T) {
+	release := make(chan struct{})
+	b := extracting(t, &asking{})
+	var warned atomic.Int32
+	b.w.Bench = &extract.Bench{
+		Deadline: 50 * time.Millisecond,
+		Hold:     func(*extract.Schema, []byte, bool) []extract.Finding { <-release; return nil },
+		Left:     func() { warned.Add(1) },
+	}
+	for i, id := range []string{"prs_a", "prs_b", "prs_c"} {
+		index := b.assembled(id, leaf(1, "Invoice INV-0042", "Total: 7"))
+		b.store.queue = append(b.store.queue, extraction(id, "invoice", int64(i+1), index, invoiceSchema, ""))
+	}
+	b.queued("other", 1)
+	stop := b.run()
+
+	eventually(t, "the 4 tasks were settled", func() bool { return len(b.store.settles()) == 4 })
+	outcomes := map[tasks.Outcome]int{}
+	for _, s := range b.store.settles() {
+		outcomes[s.Outcome]++
+		switch s.Outcome {
+		case tasks.Permanent:
+			if s.Error.Code != "schema_not_satisfied" || !strings.Contains(s.Error.Detail, "costs too much to check it against: the check did not end in 50ms") || s.Usage.Calls != 1 {
+				t.Errorf("an extraction whose check did not end settled %+v, error %+v", s, s.Error)
+			}
+		case tasks.Returned:
+			if s.Usage.Calls != 1 || s.Output != "" || s.Error != nil {
+				t.Errorf("an extraction with no check to be had settled %+v", s)
+			}
+		case tasks.Done:
+			if s.Parse != "other_a" {
+				t.Errorf("%s was settled as done", s.Parse)
+			}
+		}
+	}
+	if outcomes[tasks.Permanent] != 2 || outcomes[tasks.Returned] != 1 || outcomes[tasks.Done] != 1 {
+		t.Fatalf("the tasks were settled as %v", outcomes)
+	}
+	if b.w.Bench.Late() != extract.MaxChecking || warned.Load() != extract.MaxChecking {
+		t.Fatalf("%d checks are late and %d were said", b.w.Bench.Late(), warned.Load())
+	}
+
+	// With every check taken, the worker asks for no extraction.
+	names := func(req tasks.Request) bool { return slices.Contains(req.Kinds, tasks.Extract) }
+	eventually(t, "the worker names no extraction", func() bool { seen := b.store.seen(); return !names(seen[len(seen)-1]) })
+	last := b.store.seen()
+	if got := last[len(last)-1].Kinds; !slices.Equal(got, []tasks.Kind{tasks.Prepare, tasks.Page, tasks.Assemble, tasks.Figure}) {
+		t.Fatalf("with every check taken the worker runs %v", got)
+	}
+
+	// A page is still read while the checks spin.
+	b.store.mu.Lock()
+	b.store.queue = append(b.store.queue, page("late", 1, 1, "sources/o/aa/fil_1", "image/png"))
+	b.store.mu.Unlock()
+	eventually(t, "a page is read beside the checks that do not end", func() bool { return len(b.store.settles()) == 5 })
+	if s := b.store.settles()[4]; s.Parse != "late" || s.Outcome != tasks.Done {
+		t.Fatalf("the page was settled %+v", s)
+	}
+
+	// The checks end, and the worker takes extractions again.
+	close(release)
+	eventually(t, "the worker names extractions again", func() bool { seen := b.store.seen(); return names(seen[len(seen)-1]) })
+	if err := stop(); err != nil {
+		t.Fatal(err)
 	}
 }

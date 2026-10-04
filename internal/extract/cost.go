@@ -27,23 +27,26 @@ import (
 // work has no bound in the size of the schema, and a validation that began
 // cannot be stopped. So the work is bounded before it begins, in 2 places.
 //
-// A schema is bounded when it arrives: no subschema may apply more than
-// MaxApplied schemas to one value, none may reach itself with no value in
-// between, and its patterns may compile to no more than MaxPatternSize
-// steps together. That refuses a schema whose cost is in the schema alone.
+// A schema is bounded when it arrives: it uses the listed keywords alone
+// (keywords.go), no subschema may apply more than MaxApplied schemas to one
+// value, none may reach itself with no value in between, and its patterns
+// may compile to no more than MaxPatternSize steps together. That refuses a
+// schema whose cost is in the schema alone.
 //
 // A check is bounded when a reply arrives: the work the validator would do
 // to hold this object to this schema is counted first, and an object that
 // would take more than MaxCheckWork is not held to the schema. That covers
-// a schema whose cost grows with how deep the object nests, which no
-// reading of the schema alone can bound.
+// a schema whose cost grows with the object, which no reading of the schema
+// alone can bound. Every listed keyword has a price below, and the prices
+// are held above what the validator was measured to take by a test that
+// generates schemas and objects (generated_test.go).
 const (
 	// MaxApplied is how many schemas a schema may apply to one value: itself
-	// and every schema it reaches through $ref, $dynamicRef, allOf, anyOf,
-	// oneOf, not, if, then, else and dependentSchemas, each counted as often
-	// as it is reached. A choice between 64 definitions applies 129, itself
-	// and for each a reference and what it refers to, so 256 is above what a
-	// schema written to describe a document needs.
+	// and every schema it reaches through $ref, allOf, anyOf, oneOf, not,
+	// if, then, else and dependentSchemas, each counted as often as it is
+	// reached. A choice between 64 definitions applies 129, itself and for
+	// each a reference and what it refers to, so 256 is above what a schema
+	// written to describe a document needs.
 	MaxApplied = 256
 
 	// MaxPatternSize is how many steps the patterns of a schema may compile
@@ -57,22 +60,38 @@ const (
 	// for the patterns of a schema that describes a document.
 	MaxPatternSize = 16384
 
-	// MaxCheckWork is how much work one check of an object may take, counted
-	// in applications of a schema to a value: 2,097,152. The validator made
-	// that many in 0.3 seconds where it was measured, and a reply of 4,000
-	// objects held to a choice between 8 shapes each takes less than a
-	// quarter of it.
-	MaxCheckWork = 2 << 20
+	// MaxCheckWork is how much work one check of an object may take:
+	// 1,048,576 units, where applying a schema that asks nothing to a value
+	// is 2. The costliest of the cases the prices were set by took the
+	// validator 100 nanoseconds a unit where it was measured, which is 0.1
+	// seconds for all of it, and a reply of 4,000 objects held to a choice
+	// between 8 shapes each takes less than three quarters of it.
+	MaxCheckWork = 1 << 20
 )
 
-// What an application costs beyond itself, in the unit of MaxCheckWork.
+// What the validator does for each keyword, in the unit of MaxCheckWork.
 const (
-	// operands is how many names a schema requires, or values it lists, cost
-	// what 1 application costs: each is looked up in the value.
-	operands = 16
-	// steps is how many steps of a pattern's automaton cost what 1
-	// application costs.
-	steps = 128
+	// applying is one application of a schema to a value by itself: a
+	// scope, the path to the value, and an error when the value fails.
+	applying = 2
+	// comparing is a number held against a number: the validator builds a
+	// rational for each side, for a listed value, a bound, a multiple, and
+	// for the question whether a number is an integer.
+	comparing = 4
+	// bytesPerUnit is how many bytes of text are compared, counted or
+	// hashed for 1.
+	bytesPerUnit = 32
+	// steps is how many steps of a pattern's automaton cost 1.
+	steps = 64
+	// lookups is how many names are looked up in an object for 1.
+	lookups = 2
+	// members is how many members of an object an application passes over
+	// for 1, whatever its schema asks of them.
+	members = 2
+	// fewItems is the length up to which the validator compares the items
+	// of a list that must be unique each with each. A longer list is
+	// hashed.
+	fewItems = 20
 )
 
 // dialect is draft 2020-12 as the validator numbers the dialect a schema
@@ -150,9 +169,6 @@ func inPlace(s *jsonschema.Schema) []*jsonschema.Schema {
 	if s.Ref != nil {
 		out = append(out, s.Ref)
 	}
-	if s.DynamicRef != nil {
-		out = append(out, s.DynamicRef.Ref)
-	}
 	out = append(out, s.AllOf...)
 	out = append(out, s.AnyOf...)
 	out = append(out, s.OneOf...)
@@ -183,7 +199,7 @@ func below(s *jsonschema.Schema) []*jsonschema.Schema {
 		out = append(out, t)
 	}
 	out = append(out, s.PrefixItems...)
-	for _, t := range []*jsonschema.Schema{s.PropertyNames, s.UnevaluatedProperties, s.Contains, s.Items2020, s.UnevaluatedItems} {
+	for _, t := range []*jsonschema.Schema{s.PropertyNames, s.Contains, s.Items2020} {
 		if t != nil {
 			out = append(out, t)
 		}
@@ -198,17 +214,71 @@ func at(s *jsonschema.Schema) string {
 	return "#" + pointer
 }
 
-// own is what applying a schema to a value costs by itself: 1, and what the
-// names it requires and the values it lists take to look up.
+// plus adds 2 amounts of work and stops at MaxCheckWork + 1: an amount
+// past the bound is not counted further.
+func plus(a, b int) int { return min(a+b, MaxCheckWork+1) }
+
+// weight is what a value costs to compare with another or to hash: a
+// number is 2 rationals, a text its bytes, and an object or a list what it
+// holds.
+func weight(v any) int {
+	switch v := v.(type) {
+	case float64:
+		return comparing
+	case string:
+		return 1 + len(v)/bytesPerUnit
+	case []any:
+		n := 1
+		for _, item := range v {
+			n = plus(n, weight(item))
+		}
+		return n
+	case map[string]any:
+		n := 1
+		for name, member := range v {
+			n = plus(n, plus(1+len(name)/bytesPerUnit, weight(member)))
+		}
+		return n
+	}
+	return 1
+}
+
+// own is what applying a schema to a value costs by itself, whatever the
+// value: the application, a comparison with each value the schema lists and
+// with the one it fixes, a rational when it bounds a number or asks for an
+// integer, and a lookup of each name it requires.
 func own(s *jsonschema.Schema) int {
-	listed := len(s.Required)
+	n := applying
 	if s.Enum != nil {
-		listed += len(s.Enum.Values)
+		for _, v := range s.Enum.Values {
+			n = plus(n, weight(v))
+		}
 	}
-	for _, names := range s.DependentRequired {
-		listed += len(names)
+	if s.Const != nil {
+		n = plus(n, weight(*s.Const))
 	}
-	return 1 + listed/operands
+	if s.Minimum != nil || s.Maximum != nil || s.ExclusiveMinimum != nil || s.ExclusiveMaximum != nil || s.MultipleOf != nil {
+		n += comparing
+	}
+	if s.Types != nil && slices.Contains(s.Types.ToStrings(), "integer") {
+		n += comparing
+	}
+	names := len(s.Required)
+	for _, required := range s.DependentRequired {
+		names += len(required)
+	}
+	return plus(n, (names+lookups-1)/lookups)
+}
+
+// perByte is the steps applying a schema to a text costs for each byte of
+// it: its pattern's, and a count of the text's characters when the schema
+// bounds its length.
+func perByte(s *jsonschema.Schema) int {
+	n := sizeOf(s.Pattern)
+	if s.MinLength != nil || s.MaxLength != nil {
+		n += steps / bytesPerUnit
+	}
+	return n
 }
 
 // measured is what each schema of a compiled schema costs to apply to one
@@ -217,11 +287,11 @@ type measured struct {
 	// applied is how many schemas a schema applies to one value, never
 	// above MaxApplied + 1: a count past the bound is not counted further.
 	applied map[*jsonschema.Schema]int
-	// work is what applying a schema to a scalar costs, with every schema
+	// flat is what applying a schema to a scalar costs, with every schema
 	// it applies in place, in the unit of MaxCheckWork.
-	work map[*jsonschema.Schema]int
-	// text is the steps the patterns of a schema, and of every schema it
-	// applies in place, take for each byte of a string it is applied to.
+	flat map[*jsonschema.Schema]int
+	// text is the steps a schema, and every schema it applies in place,
+	// takes for each byte of a string it is applied to.
 	text map[*jsonschema.Schema]int
 }
 
@@ -236,13 +306,13 @@ type gauge struct {
 
 // measure checks every schema a compiled schema can apply, and answers what
 // each costs to apply to one value. A schema in another dialect than draft
-// 2020-12, one that reaches itself with no value in between, and one that
-// applies more than MaxApplied schemas to one value are refused with
-// invalid_schema.
+// 2020-12, one that holds what the count has no price for, one that
+// reaches itself with no value in between, and one that applies more than
+// MaxApplied schemas to one value are refused with invalid_schema.
 func measure(root *jsonschema.Schema) (measured, error) {
 	g := &gauge{
 		applied: map[*jsonschema.Schema]int{},
-		work:    map[*jsonschema.Schema]int{},
+		flat:    map[*jsonschema.Schema]int{},
 		text:    map[*jsonschema.Schema]int{},
 		open:    map[*jsonschema.Schema]bool{},
 		seen:    map[*jsonschema.Schema]bool{},
@@ -263,6 +333,9 @@ func (g *gauge) reach(s *jsonschema.Schema) error {
 	if s.DraftVersion != dialect {
 		return fault.New(fault.InvalidSchema, "the schema names another dialect than %s at %s", draft, at(s))
 	}
+	if field := unmodeled(s); field != "" {
+		return fault.New(fault.InvalidSchema, "the schema holds at %s what this server has no bound for: %s", at(s), field)
+	}
 	n, err := g.count(s)
 	if err != nil {
 		return err
@@ -281,8 +354,7 @@ func (g *gauge) reach(s *jsonschema.Schema) error {
 
 // count is how many schemas a schema applies to one value: itself, and what
 // each schema it applies in place applies. Each count is taken once, and
-// what the schema costs to apply is summed with it. A count past MaxApplied
-// is refused by reach, so the sums of a schema that was taken are exact.
+// what the schema costs to apply is summed with it.
 func (g *gauge) count(s *jsonschema.Schema) (int, error) {
 	if n, ok := g.applied[s]; ok {
 		return n, nil
@@ -291,41 +363,23 @@ func (g *gauge) count(s *jsonschema.Schema) (int, error) {
 		return 0, fault.New(fault.InvalidSchema, "the schema applies %s to the value it is itself applied to, without end", at(s))
 	}
 	g.open[s] = true
-	n, work, text := 1, own(s), sizeOf(s.Pattern)
+	n, flat, text := 1, own(s), perByte(s)
 	for _, t := range inPlace(s) {
 		m, err := g.count(t)
 		if err != nil {
 			return 0, err
 		}
 		n = min(n+m, MaxApplied+1)
-		work = min(work+g.work[t], MaxCheckWork+1)
-		text = min(text+g.text[t], MaxCheckWork+1)
+		flat = plus(flat, g.flat[t])
+		text = plus(text, g.text[t])
 	}
 	delete(g.open, s)
-	g.applied[s], g.work[s], g.text[s] = n, work, text
+	g.applied[s], g.flat[s], g.text[s] = n, flat, text
 	return n, nil
 }
 
-// anchors counts, for each name, the places of a schema document that give
-// it as a dynamic anchor.
-func anchors(doc any, counts map[string]int) {
-	switch v := doc.(type) {
-	case map[string]any:
-		if name, ok := v["$dynamicAnchor"].(string); ok {
-			counts[name]++
-		}
-		for _, member := range v {
-			anchors(member, counts)
-		}
-	case []any:
-		for _, member := range v {
-			anchors(member, counts)
-		}
-	}
-}
-
-// node names one application the validator makes at an object or an array:
-// a schema, and the value by where it is in memory. A scalar needs no name:
+// node names one application the validator makes at an object or a list: a
+// schema, and the value by where it is in memory. A scalar needs no name:
 // what a schema costs to apply to it is known from the schema.
 type node struct {
 	schema *jsonschema.Schema
@@ -339,23 +393,29 @@ type meter struct {
 	// it makes inside its value. The validator makes it again each time it
 	// reaches it, and the count is taken once.
 	counted map[node]int
+	// weights is what each list that must hold no value 2 times weighs.
+	weights map[uintptr]int
 	// looked is how many applications were looked at, each a part of the
 	// count: more of them than MaxCheckWork is a count above it.
 	looked int
 }
 
-// costly reports whether holding a value to the schema would take more work
-// than MaxCheckWork. The count is what the validator does at most: every
-// schema of a choice and both arms of a condition are counted, and a schema
-// for the members nothing else describes is counted for every member.
-func (s *Schema) costly(value any) bool {
-	m := &meter{measured: s.measured, counted: map[node]int{}}
-	return m.cost(s.compiled, value) > MaxCheckWork
+// work is what holding a value to the schema would take, never above
+// MaxCheckWork + 1. It is what the validator does at most: every schema of
+// a choice and both arms of a condition are counted.
+func (s *Schema) work(value any) int {
+	m := &meter{measured: s.measured, counted: map[node]int{}, weights: map[uintptr]int{}}
+	return m.cost(s.compiled, value)
 }
 
-// matching is what matching patterns of size steps against a text costs.
-func matching(text string, size int) int {
-	return min(len(text)*size/steps, MaxCheckWork+1)
+// matching is what holding a text of n bytes to patterns and bounds of size
+// steps for each byte costs: nothing for no steps, and never less than 1
+// for some.
+func matching(n, size int) int {
+	if size == 0 {
+		return 0
+	}
+	return min(1+n*size/steps, MaxCheckWork+1)
 }
 
 // cost is what applying a schema to a value comes to, never above
@@ -371,73 +431,90 @@ func (m *meter) cost(s *jsonschema.Schema, value any) int {
 	case []any:
 		where = node{s, reflect.ValueOf(v).Pointer()}
 	case string:
-		return min(m.work[s]+matching(v, m.text[s]), MaxCheckWork+1)
+		return plus(m.flat[s], matching(len(v), m.text[s]))
 	default:
-		return m.work[s]
+		return m.flat[s]
 	}
 	if n, ok := m.counted[where]; ok {
 		return n
 	}
 	n := own(s)
-	// add counts an application, and reports whether the count is still
-	// within the bound.
-	add := func(t *jsonschema.Schema, v any) bool {
-		n = min(n+m.cost(t, v), MaxCheckWork+1)
+	// add counts an amount, and reports whether the count is still within
+	// the bound.
+	add := func(amount int) bool {
+		n = plus(n, amount)
 		return n <= MaxCheckWork
 	}
 	for _, t := range inPlace(s) {
-		if !add(t, value) {
+		if !add(m.cost(t, value)) {
 			return n
 		}
 	}
 	switch v := value.(type) {
 	case map[string]any:
+		if !add((len(v) + members - 1) / members) {
+			return n
+		}
 		for name, member := range v {
 			described := false
 			if t, ok := s.Properties[name]; ok {
 				described = true
-				if !add(t, member) {
+				if !add(m.cost(t, member)) {
 					return n
 				}
 			}
 			for re, t := range s.PatternProperties {
 				// The match is counted before it is made.
-				if n = min(n+matching(name, sizeOf(re)), MaxCheckWork+1); n > MaxCheckWork {
+				if !add(matching(len(name), sizeOf(re))) {
 					return n
 				}
 				if re.MatchString(name) {
 					described = true
-					if !add(t, member) {
+					if !add(m.cost(t, member)) {
 						return n
 					}
 				}
 			}
-			if t, ok := s.AdditionalProperties.(*jsonschema.Schema); ok && !described && !add(t, member) {
+			if t, ok := s.AdditionalProperties.(*jsonschema.Schema); ok && !described && !add(m.cost(t, member)) {
 				return n
 			}
-			if s.UnevaluatedProperties != nil && !add(s.UnevaluatedProperties, member) {
-				return n
-			}
-			if s.PropertyNames != nil && !add(s.PropertyNames, name) {
+			if s.PropertyNames != nil && !add(m.cost(s.PropertyNames, name)) {
 				return n
 			}
 		}
 	case []any:
+		if s.UniqueItems && !add(m.unique(v)) {
+			return n
+		}
 		for i, item := range v {
 			if i < len(s.PrefixItems) {
-				if !add(s.PrefixItems[i], item) {
+				if !add(m.cost(s.PrefixItems[i], item)) {
 					return n
 				}
-			} else if s.Items2020 != nil && !add(s.Items2020, item) {
+			} else if s.Items2020 != nil && !add(m.cost(s.Items2020, item)) {
 				return n
 			}
-			for _, t := range []*jsonschema.Schema{s.Contains, s.UnevaluatedItems} {
-				if t != nil && !add(t, item) {
-					return n
-				}
+			if s.Contains != nil && !add(m.cost(s.Contains, item)) {
+				return n
 			}
 		}
 	}
 	m.counted[where] = n
 	return n
+}
+
+// unique is what finding whether a list holds a value 2 times costs. A
+// list of up to fewItems is compared each item with each, and a longer one
+// is hashed, each item once, and compared where 2 hashes meet.
+func (m *meter) unique(list []any) int {
+	at := reflect.ValueOf(list).Pointer()
+	w, ok := m.weights[at]
+	if !ok {
+		w = weight(list)
+		m.weights[at] = w
+	}
+	if len(list) <= fewItems {
+		return min(w*len(list), MaxCheckWork+1)
+	}
+	return plus(w, w)
 }

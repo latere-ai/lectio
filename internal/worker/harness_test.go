@@ -168,16 +168,21 @@ func (g *gate) ReadPage(ctx context.Context, page reader.Page) (reader.Result, e
 // asked for, or fails with the error the case set.
 type issuing struct {
 	err error
-	// asked is the group, the owner and the parse of the last call.
+	// asked is the group, the owner and the parse of the last call. Tasks
+	// that run at once ask at once.
+	mu    sync.Mutex
 	asked string
 }
 
 func (i *issuing) Key(_ context.Context, group, owner, parseID string) (reader.Credential, error) {
-	i.asked = group + "/" + owner + "/" + parseID
+	asked := group + "/" + owner + "/" + parseID
+	i.mu.Lock()
+	i.asked = asked
+	i.mu.Unlock()
 	if i.err != nil {
 		return reader.Credential{}, i.err
 	}
-	return reader.NewCredential(i.asked), nil
+	return reader.NewCredential(asked), nil
 }
 
 // sheet is a PNG of one color with a dark bar across it, or of one color

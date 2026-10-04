@@ -4,6 +4,7 @@
 package extract
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -122,49 +123,65 @@ const (
 // everything but what another window may hold, a required member and the
 // least a list or an object may hold, and the merged object is then held to
 // the whole schema. A reply that fails is repaired up to MaxRepairs times
-// with the same window, and one that would cost more than MaxCheckWork to
-// check fails the extraction at once. A merged object that fails is not repaired: no one
-// call reads the whole document, so none could mend it.
-func Take(schema *Schema, in Input, p *Progress, res reader.ExtractResult) (Step, Result, []Finding) {
+// with the same window, and one that was not held to the schema, because
+// that would cost too much or took too long, fails the extraction at once.
+// A merged object that fails is not repaired: no one call reads the whole
+// document, so none could mend it.
+//
+// The checks are made on the bench. The error is the bench's, ErrBusy or
+// the context's: a check was not made, and what p holds is not to be kept.
+func (b *Bench) Take(ctx context.Context, schema *Schema, in Input, p *Progress, res reader.ExtractResult) (Step, Result, []Finding, error) {
 	window := in.Windows[len(p.Parts)]
 	whole := len(in.Windows) == 1
 	p.Model, p.Constrained = res.Model, res.Constrained
 
-	if findings := schema.Check(res.Data, !whole); len(findings) > 0 {
+	findings, err := b.Check(ctx, schema, res.Data, !whole)
+	if err != nil {
+		return Next, Result{}, nil, err
+	}
+	if len(findings) > 0 {
 		// An object that was not held to the schema is not sent back: the
 		// cost is in the schema and the document, and a repair would be
 		// another call that ends the same way.
 		if p.Repairs >= MaxRepairs || unchecked(findings) {
-			return Unsatisfied, Result{}, findings
+			return Unsatisfied, Result{}, findings, nil
 		}
 		p.Repairs++
 		p.Repaired++
 		p.Previous, p.Problems = reply(res), Problems(findings)
-		return Repair, Result{}, nil
+		return Repair, Result{}, nil, nil
 	}
 	p.Parts = append(p.Parts, Part{Data: res.Data, Citations: Cited(res.Data, res.Citations, window.Refs)})
 	p.Previous, p.Problems, p.Repairs = "", nil, 0
 	if len(p.Parts) < len(in.Windows) {
-		return Next, Result{}, nil
+		return Next, Result{}, nil, nil
 	}
 	merged := Merge(p.Parts)
 	if !whole {
-		if findings := schema.Check(merged.Data, false); len(findings) > 0 {
-			return Unsatisfied, Result{}, findings
+		findings, err := b.Check(ctx, schema, merged.Data, false)
+		if err != nil {
+			return Next, Result{}, nil, err
+		}
+		if len(findings) > 0 {
+			return Unsatisfied, Result{}, findings, nil
 		}
 	}
-	return Filled, merged, nil
+	return Filled, merged, nil, nil
 }
 
 // Empty is the extraction of a document with no text: no call is made, and
 // the object holds nothing. It is filled when the schema asks for nothing,
 // and not satisfied otherwise.
-func Empty(schema *Schema) (Step, Result, []Finding) {
+func (b *Bench) Empty(ctx context.Context, schema *Schema) (Step, Result, []Finding, error) {
 	empty := Result{Data: json.RawMessage(`{}`)}
-	if findings := schema.Check(empty.Data, false); len(findings) > 0 {
-		return Unsatisfied, Result{}, findings
+	findings, err := b.Check(ctx, schema, empty.Data, false)
+	switch {
+	case err != nil:
+		return Next, Result{}, nil, err
+	case len(findings) > 0:
+		return Unsatisfied, Result{}, findings, nil
 	}
-	return Filled, empty, nil
+	return Filled, empty, nil, nil
 }
 
 // reply is what a call returned, in the shape the model was asked to reply

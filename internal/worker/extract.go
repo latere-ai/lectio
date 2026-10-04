@@ -34,6 +34,10 @@ var extractUnit = unit{what: "document", who: "extractor", unreadable: fault.Sch
 // last claim writes the field's result. An object that does not satisfy
 // the schema after its repairs fails the field with what the validator
 // found, and never the parse.
+//
+// A reply is held to the schema on the worker's bench: off this goroutine,
+// for a bounded time, so a check that does not end costs the field and not
+// the slot this claim runs in.
 func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	name, ok := tasks.FieldOf(c.Task)
 	var asked tasks.Field
@@ -70,7 +74,11 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	}
 	if len(in.Windows) == 0 {
 		// A document with no text is asked nothing.
-		step, result, findings := extract.Empty(schema)
+		step, result, findings, err := w.Bench.Empty(ctx, schema)
+		if err != nil {
+			unchecked(s)
+			return
+		}
 		w.conclude(ctx, c, s, name, in, progress, step, result, findings)
 		return
 	}
@@ -91,8 +99,21 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		// returned.
 		res.Citations = nil
 	}
-	step, result, findings := extract.Take(schema, in, &progress, res)
+	step, result, findings, err := w.Bench.Take(ctx, schema, in, &progress, res)
+	if err != nil {
+		unchecked(s)
+		return
+	}
 	w.conclude(ctx, c, s, name, in, progress, step, result, findings)
+}
+
+// unchecked gives a task back whose reply could not be held to its schema
+// because every check of this process was taken by one that does not end.
+// No attempt is spent and nothing is kept: the call it made is metered, and
+// the task is claimed again by a worker that can check its reply. This
+// process is handed no extraction until a check of it ends.
+func unchecked(s *tasks.Settle) {
+	s.Outcome = tasks.Returned
 }
 
 // conclude ends a claim of an extraction for the step the extraction takes

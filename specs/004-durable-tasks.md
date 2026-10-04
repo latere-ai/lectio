@@ -256,8 +256,13 @@ lane that can run for it. A request that names none is from a worker
 of the release before the request had the member, and stands for
 `prepare`, `page` and `assemble`. The 2 releases then run side by
 side: the earlier workers read pages, and the extractions and the
-figures wait for the first worker that names them. No order of
-stopping and starting is asked of an operator.
+figures wait for the first worker that names them.
+
+The same member lets a worker decline a kind for a while. A worker
+whose process can hold no reply to a schema, because both of its checks
+are taken by ones that do not end ([[011-structured-extraction]]),
+leaves `extract` out of what it names until one ends, and is handed
+pages and figures meanwhile.
 
 There is no fifth step. The first draft had one: a task that makes more
 than one model call asked the exchange for a slot before each call and

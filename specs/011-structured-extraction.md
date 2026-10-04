@@ -68,24 +68,80 @@ for a schema that
 - is larger than 64 KiB, or nests deeper than 16 levels, counting every
   object and every array of the schema document as a level;
 - does not have the type `object` at its root;
-- refers to anything outside itself. A `$ref` resolves inside the
-  schema or not at all: a caller's schema never makes the server read
-  a file or fetch an address;
+- uses a keyword that is not one of the keywords below, which the
+  answer names with where it is;
+- holds a `$ref` that is not `#`, or `#` and a JSON pointer to a schema
+  of the same document. A reference resolves inside the schema or not
+  at all: a caller's schema never makes the server read a file or fetch
+  an address;
+- holds a number written in more than 32 characters, or outside what a
+  machine number holds;
 - applies more than 256 subschemas to one value, or applies a subschema
   to the value it is itself applied to, without end;
 - holds patterns, in `pattern` and `patternProperties`, that compile to
-  more than 16,384 steps together;
-- gives one `$dynamicAnchor` to 2 subschemas.
+  more than 16,384 steps together.
+
+**The keywords a schema may use.** A schema is read before it is
+compiled, and a keyword that is not listed is refused by its name.
+
+| Kind | Keywords |
+|---|---|
+| the schema itself | `$schema` at the root, naming draft 2020-12; `$defs`; `$ref`; `$comment` |
+| applied to the same value | `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`, `dependentSchemas` |
+| applied to members and items | `properties`, `patternProperties`, `additionalProperties`, `propertyNames`, `items`, `prefixItems`, `contains` |
+| any value | `type`, `enum`, `const` |
+| numbers | `multipleOf`, `maximum`, `exclusiveMaximum`, `minimum`, `exclusiveMinimum` |
+| texts | `maxLength`, `minLength`, `pattern` |
+| lists | `maxItems`, `minItems`, `uniqueItems`, `maxContains`, `minContains` |
+| objects | `maxProperties`, `minProperties`, `required`, `dependentRequired` |
+| said and not checked | `title`, `description`, `default`, `examples`, `deprecated`, `readOnly`, `writeOnly`, `format` |
+
+The names under `properties`, `patternProperties`, `$defs` and
+`dependentSchemas` are the caller's and no keywords: a member may be
+called `$id`. `format` is taken as a note, as draft 2020-12 has it, and
+is not checked.
+
+What is left out is left out for a reason a caller can read:
+
+- `dependencies`, `definitions`, `additionalItems` and `$recursiveRef`
+  with `$recursiveAnchor` are keywords of earlier drafts. A validator
+  applies some of them whatever the dialect says.
+- `$dynamicRef` and `$dynamicAnchor` let the object decide which
+  subschema is applied, so what a schema applies could not be counted
+  from the schema.
+- `$id`, `$anchor` and `$vocabulary` change what a reference resolves
+  to and what a keyword means. A reference is a pointer, and there is
+  one way to write one.
+- `unevaluatedProperties` and `unevaluatedItems` make every schema
+  applied beside them keep a record of each member and item, so their
+  cost follows the whole of what is applied to a value and not the
+  subschema that carries them.
+- `contentEncoding`, `contentMediaType` and `contentSchema` are not
+  checked by this server, and a schema inside one would be a schema
+  nothing reads.
+- A keyword nobody defined, a caller's own or another tool's, is one
+  this server does not know the meaning of. It is refused and not
+  passed over, so that the list is what a schema can hold: a count that
+  knows every keyword has no keyword it forgot.
+
+The list is held from 2 sides. The schema document is walked and every
+keyword and every reference checked against it, a reference having to
+point at a place the walk read as a schema: a pointer into an example,
+a default or a listed value would have the validator apply what nobody
+read. And the compiled schema is walked, and a field of it that is set
+and has no price is refused by its name, so a keyword that a later
+version of the validator comes to apply is refused until it is listed.
 
 **What a check may cost.** A validator applies a schema to a value by
 applying to the same value every subschema it reaches through `$ref`,
-`$dynamicRef`, `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`
-and `dependentSchemas`, and it keeps nothing of what it has applied. A
+`allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else` and
+`dependentSchemas`, and it keeps nothing of what it has applied. A
 definition that applies the next one 2 times doubles the work at every
 link: 40 such definitions fit in under 2,000 bytes, compile at once,
 and cost 2^40 applications against `{}`. A validation that began cannot
 be stopped, and it runs in a worker that holds a slot. So the work is
-bounded before it begins, in 2 places.
+bounded before it begins, in 2 places, and a check is then made where
+being wrong about it costs a bounded amount.
 
 When the schema arrives, each subschema is counted with everything it
 applies to the same value, each as often as it is reached, the counts
@@ -93,14 +149,9 @@ taken once each by following the references. A count above 256 is
 refused, and so is a subschema that reaches itself with no member and
 no item in between, which would never end. A choice between 64
 definitions counts 129, so the bound is above what a schema written to
-describe a document needs. A keyword that moves to a member or an item,
-`properties`, `patternProperties`, `additionalProperties`,
-`propertyNames`, `items`, `prefixItems`, `contains` and the 2
-`unevaluated` keywords, starts a new count: a schema that recurs
-through them is taken, and is applied as often as the object nests.
-With 1 subschema under a dynamic anchor a `$dynamicRef` to it is the
-reference it reads as. With 2 the object would decide which one is
-applied, and the count could not be taken from the schema.
+describe a document needs. A keyword that moves to a member or an item
+starts a new count: a schema that recurs through `properties` or
+`items` is taken, and is applied as often as the object nests.
 
 That count is not the whole cost. A schema can describe one member 2
 times, by 2 patterns that both match its name or by 2 subschemas that
@@ -109,22 +160,46 @@ doubles with every level the object nests, and an object 40 levels
 deep is 240 bytes that a document can make a model write. No reading of
 the schema alone bounds that, short of refusing schemas that are
 honest: a choice between 2 shapes that both hold a list of the same
-node is one. So when a reply arrives, the applications the validator
-would make of this schema to this object are counted first, in time
-that grows with the object and not with that count, and an object that
-would take more than 2,097,152 of them is not held to the schema. The
-field then fails with `schema_not_satisfied`, at once and with no
-repair, since another call would end the same way. The validator makes
-that many applications in under 1 second, and a reply of 4,000 objects
-held to a choice between 8 shapes each takes less than a quarter of
-them.
+node is one. So when a reply arrives, the work the validator would do
+to hold this object to this schema is counted first, in time that grows
+with the object and not with that count, and an object that would take
+more than 1,048,576 units is not held to the schema. The field then
+fails with `schema_not_satisfied`, at once and with no repair, since
+another call would end the same way.
 
-An application is not one unit of work whatever its schema holds, so
-the count weighs it. Each name a schema requires and each value it
-lists is looked up in the value: 16 of them count as 1 application.
-And a pattern costs its steps for every byte it is matched against,
-128 steps counting as 1 application, for a string and for the name of
-a member alike.
+Every keyword of the list has a price in that count, in units where
+applying a schema that asks nothing is 2:
+
+| What the validator does | Units |
+|---|---|
+| applies a schema to a value | 2 |
+| passes over the members of an object, for each schema applied to it | 1 for 2 members |
+| compares a value with one a schema lists or fixes | 4 for a number, since a rational is built for each side; 1 and 1 for every 32 bytes of a text; the sum for a list or an object |
+| holds a number to a bound or a multiple, or asks whether it is an integer | 4 each way |
+| looks up a name a schema requires | 1 for 2 names |
+| counts the characters of a text for `minLength` or `maxLength` | 1 for 32 bytes |
+| matches a pattern against a text or a member's name | 1, and 1 for every 64 steps of the pattern times bytes of the text |
+| finds whether a list holds a value 2 times | 2 times what the list weighs as a listed value, or up to 20 times for a list of up to 20 items, which is compared each with each |
+
+The prices are held above what the validator takes by a test that
+builds 33 cases, each made to be as costly as its keywords allow for
+what it counts, sizes each to a fixed count and times the check, and by
+300 schemas written from the list with no plan from a fixed seed. The
+costliest took the validator 100 nanoseconds a unit, a chain of 200
+references held to each number of a list, which makes the bound 0.1
+seconds. A reply of 4,000 objects held to a choice between 8 shapes
+each counts under three quarters of it.
+
+**Numbers and depth.** The validator reads a number as a rational of
+any size, so a number of 4,000,000 digits held to a multiple took 19.7
+seconds. A number in a reply, and in a schema, is at most 32 characters
+and within what a machine number holds. It is read as a machine number,
+which the validator turns into a rational by the shortest decimal that
+is that number, so `0.3` is 3 times `0.1` and a `multipleOf` means what
+its digits say. A reply nests 64 levels at most, since the validator
+copies the path to a value for each level. A reply past either bound
+does not satisfy the schema: it is a finding at the place of the
+number or the value, and is sent back to the model as any other.
 
 **Patterns.** A `pattern` is matched by the regular expression engine
 of Go's standard library, an automaton that never backtracks: no
@@ -139,6 +214,31 @@ however often the schema uses it, read from the pattern's parse before
 anything is compiled. A class repeated 1,000 times is 2,000 steps, so
 the patterns of a schema that describes a document fit. The steps a
 pattern then takes on a reply are in the count above.
+
+**What is said of a reply that fails.** A check answers 64 findings at
+most, each in at most 300 bytes with the place of the value in at most
+512: the validator's own words where they name a type, a count or a
+number, and the rule alone where they would print a value of the reply
+or every value a schema lists. Up to 5 values a schema lists are shown
+when each is short, and up to 5 names.
+
+**A check that does not end.** The count is a model of a validator
+this project did not write, and the 2 reviews that found a keyword it
+had not priced are why the keywords are a list. Were it wrong again, a
+check could still take longer than its count says, and a validation
+cannot be stopped. So a check runs off the goroutine of the task that
+asked for it, and the task waits 5 seconds for it, 50 times what the
+count allows. A check that has not ended then is left to run, and the
+field fails with `schema_not_satisfied` and the reason, so the worker
+has its slot back. A process makes 2 checks at once, the ones it left
+running included, so 2 processors at most are held by checks that do
+not end, and pages go on being read. With both taken by checks past
+their deadline, the worker names no extraction among the kinds of task
+it runs ([[004-durable-tasks]]), so it is handed none and the
+extractions wait for a worker that can check a reply. A claim already
+in flight that finds no check to be had within 5 seconds is returned to
+the queue with no attempt spent: its call was made and is metered, and
+the reply is not kept.
 
 **When it runs.** A request may arrive while the parse is still
 running. It then waits, with no task, until the parse ends, and its
@@ -419,7 +519,7 @@ a field can fail with is:
 
 | The field's error | When |
 |---|---|
-| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; the object would take more work to check than 2,097,152 applications of the schema; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
+| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; the object would take more than 1,048,576 units of work to check, or its check did not end in 5 seconds; the reply holds a number past its bounds or nests deeper than 64 levels and no repair mended it; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
 | `too_many_pages` | the document's text takes more than 32 windows |
 | `reader_unavailable` | the extractor could not be reached within the task's attempts, or its endpoint rejects the request itself |
 | `budget_exhausted` | the key's budget is spent, at the gateway or at the key endpoint |
@@ -577,10 +677,15 @@ Remaining:
 | Criterion | Proven by |
 |---|---|
 | A schema that is invalid, too large or too deep is refused when the request arrives, with the reason | `TestASchemaIsCheckedWhenAnExtractionIsAsked`, through the API over the durable backend: nothing is queued and no model is called; `TestASchemaIsCheckedWhenItArrives` of `internal/extract`, with a reference to an address, to a file and to a sibling document among the refused |
-| A schema of 40 definitions that each apply the next one 2 times is refused with `invalid_schema` in well under 1 second, and so is every schema that applies more than 256 subschemas to one value or applies itself without end; a schema that recurs through its members and items, and one that shares its definitions, are taken and held | `TestASchemaThatDoublesItsWorkIsRefusedWhenItArrives`, `TestASchemaThatAppliesItselfWithoutEndIsRefused`, `TestASchemaThatRecursThroughItsMembersIsTakenAndHeld`, `TestASchemaThatSharesItsDefinitionsIsTaken`, `TestADynamicAnchorNamesOneSubschema` and `TestASubschemaInAnotherDialectIsRefused` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
+| A schema of 40 definitions that each apply the next one 2 times is refused with `invalid_schema` in well under 1 second, and so is every schema that applies more than 256 subschemas to one value or applies itself without end; a schema that recurs through its members and items, and one that shares its definitions, are taken and held | `TestASchemaThatDoublesItsWorkIsRefusedWhenItArrives`, `TestASchemaThatAppliesItselfWithoutEndIsRefused`, `TestASchemaThatRecursThroughItsMembersIsTakenAndHeld` and `TestASchemaThatSharesItsDefinitionsIsTaken` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
+| A keyword that is not listed is refused by its name, among them `dependencies`, `$recursiveRef`, `$dynamicRef`, `$id`, `unevaluatedProperties` and a caller's own; a reference that does not point at a schema of the document is refused, a pointer into an example or a listed value included; and a compiled schema with a field set that has no price is refused | `TestAKeywordTheCountDoesNotModelIsRefused`, `TestAReferencePointsAtASchemaOfTheSchema` and `TestACompiledSchemaHoldsNothingTheCountHasNoPriceFor` of `internal/extract`, the last of which fails when a listed keyword has no case |
+| A number of 4,000,000 digits in a reply is a finding at its place in under 1 second, a number past 32 characters or a machine number's range in a schema is refused, and `0.3` is a multiple of `0.1` | `TestANumberCostsNoMoreThanAMachineNumber` |
+| The count of a check is the sum of its keywords' prices, an object that counts past 1,048,576 is not held to its schema, and 2,000 numbers listed against 6,000 that are none of them are not checked | `TestTheWorkOfACheckIsCountedKeywordByKeyword`, `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema`, `TestWorkPastTheBoundIsNotChecked` and `TestAListOfValuesIsPricedByWhatAComparisonCosts` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
+| Counted work bounds the validator's time: for 33 cases built to be costly and 300 schemas generated from the listed keywords with a fixed seed, a check takes no longer than its count allows at 2,500 nanoseconds a unit, 25 times the costliest measured, and an object past the bound is answered without validating | `TestCountedWorkBoundsTheValidatorsTime`, `TestGeneratedSchemasAreHeldWithinTheirCount` and `TestTheLongestCheckIsWithinWhatAModelCallTakes` of `internal/extract`, 2.2 seconds together and 7 under the race detector |
+| A schema whose patterns compile to more than 16,384 steps together is refused before a pattern is compiled, and a pattern used in many places counts once | `TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo` |
+| A check answers 64 findings at most, each bounded in what it says | `TestWhatAFindingSaysIsBounded` |
+| With a validator that never returns, 2 extractions fail their fields with `schema_not_satisfied` after the deadline and give their slots back, a third is returned with no attempt spent, a page is read beside them, and the worker names no extraction until a check ends | `TestACheckThatDoesNotEndGivesItsTaskBack` of `internal/extract`; `TestAnExtractionWhoseCheckDoesNotEndCostsTheFieldAndNotTheWorker` of `internal/worker` |
 | With 2 extractors in the chain, an extraction whose first call was answered by the first waits when that one is paused between 2 claims, while an extraction that has made no call is taken by the second; it is claimed for the first again when the pause ends, and moves to the second, once, only when the first declines it or its replies are not usable | `TestAnExtractionStaysWithTheExtractorThatBeganIt` at the store, with a virtual clock |
-| A reply that would take more than 2,097,152 applications of its schema to check is not held to it: the field fails `schema_not_satisfied` after 1 call, with no repair, and the claim returns its slot | `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema` and `TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
-| A schema whose patterns compile to more than 16,384 steps together is refused with `invalid_schema` before a pattern is compiled, a pattern used in many places counts once, and a long string held to a pattern of many steps, or a long list held to a long list of names, is not checked | `TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo` and `TestTheWorkOfACheckCountsWhatAnApplicationLooksUp` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
 | Two schemas requested against one succeeded parse, one after the other, produce two fields and no reader call | `TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain`, through the API over the durable backend, with a reader that counts its calls |
 | For a fixture invoice and a stub text model, the result validates against the schema and every citation resolves to a block whose text contains the value | the same test, reading each citation with `resolve=true` and the block it names |
 | A reply that violates the schema is repaired within two retries or the field is recorded `failed` with the validator's errors; tokens of all attempts are in usage | `TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails`, through the API; `TestAReplyThatFailsValidationIsRepairedInTheNextClaim` of `internal/worker`; `TestAReplyThatFailsIsRepairedTwiceAndThenTheFieldFails` of `internal/extract` |

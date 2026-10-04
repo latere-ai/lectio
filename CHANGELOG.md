@@ -18,20 +18,26 @@ refused before it is pushed.
   schema is sent back to the model with what was wrong, up to 2 times,
   and the extraction then fails with `schema_not_satisfied`; its parse
   is not affected. A schema that does not compile, is over 64 KiB,
-  nests deeper than 16 levels or refers to anything outside itself is
-  `400 invalid_schema`, and so is one that applies more than 256
-  subschemas to one value or applies itself without end: a validator
-  keeps nothing of what it applied, so such a schema costs work that
-  doubles with every definition. So is one whose patterns compile to
-  more than 16,384 steps together: a pattern is matched in time that
-  is the text's length times those steps. A reply that would take more
-  work to check than 2,097,152 applications of its schema is not
-  checked, and fails the extraction with `schema_not_satisfied`. A document longer
-  than the extractor's input is read in windows, at most 32, and the
-  replies are merged. An
-  extraction that has made a call stays with its extractor: it waits
-  while that one is paused, and moves down the chain only when the
-  extractor declines it or its replies are not usable. An
+  nests deeper than 16 levels or refers to anything but a schema inside
+  itself is `400 invalid_schema`. A schema uses the keywords of draft
+  2020-12 that the contract lists, and one that uses another is refused
+  with the keyword named: among those not taken are `$id`, `$anchor`,
+  `$dynamicRef`, `dependencies`, `definitions`, `unevaluatedProperties`
+  and a caller's own keywords. The list exists because a validator
+  keeps nothing of what it applied, so what holding an object to a
+  schema costs has to be counted before it is done, and a count has a
+  price for the keywords it knows. A schema that applies more than 256
+  subschemas to one value, applies itself without end, or holds
+  patterns that compile to more than 16,384 steps together is refused,
+  and so is a number of more than 32 characters. A reply is counted
+  before it is checked: one that would take more than 1,048,576 units
+  of work, or whose check does not end in 5 seconds, fails the
+  extraction with `schema_not_satisfied`, and its worker goes on. A
+  document longer than the extractor's input is read in windows, at
+  most 32, and the replies are merged. An extraction that has made a
+  call stays with its extractor: it waits while that one is paused, and
+  moves down the chain only when the extractor declines it or its
+  replies are not usable. An
   extraction may be asked while its parse runs and waits for the parse
   to end. A parse holds at most 64 extractions. A development server
   answers `501` for the 3 routes.
