@@ -491,7 +491,7 @@ paths:
         named that is not, it is `reader_not_found`.
 
         A run describes at most 1,000 figures. A request whose pages hold
-        more that it would describe is `too_many_pages` and starts
+        more than it would describe is `too_many_pages` and starts
         nothing: name fewer pages, and describe the parse a range of
         pages at a time. A figure that has a description does not count
         unless `redo` is true.

@@ -210,10 +210,10 @@ func TestASchemaThatSharesItsDefinitionsIsTaken(t *testing.T) {
 // schema applies could not be counted from the schema. It is refused. A
 // member that is named like the keyword is a member.
 func TestADynamicAnchorNamesOneSubschema(t *testing.T) {
-	two := `{"type":"object","properties":{"a":{"$dynamicRef":"#node"}},
+	shared := `{"type":"object","properties":{"a":{"$dynamicRef":"#node"}},
 	  "$defs":{"x":{"$dynamicAnchor":"node","type":"string"},
 	           "y":{"$id":"other.json","$dynamicAnchor":"node","type":"number","examples":[["node"]]}}}`
-	_, err := Compile([]byte(two))
+	_, err := Compile([]byte(shared))
 	if fault.CodeOf(err) != fault.InvalidSchema || !strings.Contains(fault.DetailOf(err), `gives the dynamic anchor "node" to 2 subschemas`) {
 		t.Fatalf("2 subschemas under one dynamic anchor: %v", err)
 	}
@@ -365,15 +365,15 @@ func TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost(t *testing.T) {
 // schema for a document holds are taken and held.
 func TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo(t *testing.T) {
 	heavy := strings.Repeat(`.{0,1000}`, 64)
-	var nine, same []string
+	var distinct, same []string
 	for i := range 9 {
-		nine = append(nine, fmt.Sprintf(`"p%d":{"type":"string","pattern":"^%d[a-z]{1,1000}$"}`, i, i))
+		distinct = append(distinct, fmt.Sprintf(`"p%d":{"type":"string","pattern":"^%d[a-z]{1,1000}$"}`, i, i))
 		same = append(same, fmt.Sprintf(`"p%d":{"type":"string","pattern":"^[a-z]{1,1000}$"}`, i))
 	}
 	for name, schema := range map[string]string{
 		"one pattern of 128,005 steps":    `{"type":"object","properties":{"a":{"type":"string","pattern":"^` + heavy + `b$"}}}`,
 		"the same for the names":          `{"type":"object","patternProperties":{"^` + heavy + `b$":{"type":"string"}}}`,
-		"9 patterns of 2,000 steps each":  `{"type":"object","properties":{` + strings.Join(nine, ",") + `}}`,
+		"9 patterns of 2,000 steps each":  `{"type":"object","properties":{` + strings.Join(distinct, ",") + `}}`,
 		"a pattern in a pattern's schema": `{"type":"object","patternProperties":{"^[a-z]{1,1000}$":{"pattern":"^` + heavy + `$"}}}`,
 	} {
 		began := time.Now()
@@ -388,7 +388,7 @@ func TestThePatternsOfASchemaAreBoundedByWhatTheyCompileTo(t *testing.T) {
 	}
 
 	// 8 of them fit, and one pattern used 9 times is one pattern.
-	compiled(t, `{"type":"object","properties":{`+strings.Join(nine[:8], ",")+`}}`)
+	compiled(t, `{"type":"object","properties":{`+strings.Join(distinct[:8], ",")+`}}`)
 	compiled(t, `{"type":"object","properties":{`+strings.Join(same, ",")+`}}`)
 	s := compiled(t, `{"type":"object","properties":{
 	  "date":{"type":"string","pattern":"^\\d{4}-\\d{2}-\\d{2}$"},
