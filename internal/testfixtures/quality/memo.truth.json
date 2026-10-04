@@ -1,0 +1,20 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Harbor office memo"},
+      {"kind": "text", "text": "Sample memo written for a parsing test. Every name and number is invented."},
+      {"kind": "heading", "level": 2, "text": "Opening hours"},
+      {"kind": "text", "text": "The office at the south quay is open on five days of the week. Pilots and harbor staff reach the duty officer at any hour through the control room."},
+      {"kind": "table", "rows": 3, "cols": 3, "cells": [
+        {"row": 0, "col": 0, "header": true, "text": "Day"}, {"row": 0, "col": 1, "header": true, "text": "Opens"}, {"row": 0, "col": 2, "header": true, "text": "Closes"},
+        {"row": 1, "col": 0, "text": "Monday to Thursday"}, {"row": 1, "col": 1, "text": "07:30"}, {"row": 1, "col": 2, "text": "16:00"},
+        {"row": 2, "col": 0, "text": "Friday"}, {"row": 2, "col": 1, "text": "07:30"}, {"row": 2, "col": 2, "text": "13:00"}
+      ]},
+      {"kind": "heading", "level": 2, "text": "Before a visit"},
+      {"kind": "list_item", "text": "Bring the berth number of the vessel."},
+      {"kind": "list_item", "text": "Name the day and the hour of the visit."},
+      {"kind": "list_item", "text": "Leave a number the office can call back."},
+      {"kind": "text", "text": "Requests in writing are answered within three working days."}
+    ]}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Harbor notes"},
+      {"kind": "text", "text": "Sample notes written for a parsing test. Every name and number is invented."},
+      {"kind": "heading", "level": 2, "text": "Gauges"},
+      {"kind": "list_item", "text": "Station A sits on the north mole."},
+      {"kind": "list_item", "text": "Station B sits in the fairway."},
+      {"kind": "list_item", "text": "Read the level at the full hour."},
+      {"kind": "list_item", "text": "Write it into the log."},
+      {"kind": "heading", "level": 2, "text": "Script"},
+      {"kind": "code", "text": "level = read(gauge)\nlog(level)"},
+      {"kind": "text", "text": "The script runs once an hour."}
+    ]}
+  ],
+  "outline": [
+    {"ref": "1.1", "level": 1, "text": "Harbor notes", "page": 1},
+    {"ref": "1.3", "level": 2, "text": "Gauges", "page": 1},
+    {"ref": "1.8", "level": 2, "text": "Script", "page": 1}
+  ]
+}

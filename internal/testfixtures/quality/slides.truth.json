@@ -1,0 +1,24 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Harbor works, autumn plan"},
+      {"kind": "text", "text": "Sample slides written for a parsing test. Every name and number is invented."}
+    ]},
+    {"blocks": [
+      {"kind": "heading", "level": 2, "text": "Work packages"},
+      {"kind": "list_item", "text": "Dredge the fairway to nine meters."},
+      {"kind": "list_item", "text": "Replace the fenders at berth four."},
+      {"kind": "list_item", "text": "Renew the lights on the north mole."},
+      {"kind": "list_item", "text": "Survey the lock gate before the first frost."}
+    ]},
+    {"blocks": [
+      {"kind": "heading", "level": 2, "text": "Budget by quarter"},
+      {"kind": "table", "rows": 3, "cols": 3, "cells": [
+        {"row": 0, "col": 0, "header": true, "text": "Package"}, {"row": 0, "col": 1, "header": true, "text": "Third quarter"}, {"row": 0, "col": 2, "header": true, "text": "Fourth quarter"},
+        {"row": 1, "col": 0, "text": "Dredging"}, {"row": 1, "col": 1, "text": "240"}, {"row": 1, "col": 2, "text": "310"},
+        {"row": 2, "col": 0, "text": "Fenders"}, {"row": 2, "col": 1, "text": "85"}, {"row": 2, "col": 2, "text": "40"}
+      ]},
+      {"kind": "text", "text": "All amounts are in thousands."}
+    ]}
+  ]
+}

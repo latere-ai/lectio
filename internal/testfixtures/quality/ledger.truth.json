@@ -1,0 +1,32 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Rainfall"},
+      {"kind": "table", "rows": 7, "cols": 4, "cells": [
+        {"row": 0, "col": 0, "col_span": 4, "text": "Rainfall by week"},
+        {"row": 1, "col": 0, "text": "Week"}, {"row": 1, "col": 1, "text": "Start"}, {"row": 1, "col": 2, "text": "Rain (mm)"}, {"row": 1, "col": 3, "text": "Share"},
+        {"row": 2, "col": 0, "text": "1"}, {"row": 2, "col": 1, "text": "2026-03-02"}, {"row": 2, "col": 2, "text": "12.5"}, {"row": 2, "col": 3, "text": "28.6%"},
+        {"row": 3, "col": 0, "text": "2"}, {"row": 3, "col": 1, "text": "2026-03-09"}, {"row": 3, "col": 2, "text": "0"}, {"row": 3, "col": 3, "text": "0%"},
+        {"row": 4, "col": 0, "text": "3"}, {"row": 4, "col": 1, "text": "2026-03-16"}, {"row": 4, "col": 2, "text": "31.2"}, {"row": 4, "col": 3, "text": "71.4%"},
+        {"row": 5, "col": 0, "col_span": 2, "text": "Total"}, {"row": 5, "col": 2, "text": "43.7"}, {"row": 5, "col": 3, "text": "100%"},
+        {"row": 6, "col": 0, "text": "Complete"}, {"row": 6, "col": 1, "text": "TRUE"}, {"row": 6, "col": 2, "text": "Total of March"}, {"row": 6, "col": 3, "text": ""}
+      ]}
+    ]},
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Stations"},
+      {"kind": "table", "rows": 3, "cols": 2, "cells": [
+        {"row": 0, "col": 0, "text": "Station"}, {"row": 0, "col": 1, "text": "Altitude (m)"},
+        {"row": 1, "col": 0, "text": "Ridge North"}, {"row": 1, "col": 1, "text": "1840"},
+        {"row": 2, "col": 0, "text": "Valley"}, {"row": 2, "col": 1, "text": "612.5"}
+      ]}
+    ]},
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Spare"}
+    ]}
+  ],
+  "outline": [
+    {"ref": "1.1", "level": 1, "text": "Rainfall", "page": 1},
+    {"ref": "2.1", "level": 1, "text": "Stations", "page": 2},
+    {"ref": "3.1", "level": 1, "text": "Spare", "page": 3}
+  ]
+}

@@ -1,0 +1,240 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 Latere AI
+SPDX-License-Identifier: Apache-2.0
+
+The source of survey.pdf and of survey.truth.json. Every block of the
+document is an element that names its kind in data-kind, in reading order,
+inside the page it is printed on. The script at the end writes what those
+elements hold onto the root element, and README.md says how the two files
+are made from it. Every station and reading is invented.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tide gauge survey, third quarter</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  .page {
+    width: 210mm; height: 297mm; padding: 15mm 21mm; position: relative; overflow: hidden;
+    font-family: Georgia, 'Times New Roman', serif; font-size: 10.2pt; line-height: 1.45; color: #141414;
+    break-after: page;
+  }
+  .page:last-of-type { break-after: auto; }
+  .running { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #555; border-bottom: 0.4pt solid #999; padding-bottom: 2mm; margin-bottom: 7mm; }
+  h1 { font-family: Helvetica, Arial, sans-serif; font-size: 21pt; line-height: 1.2; margin: 0 0 3mm; }
+  .byline { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #444; margin: 0 0 6mm; }
+  h2 { font-family: Helvetica, Arial, sans-serif; font-size: 12.5pt; margin: 4.5mm 0 1.8mm; }
+  h3 { font-family: Helvetica, Arial, sans-serif; font-size: 10.8pt; margin: 4mm 0 1.6mm; }
+  p { margin: 0 0 3mm; text-align: justify; hyphens: manual; }
+  ul { margin: 0 0 3mm; padding-left: 5mm; }
+  li { margin-bottom: 1mm; }
+  table { width: 100%; border-collapse: collapse; font-family: Helvetica, Arial, sans-serif; font-size: 8.8pt; margin: 1.5mm 0 4mm; }
+  th, td { border: 0.5pt solid #777; padding: 1.3mm 2mm; text-align: right; }
+  th { background: #efefef; font-weight: 600; text-align: center; }
+  td:first-child, th:first-child { text-align: left; }
+  .cap { font-family: Helvetica, Arial, sans-serif; font-size: 8.4pt; color: #333; margin: 2mm 0 0; text-align: left; }
+  .cap.under { margin: 0 0 4mm; }
+  .formula { text-align: center; font-style: italic; font-size: 11.5pt; margin: 3mm 0 4mm; }
+  .fig { margin: 2mm 0 1.5mm; }
+  .fig svg { display: block; width: 100%; height: auto; }
+  .note { font-size: 8.2pt; color: #333; border-top: 0.4pt solid #999; padding-top: 1.5mm; position: absolute; left: 21mm; right: 21mm; bottom: 19mm; margin: 0; text-align: left; }
+  .folio { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #555; position: absolute; left: 0; right: 0; bottom: 11mm; text-align: center; }
+</style>
+</head>
+<body>
+
+<section class="page">
+  <div class="running"><span data-kind="page_header">Tide gauge survey, third quarter</span></div>
+
+  <h1 data-kind="title" data-level="1" data-outline="1">Tide gauge survey of the outer harbor</h1>
+  <p class="byline" data-kind="text">Sample document written for a parsing test. All stations and readings are invented.</p>
+
+  <p data-kind="text">Four gauges along the outer harbor wall were read every ten minutes for thirteen weeks. This report gives the mean water level at each station, the largest departure from the predicted tide, and the share of readings that each gauge delivered. One gauge was replaced in week six, and its two instruments are reported together.</p>
+
+  <h2 data-kind="heading" data-level="2" data-outline="2">1 Method</h2>
+  <p data-kind="text">Each reading is the level above chart datum, in centimeters. The residual of a reading is the measured level minus the predicted tide at the same minute:</p>
+  <p class="formula"><span data-kind="formula">r(t) = h(t) - p(t)</span></p>
+  <ul>
+    <li data-kind="list_item">A reading is dropped when the gauge reports a fault code.</li>
+    <li data-kind="list_item">A week counts as complete when at least 95% of its readings are kept.</li>
+    <li data-kind="list_item">Station D is reported from week six, after its sensor was replaced.&sup1;</li>
+  </ul>
+
+  <h2 data-kind="heading" data-level="2" data-outline="2">2 Results</h2>
+  <p data-kind="text">Mean levels differ by less than four centimeters between stations. The largest residual was recorded at station B during the storm of week nine.</p>
+
+  <p class="cap" data-kind="caption">Table 1. Water level, largest residual and kept readings per station.</p>
+  <table data-kind="table">
+    <thead>
+      <tr><th rowspan="2">Station</th><th colspan="2">Water level (cm)</th><th rowspan="2">Largest residual (cm)</th><th rowspan="2">Readings kept</th></tr>
+      <tr><th>Mean</th><th>Standard deviation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>A, north mole</td><td>212.4</td><td>61.8</td><td>+38</td><td>99.1%</td></tr>
+      <tr><td>B, fairway</td><td>214.9</td><td>63.2</td><td>+57</td><td>98.4%</td></tr>
+      <tr><td>C, lock gate</td><td>211.2</td><td>60.5</td><td>+41</td><td>97.7%</td></tr>
+      <tr><td>D, south quay</td><td>213.6</td><td>62.0</td><td>+44</td><td>96.2%</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fig" data-kind="figure">
+    <svg viewBox="0 0 640 160" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif" font-size="11">
+      <rect x="0.5" y="0.5" width="639" height="159" fill="#fafafa" stroke="#bbb"/>
+      <text x="14" y="18" font-size="11" fill="#333">Largest residual (cm)</text>
+      <g stroke="#ddd"><line x1="60" y1="128" x2="620" y2="128"/><line x1="60" y1="98" x2="620" y2="98"/><line x1="60" y1="68" x2="620" y2="68"/><line x1="60" y1="38" x2="620" y2="38"/></g>
+      <g fill="#555" text-anchor="end"><text x="52" y="132">0</text><text x="52" y="102">20</text><text x="52" y="72">40</text><text x="52" y="42">60</text></g>
+      <g fill="#4a6fa5">
+        <rect x="100" y="71" width="70" height="57"/>
+        <rect x="235" y="42.5" width="70" height="85.5"/>
+        <rect x="370" y="66.5" width="70" height="61.5"/>
+        <rect x="505" y="62" width="70" height="66"/>
+      </g>
+      <g fill="#222" text-anchor="middle"><text x="135" y="65">38</text><text x="270" y="36.5">57</text><text x="405" y="60.5">41</text><text x="540" y="56">44</text></g>
+      <g fill="#333" text-anchor="middle"><text x="135" y="147">Station A</text><text x="270" y="147">Station B</text><text x="405" y="147">Station C</text><text x="540" y="147">Station D</text></g>
+    </svg>
+  </div>
+  <p class="cap under" data-kind="caption">Figure 1. Largest residual at each station over the quarter.</p>
+
+  <p class="note" data-kind="footnote">&sup1; The replaced sensor at station D was read against the old one for two days before the old one was removed.</p>
+  <div class="folio"><span data-kind="page_number">1</span></div>
+</section>
+
+<section class="page">
+  <div class="running"><span data-kind="page_header">Tide gauge survey, third quarter</span></div>
+
+  <h3 data-kind="heading" data-level="3" data-outline="3">2.1 Weekly record</h3>
+  <p data-kind="text">The table below gives the mean level of every week at every station. A week is the seven days that begin on Monday at midnight, local time. Weeks with fewer than 95% of their readings are printed like the others and are listed in the discussion.</p>
+  <p data-kind="text">Station D has no value before week six. Its first sensor drifted by more than two centimeters a day, and readings from that sensor were not used for any figure in this report.</p>
+
+  <p class="cap" data-kind="caption">Table 2. Mean water level of each week at each station, in centimeters.</p>
+  <table data-kind="table" data-span="s1">
+    <thead>
+      <tr><th>Week</th><th>Station A</th><th>Station B</th><th>Station C</th><th>Station D</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>211.8</td><td>214.2</td><td>210.6</td><td>not read</td></tr>
+      <tr><td>2</td><td>212.1</td><td>214.6</td><td>210.9</td><td>not read</td></tr>
+      <tr><td>3</td><td>213.0</td><td>215.4</td><td>211.7</td><td>not read</td></tr>
+      <tr><td>4</td><td>212.6</td><td>215.1</td><td>211.3</td><td>not read</td></tr>
+      <tr><td>5</td><td>211.5</td><td>213.9</td><td>210.2</td><td>not read</td></tr>
+      <tr><td>6</td><td>212.2</td><td>214.7</td><td>211.0</td><td>213.1</td></tr>
+      <tr><td>7</td><td>212.9</td><td>215.3</td><td>211.6</td><td>213.8</td></tr>
+      <tr><td>8</td><td>212.0</td><td>214.5</td><td>210.8</td><td>213.2</td></tr>
+    </tbody>
+  </table>
+
+  <div class="folio"><span data-kind="page_number">2</span></div>
+</section>
+
+<section class="page">
+  <div class="running"><span data-kind="page_header">Tide gauge survey, third quarter</span></div>
+
+  <p class="cap" data-kind="caption">Table 2 (continued).</p>
+  <table data-kind="table" data-span="s1">
+    <thead>
+      <tr><th>Week</th><th>Station A</th><th>Station B</th><th>Station C</th><th>Station D</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>9</td><td>214.3</td><td>217.8</td><td>212.9</td><td>215.6</td></tr>
+      <tr><td>10</td><td>212.7</td><td>215.0</td><td>211.4</td><td>213.9</td></tr>
+      <tr><td>11</td><td>212.3</td><td>214.8</td><td>211.1</td><td>213.5</td></tr>
+      <tr><td>12</td><td>211.9</td><td>214.4</td><td>210.7</td><td>213.0</td></tr>
+      <tr><td>13</td><td>212.5</td><td>214.9</td><td>211.2</td><td>213.4</td></tr>
+    </tbody>
+  </table>
+  <p data-kind="text">Week nine stands out at every station. A storm from the northwest held the water in the harbor for two days, and the mean of that week is about two centimeters above the mean of the quarter.</p>
+
+  <h2 data-kind="heading" data-level="2" data-outline="2">3 Discussion</h2>
+  <p data-kind="text">The four stations agree on the shape of the quarter. The differences between them are steady from week to week, which is what a fixed offset in the height of each gauge would produce, and they are small against the tide itself.</p>
+
+  <h3 data-kind="heading" data-level="3" data-outline="3">3.1 Station D</h3>
+  <p data-kind="text">The new sensor at station D was compared with a staff reading on three mornings. The largest difference was four millimeters. Two things remain open:</p>
+  <ul>
+    <li data-kind="list_item">The old and the new sensor were mounted eleven centimeters apart, and no correction was applied for it.</li>
+    <li data-kind="list_item">Week six holds 91% of its readings at station D and does not count as complete.</li>
+  </ul>
+
+  <h2 data-kind="heading" data-level="2" data-outline="2">4 Conclusion</h2>
+  <p data-kind="text">All four gauges delivered more than 96% of their readings over the quarter. The survey continues in the fourth quarter with the same stations and the same method.</p>
+
+  <div class="folio"><span data-kind="page_number">3</span></div>
+</section>
+
+<section class="page"></section>
+
+<script>
+// Writes the truth of this document onto the root element as JSON: page by
+// page, every element that names its kind, with its text, its box as a
+// share of its page's width and height, and a table's cells. A box is the
+// box of what the element prints, so a short line's box ends where the
+// line does. A browser that prints the DOM prints the truth with it.
+(() => {
+  const round = (v) => Math.round(v * 10000) / 10000;
+  const text = (el) => el.textContent.replace(/\s+/g, ' ').trim();
+  const pages = [], spans = {}, outline = [];
+  document.querySelectorAll('.page').forEach((page, p) => {
+    const frame = page.getBoundingClientRect();
+    const blocks = [];
+    let floor = frame.top;
+    page.querySelectorAll('[data-kind]').forEach((el) => {
+      const kind = el.dataset.kind;
+      const block = { kind };
+      if (el.dataset.level) block.level = Number(el.dataset.level);
+      let rect = el.getBoundingClientRect();
+      if (kind === 'table') {
+        const taken = {};
+        block.rows = el.rows.length;
+        block.cols = 0;
+        block.cells = [];
+        Array.from(el.rows).forEach((tr, row) => {
+          let col = 0;
+          Array.from(tr.cells).forEach((td) => {
+            while (taken[row + ',' + col]) col++;
+            const cell = { row, col };
+            if (td.rowSpan > 1) cell.row_span = td.rowSpan;
+            if (td.colSpan > 1) cell.col_span = td.colSpan;
+            if (td.tagName === 'TH') cell.header = true;
+            cell.text = text(td);
+            block.cells.push(cell);
+            for (let r = 0; r < td.rowSpan; r++) for (let c = 0; c < td.colSpan; c++) taken[(row + r) + ',' + (col + c)] = true;
+            col += td.colSpan;
+            block.cols = Math.max(block.cols, col);
+          });
+        });
+      } else if (kind === 'figure') {
+        rect = el.querySelector('svg').getBoundingClientRect();
+      } else {
+        block.text = text(el);
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        rect = range.getBoundingClientRect();
+      }
+      // A block that leaves its page, or begins above the end of the block
+      // before it, is a page with more on it than it holds.
+      if (rect.left < frame.left || rect.top < frame.top || rect.right > frame.right || rect.bottom > frame.bottom || rect.top < floor - 1) {
+        throw new Error('a ' + kind + ' of page ' + (p + 1) + ' does not fit its page');
+      }
+      floor = rect.bottom;
+      block.box = [
+        round((rect.left - frame.left) / frame.width), round((rect.top - frame.top) / frame.height),
+        round((rect.right - frame.left) / frame.width), round((rect.bottom - frame.top) / frame.height),
+      ];
+      blocks.push(block);
+      const ref = (p + 1) + '.' + blocks.length;
+      if (el.dataset.span) {
+        const span = spans[el.dataset.span] ||= { id: el.dataset.span, parts: [], rows: 0, cols: block.cols };
+        span.parts.push(ref);
+        span.rows += block.rows;
+      }
+      if (el.dataset.outline) outline.push({ ref, level: Number(el.dataset.outline), text: block.text, page: p + 1 });
+    });
+    pages.push({ blocks });
+  });
+  document.documentElement.dataset.truth = JSON.stringify({ pages, spans: Object.values(spans), outline });
+})();
+</script>
+</body>
+</html>

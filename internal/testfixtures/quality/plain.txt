@@ -1,0 +1,10 @@
+Harbor log, week 36
+
+Sample text written for a parsing test. Every name and number is invented.
+
+The gauge on the north mole was read on five days. On Wednesday the reading
+was late by twenty minutes, and on Friday the gauge was cleaned before it
+was read.
+
+Station A: 212.4 cm
+Station B: 214.9 cm

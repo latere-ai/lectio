@@ -1,0 +1,32 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "title", "level": 1, "text": "Field station report"},
+      {"kind": "heading", "level": 1, "text": "Summary"},
+      {"kind": "text", "text": "The station logged rain on 14 days. See the method notes for how the gauges were read."},
+      {"kind": "text", "text": "Station:\tRidge North\nPeriod:\tMarch"},
+      {"kind": "list_item", "text": "Empty the gauge at 08:00."},
+      {"kind": "list_item", "text": "Record the level to the millimeter."},
+      {"kind": "list_item", "text": "Reset the float."},
+      {"kind": "heading", "level": 2, "text": "Readings"},
+      {"kind": "table", "rows": 4, "cols": 4, "cells": [
+        {"row": 0, "col": 0, "header": true, "text": "Week"}, {"row": 0, "col": 1, "col_span": 2, "header": true, "text": "Rain (mm), measured and corrected"}, {"row": 0, "col": 3, "header": true, "text": "Observer"},
+        {"row": 1, "col": 0, "text": "1"}, {"row": 1, "col": 1, "text": "12.5"}, {"row": 1, "col": 2, "text": "12.9"}, {"row": 1, "col": 3, "row_span": 2, "text": "Team A"},
+        {"row": 2, "col": 0, "text": "2"}, {"row": 2, "col": 1, "text": "0.0"}, {"row": 2, "col": 2, "text": "0.0"},
+        {"row": 3, "col": 0, "text": "3"}, {"row": 3, "col": 1, "text": "31.2"}, {"row": 3, "col": 2, "text": "30.8"}, {"row": 3, "col": 3, "text": "Team B"}
+      ]},
+      {"kind": "figure"},
+      {"kind": "caption", "text": "Figure 1. The gauge at Ridge North."},
+      {"kind": "text", "text": "The float was replaced in March."},
+      {"kind": "heading", "level": 2, "text": "Notes"},
+      {"kind": "text", "text": "Readings are provisional."},
+      {"kind": "footnote", "text": "Gauges were read at 08:00 local time."}
+    ]}
+  ],
+  "outline": [
+    {"ref": "1.1", "level": 1, "text": "Field station report", "page": 1},
+    {"ref": "1.2", "level": 2, "text": "Summary", "page": 1},
+    {"ref": "1.8", "level": 2, "text": "Readings", "page": 1},
+    {"ref": "1.13", "level": 2, "text": "Notes", "page": 1}
+  ]
+}

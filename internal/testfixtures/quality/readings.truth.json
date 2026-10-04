@@ -1,0 +1,12 @@
+{
+  "pages": [
+    {"blocks": [
+      {"kind": "table", "rows": 4, "cols": 4, "cells": [
+        {"row": 0, "col": 0, "text": "station"}, {"row": 0, "col": 1, "text": "mean"}, {"row": 0, "col": 2, "text": "largest"}, {"row": 0, "col": 3, "text": "kept"},
+        {"row": 1, "col": 0, "text": "A, north mole"}, {"row": 1, "col": 1, "text": "212.4"}, {"row": 1, "col": 2, "text": "+38"}, {"row": 1, "col": 3, "text": "99.1%"},
+        {"row": 2, "col": 0, "text": "B, fairway"}, {"row": 2, "col": 1, "text": "214.9"}, {"row": 2, "col": 2, "text": "+57"}, {"row": 2, "col": 3, "text": "98.4%"},
+        {"row": 3, "col": 0, "text": "C"}, {"row": 3, "col": 1, "text": "211.2"}, {"row": 3, "col": 2, "text": ""}, {"row": 3, "col": 3, "text": "97.7%"}
+      ]}
+    ]}
+  ]
+}

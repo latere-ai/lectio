@@ -11,6 +11,7 @@ package testfixtures
 
 import (
 	"embed"
+	"strings"
 	"testing"
 )
 
@@ -50,10 +51,15 @@ const (
 )
 
 // Read returns the bytes of the fixture at name, and fails the test when no
-// such fixture is embedded.
+// such fixture is embedded. A name under quality/ is a file of the quality
+// corpus.
 func Read(t testing.TB, name string) []byte {
 	t.Helper()
-	b, err := files.ReadFile(name)
+	from := files
+	if strings.HasPrefix(name, "quality/") {
+		from = corpusFiles
+	}
+	b, err := from.ReadFile(name)
 	if err != nil {
 		t.Fatalf("testfixtures: read %q: %v", name, err)
 	}
