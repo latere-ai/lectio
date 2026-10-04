@@ -287,8 +287,9 @@ Built, as a library the server does not call yet:
 - `internal/access`: the two interfaces a handler depends on, one that
   turns a request's bearer into a caller and one that answers a
   question with a decision; the resources a question is about; the
-  verifier; the authorizer client; and the owner policy with its admin
-  subjects.
+  verifier; the authorizer client; the owner policy with its admin
+  subjects; and the development identity, one static token for the
+  subject `dev`, behind the same interface as the verifier.
 
 A stand-in, in the server:
 
@@ -329,3 +330,4 @@ an owner.
 | The rows of the owner policy: a subject and its own, another's, a create, the reads that range over owners, an admin that reads and does not change, and no subject | `TestTheOwnerPolicy`, `TestASubjectAndAnotherSubjectsParse` |
 | The owner policy answers the contract's conformance suite, and narrows an allow by the grants of a token | `TestOwnerPolicyConformance`, `TestOwnerPolicyNarrowsByTheGrants`, `TestTheGrantsOfATokenNarrowTheOwnersReach` |
 | A probe id is denied for every subject and action by the stub authorizer and by the owner policy | `TestTheProbeIsDeniedForEverySubjectAndAction` |
+| The development token stands for one subject, is compared in constant time, and is never printed; under the owner policy its caller owns what it creates and nothing else | `TestTheDevelopmentTokenStandsForOneSubject`, `TestWhatTheDevelopmentTokenRefuses`, `TestTheDevelopmentCallerUnderTheOwnerPolicy` |
