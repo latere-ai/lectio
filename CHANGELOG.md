@@ -46,8 +46,9 @@ refused before it is pushed.
 - Added: `deploy/examples/compose.yaml`, the stack on one machine:
   Postgres, an object store with its bucket, `lectiod` in the role
   `all`, and the sidecar on a socket with no network. It needs the
-  durable server too. `docs/running.md` says how to start it and run a
-  parse against it.
+  durable server too, and an identity provider of yours, named by
+  `LECTIO_OIDC_ISSUERS`. `docs/running.md` says how to start it and run
+  a parse against it.
 - Added: a release publishes 2 images, `ghcr.io/<owner>/lectiod:<tag>`
   and `ghcr.io/<owner>/lectio-convert:<tag>`, for linux/amd64 and
   linux/arm64, each signed and with an attested bill of materials and
