@@ -3,7 +3,7 @@
 
 GO ?= go
 
-.PHONY: build check clean fmt hooks live live-convert openapi run specs
+.PHONY: build check clean fmt hooks live live-convert live-quality openapi run specs
 
 # The whole bar. Every gate lives in latere.ai/x/ci-gate, pinned as a tool
 # in go.mod and configured in .lateregate.yaml, so this target is a name for
@@ -63,6 +63,23 @@ live:
 # each conversion is written to.
 live-convert:
 	@$(GO) test ./internal/convert -run '^TestLiveConverter$$' -count=1 -v -timeout 20m
+
+# live-quality reads the quality corpus with a real reader, through the
+# durable server as it ships, scores every file against its truth, and
+# writes report.md and report.json. It calls a model and starts Postgres
+# and an object store in containers, so it is never part of `make check`:
+#   LECTIO_LIVE_CONFIG=reader.yaml make live-quality
+# LECTIO_MODEL_KEY is the key the reader's endpoint takes.
+# LECTIO_LIVE_CONVERTER is a running sidecar, as live-convert takes one;
+# without it the files that need conversion are left out. LECTIO_LIVE_OUT
+# is the directory the results are written to, out/quality unless set.
+# docs/quality.md has the measures, the bars and the other settings. It
+# fails when a file is under a bar.
+live-quality:
+	@test -n '$(LECTIO_LIVE_CONFIG)' || { echo 'LECTIO_LIVE_CONFIG names no Reader document'; exit 1; }
+	@LECTIO_LIVE_CONFIG='$(abspath $(LECTIO_LIVE_CONFIG))' \
+		LECTIO_LIVE_OUT='$(abspath $(or $(LECTIO_LIVE_OUT),$(OUT_DIR)/quality))' \
+		$(GO) test ./test/quality -run '^TestLiveQuality$$' -count=1 -v -timeout 90m
 
 # openapi checks that api/openapi.yaml and the router agree.
 openapi:
