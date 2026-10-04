@@ -71,6 +71,12 @@ type Server struct {
 	// MaxDeadline is the longest a parse may be given. Zero takes one hour.
 	MaxDeadline time.Duration
 
+	// EventsPoll is how often an event stream reads its parse's rows,
+	// EventsHeartbeat the longest a stream says nothing, and EventsHold
+	// the longest one stream is held before its client connects again.
+	// Zero takes eventsPoll, eventsHeartbeat and eventsHold.
+	EventsPoll, EventsHeartbeat, EventsHold time.Duration
+
 	// IDs makes identifiers, Now is the clock, and Log takes what a caller
 	// is not told. Nil takes a new generator, time.Now, and slog.Default.
 	IDs *id.Generator
@@ -112,7 +118,7 @@ func (s *Server) Routes() []Route {
 		{"DELETE", "/parses/{parse}", false, s.deleteParse},
 		{"POST", "/parses/{parse}/cancel", false, s.cancelParse},
 		{"POST", "/parses/{parse}/retry", false, s.retryParse},
-		{"GET", "/parses/{parse}/events", true, s.plannedOnParse},
+		{"GET", "/parses/{parse}/events", false, s.streamParse},
 		{"GET", "/parses/{parse}/document", false, s.getDocument},
 		{"GET", "/parses/{parse}/pages", false, s.listPages},
 		{"GET", "/parses/{parse}/pages/{page}", false, s.getPage},

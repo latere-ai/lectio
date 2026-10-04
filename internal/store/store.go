@@ -155,6 +155,25 @@ type Admission struct {
 	Retention time.Duration
 }
 
+// PageEvent is one page of a parse that settled: how it ended, and the
+// change of its parse that settled it.
+type PageEvent struct {
+	Seq   int64
+	Page  int
+	State string
+	Error *document.Error
+}
+
+// Events is what a stream of a parse's events is told at one instant: the
+// parse as it stands, how many times its state or its progress has changed,
+// and the pages that settled after one of those changes, oldest first. Seq
+// only grows, and a page's Seq is never above it.
+type Events struct {
+	Parse Parse
+	Seq   int64
+	Pages []PageEvent
+}
+
 // Terminal reports whether the parse has ended.
 func (p Parse) Terminal() bool {
 	return p.State == StateSucceeded || p.State == StateFailed || p.State == StateCanceled

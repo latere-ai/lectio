@@ -63,6 +63,11 @@ type Backend interface {
 	// ends, whichever is first.
 	Wait(ctx context.Context, owner, id string, d time.Duration)
 
+	// Events returns a parse as it stands, with the count of its changes,
+	// and the pages of it that settled after the change after, oldest
+	// first and at most limit of them, all as of one instant.
+	Events(ctx context.Context, id string, after int64, limit int) (store.Events, error)
+
 	// Summaries lists the pages of a parse that have a result, in page
 	// order, each without its blocks.
 	Summaries(ctx context.Context, p store.Parse) ([]document.PageSummary, error)
@@ -168,6 +173,12 @@ func undurable(what string) error {
 // to queue again.
 func (m *Memory) Retry(context.Context, string, string) (store.Parse, error) {
 	return store.Parse{}, undurable("reading failed pages again")
+}
+
+// Events is not built in a development server: the events of a parse are
+// read from the rows of the task store, which number its changes.
+func (m *Memory) Events(context.Context, string, int64, int) (store.Events, error) {
+	return store.Events{}, undurable("following a parse as events")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

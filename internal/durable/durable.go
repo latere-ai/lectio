@@ -294,6 +294,25 @@ func (b *Backend) Retry(ctx context.Context, owner, id string) (store.Parse, err
 	return b.Parse(ctx, id)
 }
 
+// Events returns what a stream of a parse's events is told: the parse's
+// row and the rows of its pages that settled after a change, read in one
+// statement. Nothing is kept between 2 calls, so any replica answers any
+// stream, and one that started after another stopped answers the same.
+func (b *Backend) Events(ctx context.Context, id string, after int64, limit int) (store.Events, error) {
+	got, err := b.Store.Events(ctx, id, after, limit)
+	if err != nil {
+		return store.Events{}, err
+	}
+	out := store.Events{Parse: view(got.Parse), Seq: got.Parse.Events, Pages: make([]store.PageEvent, len(got.Pages))}
+	for i, page := range got.Pages {
+		out.Pages[i] = store.PageEvent{Seq: page.Event, Page: page.Page, State: string(page.State)}
+		if page.Error != nil {
+			out.Pages[i].Error = &document.Error{Code: page.Error.Code, Detail: page.Error.Detail}
+		}
+	}
+	return out, nil
+}
+
 // DeleteParse removes an owner's parse that has ended: every object under
 // its prefix first, then its rows, so a delete that stops halfway leaves a
 // row to delete again and never an object nothing names.

@@ -250,14 +250,39 @@ paths:
     get:
       tags: [parses]
       operationId: streamParse
-      x-lectio-status: planned
       summary: Follow a parse
       description: |
-        Follow a parse as server-sent events.
+        Follow a parse as server-sent events, until it ends.
 
-        `state`, `page` (one per page that ended, with its number and
-        state), and `progress` events. Each carries an increasing id, and
-        `Last-Event-ID` resumes after it.
+        `page` says a page settled, with `page`, its `state` (`succeeded`
+        or `failed`) and its `error` when it failed. `progress` is the
+        parse's `progress` as it stands, and `state` its `state`, with
+        its `error` when it failed. A stream begins with the pages that
+        settled so far, then the progress and the state, and sends each
+        again as it changes. It ends after the `state` of a parse that
+        has ended.
+
+        Each event carries an id, a number that only grows within a
+        parse. `Last-Event-ID` resumes after it: the pages that settled
+        after that event are sent, and where the parse stands now. The
+        ids are read from stored rows, so they are the same on every
+        replica and after a restart. A page is sent for as long as the
+        parse runs, and after it for a parse that ended with a failed
+        page; a stream opened on a parse that ended with every page read
+        sends its progress and its state.
+
+        The server sends a comment line while nothing changes, and ends a
+        stream it has held for some minutes: connect again with the id of
+        the last event. A `retry` field names the delay to wait before
+        that.
+
+        A development server does not stream events and answers `501
+        not_implemented`.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          description: The id of the last event the client saw. An id the stream did not send is read as none.
+          schema: { type: string }
       responses:
         "200": { description: The stream., content: { text/event-stream: { schema: { type: string } } } }
         "404": { $ref: "#/components/responses/Error" }
