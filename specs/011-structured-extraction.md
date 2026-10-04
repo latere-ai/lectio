@@ -70,7 +70,55 @@ for a schema that
 - does not have the type `object` at its root;
 - refers to anything outside itself. A `$ref` resolves inside the
   schema or not at all: a caller's schema never makes the server read
-  a file or fetch an address.
+  a file or fetch an address;
+- applies more than 256 subschemas to one value, or applies a subschema
+  to the value it is itself applied to, without end;
+- gives one `$dynamicAnchor` to 2 subschemas.
+
+**What a check may cost.** A validator applies a schema to a value by
+applying to the same value every subschema it reaches through `$ref`,
+`$dynamicRef`, `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`
+and `dependentSchemas`, and it keeps nothing of what it has applied. A
+definition that applies the next one 2 times doubles the work at every
+link: 40 such definitions fit in under 2,000 bytes, compile at once,
+and cost 2^40 applications against `{}`. A validation that began cannot
+be stopped, and it runs in a worker that holds a slot. So the work is
+bounded before it begins, in 2 places.
+
+When the schema arrives, each subschema is counted with everything it
+applies to the same value, each as often as it is reached, the counts
+taken once each by following the references. A count above 256 is
+refused, and so is a subschema that reaches itself with no member and
+no item in between, which would never end. A choice between 64
+definitions counts 129, so the bound is above what a schema written to
+describe a document needs. A keyword that moves to a member or an item,
+`properties`, `patternProperties`, `additionalProperties`,
+`propertyNames`, `items`, `prefixItems`, `contains` and the 2
+`unevaluated` keywords, starts a new count: a schema that recurs
+through them is taken, and is applied as often as the object nests.
+With 1 subschema under a dynamic anchor a `$dynamicRef` to it is the
+reference it reads as. With 2 the object would decide which one is
+applied, and the count could not be taken from the schema.
+
+That count is not the whole cost. A schema can describe one member 2
+times, by 2 patterns that both match its name or by 2 subschemas that
+each name it, with nothing doubled at any one value. The work then
+doubles with every level the object nests, and an object 40 levels
+deep is 240 bytes that a document can make a model write. No reading of
+the schema alone bounds that, short of refusing schemas that are
+honest: a choice between 2 shapes that both hold a list of the same
+node is one. So when a reply arrives, the applications the validator
+would make of this schema to this object are counted first, in time
+that grows with the object and not with that count, and an object that
+would take more than 2,097,152 of them is not held to the schema. The
+field then fails with `schema_not_satisfied`, at once and with no
+repair, since another call would end the same way. The validator makes
+that many applications in under 1 second, and a reply of 4,000 objects
+held to a choice between 8 shapes each takes less than a quarter of
+them.
+
+A `pattern` is matched by an engine that runs in time linear in the
+text, with no backtracking, so no pattern needs a bound of its own.
 
 **When it runs.** A request may arrive while the parse is still
 running. It then waits, with no task, until the parse ends, and its
@@ -333,7 +381,7 @@ a field can fail with is:
 
 | The field's error | When |
 |---|---|
-| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
+| `schema_not_satisfied` | the object did not satisfy the schema after its repairs; the merged object of a document in windows did not; the object would take more than 2,097,152 applications of the schema to check; or no extractor could take the document: it was declined by every extractor, or its replies were never usable |
 | `too_many_pages` | the document's text takes more than 32 windows |
 | `reader_unavailable` | the extractor could not be reached within the task's attempts, or its endpoint rejects the request itself |
 | `budget_exhausted` | the key's budget is spent, at the gateway or at the key endpoint |
@@ -491,6 +539,8 @@ Remaining:
 | Criterion | Proven by |
 |---|---|
 | A schema that is invalid, too large or too deep is refused when the request arrives, with the reason | `TestASchemaIsCheckedWhenAnExtractionIsAsked`, through the API over the durable backend: nothing is queued and no model is called; `TestASchemaIsCheckedWhenItArrives` of `internal/extract`, with a reference to an address, to a file and to a sibling document among the refused |
+| A schema of 40 definitions that each apply the next one 2 times is refused with `invalid_schema` in well under 1 second, and so is every schema that applies more than 256 subschemas to one value or applies itself without end; a schema that recurs through its members and items, and one that shares its definitions, are taken and held | `TestASchemaThatDoublesItsWorkIsRefusedWhenItArrives`, `TestASchemaThatAppliesItselfWithoutEndIsRefused`, `TestASchemaThatRecursThroughItsMembersIsTakenAndHeld`, `TestASchemaThatSharesItsDefinitionsIsTaken`, `TestADynamicAnchorNamesOneSubschema` and `TestASubschemaInAnotherDialectIsRefused` of `internal/extract`; `TestASchemaIsCheckedWhenAnExtractionIsAsked` through the API |
+| A reply that would take more than 2,097,152 applications of its schema to check is not held to it: the field fails `schema_not_satisfied` after 1 call, with no repair, and the claim returns its slot | `TestAnObjectThatWouldCostTooMuchToCheckIsNotHeldToTheSchema` and `TestTheCountOfACheckIsWhatTheValidatorAppliesAtMost` of `internal/extract`; `TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall` of `internal/worker` |
 | Two schemas requested against one succeeded parse, one after the other, produce two fields and no reader call | `TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain`, through the API over the durable backend, with a reader that counts its calls |
 | For a fixture invoice and a stub text model, the result validates against the schema and every citation resolves to a block whose text contains the value | the same test, reading each citation with `resolve=true` and the block it names |
 | A reply that violates the schema is repaired within two retries or the field is recorded `failed` with the validator's errors; tokens of all attempts are in usage | `TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails`, through the API; `TestAReplyThatFailsValidationIsRepairedInTheNextClaim` of `internal/worker`; `TestAReplyThatFailsIsRepairedTwiceAndThenTheFieldFails` of `internal/extract` |

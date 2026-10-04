@@ -122,7 +122,8 @@ const (
 // everything but what another window may hold, a required member and the
 // least a list or an object may hold, and the merged object is then held to
 // the whole schema. A reply that fails is repaired up to MaxRepairs times
-// with the same window. A merged object that fails is not repaired: no one
+// with the same window, and one that would cost more than MaxCheckWork to
+// check fails the extraction at once. A merged object that fails is not repaired: no one
 // call reads the whole document, so none could mend it.
 func Take(schema *Schema, in Input, p *Progress, res reader.ExtractResult) (Step, Result, []Finding) {
 	window := in.Windows[len(p.Parts)]
@@ -130,7 +131,10 @@ func Take(schema *Schema, in Input, p *Progress, res reader.ExtractResult) (Step
 	p.Model, p.Constrained = res.Model, res.Constrained
 
 	if findings := schema.Check(res.Data, !whole); len(findings) > 0 {
-		if p.Repairs >= MaxRepairs {
+		// An object that was not held to the schema is not sent back: the
+		// cost is in the schema and the document, and a repair would be
+		// another call that ends the same way.
+		if p.Repairs >= MaxRepairs || unchecked(findings) {
 			return Unsatisfied, Result{}, findings
 		}
 		p.Repairs++

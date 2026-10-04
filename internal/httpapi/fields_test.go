@@ -201,6 +201,14 @@ func TestASchemaIsCheckedWhenAnExtractionIsAsked(t *testing.T) {
 		deep = `{"type":"object","properties":{"a":` + deep + `}}`
 	}
 	large := `{"type":"object","description":"` + strings.Repeat("d", extract.MaxSchemaBytes) + `"}`
+	// 40 definitions that each apply the next one 2 times: 2^40 applications
+	// to any object, in a schema of under 2,000 bytes.
+	var links []string
+	for i := range 40 {
+		next := strconv.Itoa(i + 1)
+		links = append(links, `"a`+strconv.Itoa(i)+`":{"allOf":[{"$ref":"#/$defs/a`+next+`"},{"$ref":"#/$defs/a`+next+`"}]}`)
+	}
+	doubling := `{"type":"object","$ref":"#/$defs/a0","$defs":{` + strings.Join(links, ",") + `,"a40":{"type":"object"}}}`
 	for name, tc := range map[string]struct {
 		body   string
 		status int
@@ -214,6 +222,9 @@ func TestASchemaIsCheckedWhenAnExtractionIsAsked(t *testing.T) {
 		"a schema whose root is a list":  {`{"name":"a","schema":{"type":"array"}}`, 400, "invalid_schema", "schema", "root"},
 		"a schema that fetches":          {`{"name":"a","schema":{"type":"object","properties":{"x":{"$ref":"https://example.com/s.json"}}}}`, 400, "invalid_schema", "schema", "does not compile"},
 		"a schema that is no object":     {`{"name":"a","schema":"object"}`, 400, "invalid_schema", "schema", "not a JSON object"},
+		"a schema that doubles its work": {`{"name":"a","schema":` + doubling + `}`, 400, "invalid_schema", "schema", "applies more than 256 subschemas to one value"},
+		"a schema that never ends":       {`{"name":"a","schema":{"type":"object","allOf":[{"$ref":"#"}]}}`, 400, "invalid_schema", "schema", "without end"},
+		"an anchor with 2 subschemas":    {`{"name":"a","schema":{"type":"object","$dynamicAnchor":"n","properties":{"x":{"$dynamicAnchor":"n"}}}}`, 400, "invalid_schema", "schema", "dynamic anchor"},
 		"no schema":                      {`{"name":"a"}`, 400, "invalid_request", "schema", "required"},
 		"no name":                        {`{"schema":{"type":"object"}}`, 400, "invalid_request", "name", "lower case"},
 		"a name in upper case":           {`{"name":"Invoice","schema":{"type":"object"}}`, 400, "invalid_request", "name", "lower case"},

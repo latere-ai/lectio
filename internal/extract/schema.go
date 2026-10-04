@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -38,6 +39,9 @@ const resource = "schema.json"
 // Schema is a caller's JSON Schema, compiled.
 type Schema struct {
 	compiled *jsonschema.Schema
+	// applied is what each schema inside the compiled one applies to one
+	// value, which is where the count of a check starts from.
+	applied map[*jsonschema.Schema]int
 
 	// Constrainable reports whether the schema uses nothing but what a
 	// decoder that enforces a schema takes, so it may be sent for
@@ -58,8 +62,10 @@ func (isolated) Load(string) (any, error) {
 // Compile checks a caller's schema and compiles it. A schema that is larger
 // than MaxSchemaBytes, is not a JSON object, nests deeper than
 // MaxSchemaDepth, names another dialect than draft 2020-12, does not
-// describe an object at its root, refers to anything outside itself, or
-// does not compile is refused with invalid_schema and the reason.
+// describe an object at its root, refers to anything outside itself, does
+// not compile, applies more than MaxApplied schemas to one value, or gives
+// one dynamic anchor to 2 subschemas is refused with invalid_schema and the
+// reason.
 func Compile(raw []byte) (*Schema, error) {
 	refuse := func(format string, args ...any) (*Schema, error) {
 		return nil, fault.New(fault.InvalidSchema, format, args...)
@@ -84,6 +90,16 @@ func Compile(raw []byte) (*Schema, error) {
 	if root["type"] != "object" {
 		return refuse("the schema's root does not have the type object")
 	}
+	// A dynamic anchor that 2 subschemas carry makes the object decide which
+	// of them a $dynamicRef applies. With 1 it is the one the reference
+	// names, and what the schema applies can be counted from the schema.
+	named := map[string]int{}
+	anchors(doc, named)
+	for _, name := range slices.Sorted(maps.Keys(named)) {
+		if named[name] > 1 {
+			return refuse("the schema gives the dynamic anchor %q to %d subschemas, and a dynamic anchor names 1", name, named[name])
+		}
+	}
 
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
@@ -95,7 +111,11 @@ func Compile(raw []byte) (*Schema, error) {
 	if err != nil {
 		return refuse("the schema does not compile: %s", reason(err))
 	}
-	return &Schema{compiled: compiled, Constrainable: constrainable(doc)}, nil
+	applied, err := measure(compiled)
+	if err != nil {
+		return nil, err
+	}
+	return &Schema{compiled: compiled, applied: applied, Constrainable: constrainable(doc)}, nil
 }
 
 // reason is a compile error as a caller reads it: without the name the
@@ -198,6 +218,9 @@ type Finding struct {
 	// Message says what is wrong, for the model that is asked to repair
 	// the reply. It may quote the reply.
 	Message string
+	// Unchecked says the object was not held to the schema: checking it
+	// would take more than MaxCheckWork. No repair is asked for it.
+	Unchecked bool
 }
 
 // english prints the validator's messages.
@@ -208,10 +231,18 @@ var english = message.NewPrinter(language.English)
 // longer document: a member that is missing, and a list or an object that
 // holds too few, may be in another window, so those rules are held to the
 // merged object and not to a part.
+//
+// An object the validator would apply the schema to more than MaxCheckWork
+// times is not held to it, and the one finding says so: the validation
+// could not be stopped once it began.
 func (s *Schema) Check(data []byte, part bool) []Finding {
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
 		return []Finding{{Rule: "#", Message: "the data is not a JSON value"}}
+	}
+	if s.costly(value) {
+		return []Finding{{Rule: "#", Unchecked: true, Message: fmt.Sprintf(
+			"at the root: holding the object to the schema would apply the schema more than %d times", MaxCheckWork)}}
 	}
 	err = s.compiled.Validate(value)
 	if err == nil {
@@ -279,6 +310,9 @@ const shown = 5
 // names the caller's schema and never a value of the reply, which is
 // content of the document.
 func Broken(findings []Finding) string {
+	if unchecked(findings) {
+		return fmt.Sprintf("the object was not held to the schema: that would apply the schema more than %d times", MaxCheckWork)
+	}
 	rules := make([]string, 0, shown)
 	for _, f := range findings {
 		if len(rules) == shown {
@@ -289,6 +323,12 @@ func Broken(findings []Finding) string {
 		}
 	}
 	return fmt.Sprintf("the object does not satisfy the schema in %d places, at %s", len(findings), strings.Join(rules, ", "))
+}
+
+// unchecked reports whether the findings are the one of an object that was
+// not held to the schema.
+func unchecked(findings []Finding) bool {
+	return len(findings) == 1 && findings[0].Unchecked
 }
 
 // Problems are findings as the model that is asked to repair its reply is

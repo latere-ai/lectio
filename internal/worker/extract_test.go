@@ -357,6 +357,34 @@ func TestAValueTheDocumentDoesNotStateFailsTheFieldAndIsNeverMadeUp(t *testing.T
 	}
 }
 
+// TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall: a schema
+// that applies 2 schemas to one member costs nothing to hold a flat object
+// to and 2^40 applications for an object 40 levels deep, which a document
+// can make a model write. Such a reply is not held to the schema: the claim
+// ends at once, the field fails with schema_not_satisfied and why, the 1
+// call is metered, and no repair is asked for.
+func TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall(t *testing.T) {
+	nested := strings.Repeat(`{"a":`, 40) + `{}` + strings.Repeat(`}`, 40)
+	ext := &asking{answers: func(int, reader.ExtractRequest) (reader.ExtractResult, error) {
+		return reader.ExtractResult{Data: json.RawMessage(nested), Model: "text-model", Usage: document.Usage{InputTokens: 9, OutputTokens: 240}}, nil
+	}}
+	b := extracting(t, ext)
+	index := b.assembled("prs_a", leaf(1, "Nest a 40 times"))
+	schema := `{"type":"object","patternProperties":{"a":{"$ref":"#"},"^a":{"$ref":"#"}}}`
+
+	began := time.Now()
+	s := b.w.run(context.Background(), extraction("prs_a", "nested", 1, index, schema, ""))
+	if took := time.Since(began); took > 5*time.Second {
+		t.Fatalf("the claim held its slot for %s", took)
+	}
+	if s.Outcome != tasks.Permanent || s.Error.Code != "schema_not_satisfied" || !strings.Contains(s.Error.Detail, "was not held to the schema") {
+		t.Fatalf("settled %+v, error %+v", s, s.Error)
+	}
+	if len(ext.asked) != 1 || s.Usage != (tasks.Usage{Calls: 1, InputTokens: 9, OutputTokens: 240}) || summary(t, s).Attempts != 1 {
+		t.Fatalf("after %d calls the settle meters %+v and says %+v", len(ext.asked), s.Usage, summary(t, s))
+	}
+}
+
 // TestASchemaIsSentForEnforcementOnlyWhenADecoderTakesIt: the schema is
 // sent for enforcement when the extractor's configuration allows it and
 // the schema uses nothing a decoder cannot enforce. A schema with oneOf is

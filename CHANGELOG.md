@@ -19,7 +19,12 @@ refused before it is pushed.
   and the extraction then fails with `schema_not_satisfied`; its parse
   is not affected. A schema that does not compile, is over 64 KiB,
   nests deeper than 16 levels or refers to anything outside itself is
-  `400 invalid_schema`. A document longer than the extractor's input
+  `400 invalid_schema`, and so is one that applies more than 256
+  subschemas to one value or applies itself without end: a validator
+  keeps nothing of what it applied, so such a schema costs work that
+  doubles with every definition. A reply that would take more than
+  2,097,152 applications of its schema to check is not checked, and
+  fails the extraction with `schema_not_satisfied`. A document longer than the extractor's input
   is read in windows, at most 32, and the replies are merged. An
   extraction may be asked while its parse runs and waits for the parse
   to end. A parse holds at most 64 extractions. A development server

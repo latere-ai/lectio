@@ -575,7 +575,16 @@ paths:
         compile, is larger than 64 KiB, nests deeper than 16 levels, is
         of another dialect than draft 2020-12, does not describe an
         object at its root, or refers to anything outside itself is
-        `invalid_schema`. A second request with a name the parse already
+        `invalid_schema`. So is one that applies more than 256
+        subschemas to one value through `$ref`, `$dynamicRef`, `allOf`,
+        `anyOf`, `oneOf`, `not`, `if`, `then`, `else` and
+        `dependentSchemas`, each counted as often as it is reached, one
+        that applies a subschema to the value it is itself applied to
+        without end, and one that gives one `$dynamicAnchor` to 2
+        subschemas. A schema that recurs through its members or its
+        items is taken. An object that would take more than 2,097,152
+        applications of the schema to check fails the extraction with
+        `schema_not_satisfied`. A second request with a name the parse already
         has is `conflict`, and so is one for a parse that holds 64
         extractions. With no extractor configured, or one named that is
         not, it is `reader_not_found`.
