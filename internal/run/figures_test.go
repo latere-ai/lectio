@@ -329,19 +329,6 @@ func TestOnlyAFigureThatCanBeCutOutIsDescribed(t *testing.T) {
 	if again := described(t, unversioned, "prs_2", FigureOptions{}); again.Reused != 0 || d.Calls() != 2 {
 		t.Fatalf("figures of a describer with no version: %+v, %d calls", again, d.Calls())
 	}
-
-	for name, tc := range map[string]struct {
-		blocks []document.Block
-		want   string
-	}{
-		"the caption after it":  {[]document.Block{{Kind: document.KindCaption, Text: "before"}, {Kind: document.KindFigure}, {Kind: document.KindCaption, Text: "after"}}, "after"},
-		"the caption before it": {[]document.Block{{Kind: document.KindCaption, Text: "before"}, {Kind: document.KindFigure}, {Kind: document.KindText, Text: "body"}}, "before"},
-		"no caption":            {[]document.Block{{Kind: document.KindText}, {Kind: document.KindFigure}}, ""},
-	} {
-		if got := caption(tc.blocks, 1); got != tc.want {
-			t.Errorf("%s: %q", name, got)
-		}
-	}
 }
 
 // noDescriberVersion is a describer that describes itself without a version.

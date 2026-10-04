@@ -5,17 +5,13 @@ package run
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/render"
 	"latere.ai/x/lectio/internal/store"
 	"latere.ai/x/lectio/reader"
@@ -33,14 +29,6 @@ type FigureOptions struct {
 	// Redo describes a figure again that already has a description, and
 	// takes none from an earlier run.
 	Redo bool
-}
-
-// figure is one figure a run sets out to describe.
-type figure struct {
-	ref     string
-	page    int
-	box     document.Box
-	caption string
 }
 
 // Figures starts a run that describes the figures of a parse: every block
@@ -68,7 +56,7 @@ func (r *Runner) Figures(p store.Parse, opt FigureOptions) (store.FigureRun, err
 		return store.FigureRun{}, fault.New(fault.ReaderNotFound, "no describer is configured")
 	}
 
-	var figures []figure
+	var found []figures.Figure
 	for _, page := range r.Store.Pages(p.ID) {
 		if opt.Pages != nil && !slices.Contains(opt.Pages, page.Number) {
 			continue
@@ -78,15 +66,10 @@ func (r *Runner) Figures(p store.Parse, opt FigureOptions) (store.FigureRun, err
 			// figure from.
 			continue
 		}
-		for i, b := range page.Blocks {
-			if b.Kind != document.KindFigure || b.Box == nil || (b.Description != "" && !opt.Redo) {
-				continue
-			}
-			figures = append(figures, figure{ref: b.Ref, page: page.Number, box: *b.Box, caption: caption(page.Blocks, i)})
-		}
+		found = append(found, figures.Of(page, opt.Redo)...)
 	}
 
-	run := store.FigureRun{State: store.RunRunning, Total: len(figures), StartedAt: time.Now().UTC()}
+	run := store.FigureRun{State: store.RunRunning, Total: len(found), StartedAt: time.Now().UTC()}
 	if err := r.Store.StartFigureRun(p.ID, run); err != nil {
 		return store.FigureRun{}, err
 	}
@@ -105,7 +88,7 @@ func (r *Runner) Figures(p store.Parse, opt FigureOptions) (store.FigureRun, err
 		// Once the runner has stopped no worker takes a job, so none is
 		// queued and the run ends with what it has.
 		if r.base.Err() == nil {
-			for i, f := range figures {
+			for i, f := range found {
 				all.Add(1)
 				j := &job{ctx: ctx, parse: p, seq: i, wg: &all}
 				j.do = func() { r.describe(j, f, chain, opt.Redo) }
@@ -146,23 +129,10 @@ func (r *Runner) FiguresDone(id string) <-chan struct{} {
 	return closed
 }
 
-// caption returns the caption of the figure at position i of a page's
-// blocks: the block after it when that is a caption, else the one before.
-// A figure with neither has none.
-func caption(blocks []document.Block, i int) string {
-	if i+1 < len(blocks) && blocks[i+1].Kind == document.KindCaption {
-		return blocks[i+1].Text
-	}
-	if i > 0 && blocks[i-1].Kind == document.KindCaption {
-		return blocks[i-1].Text
-	}
-	return ""
-}
-
 // describe does the work of one figure: it cuts the figure from its page's
 // image, has a describer describe it, and writes what came back onto the
 // figure's block.
-func (r *Runner) describe(j *job, f figure, chain []string, redo bool) {
+func (r *Runner) describe(j *job, f figures.Figure, chain []string, redo bool) {
 	if j.ctx.Err() != nil {
 		return
 	}
@@ -172,34 +142,34 @@ func (r *Runner) describe(j *job, f figure, chain []string, redo bool) {
 			if run.Failures == nil {
 				run.Failures = map[string]document.Error{}
 			}
-			run.Failures[f.ref] = *why
+			run.Failures[f.Ref] = *why
 		})
 	}
 
 	// A figure this owner already had described, from the same bytes with
 	// the same describers, is taken and not described again.
-	key := r.figureKey(j.parse, f, chain)
+	key := figures.Key(j.parse.ContentSHA, f, j.parse.Languages, chain, r.Describers)
 	if !redo {
 		if res, ok := r.Store.Figure(j.parse.Owner, key); ok {
-			r.write(j.parse.ID, f.ref, res)
+			r.write(j.parse.ID, f.Ref, res)
 			r.Store.UpdateFigureRun(j.parse.ID, func(run *store.FigureRun) { run.Done++; run.Reused++ })
 			return
 		}
 	}
 
-	page, ok := r.Store.Image(j.parse.ID, f.page)
+	page, ok := r.Store.Image(j.parse.ID, f.Page)
 	if !ok {
 		lost(&document.Error{Code: string(fault.FigureUnreadable), Detail: "the figure's page has no image"})
 		return
 	}
-	cut, err := render.Crop(page, f.box)
+	cut, err := render.Crop(page, f.Box)
 	if err != nil {
 		lost(&document.Error{Code: string(fault.CodeOf(err)), Detail: fault.DetailOf(err)})
 		return
 	}
 	req := reader.FigureRequest{
 		Data: cut.Data, MediaType: cut.MediaType, Width: cut.Width, Height: cut.Height,
-		Caption: f.caption, Languages: j.parse.Languages,
+		Caption: f.Caption, Languages: j.parse.Languages,
 	}
 	if r.Credential != nil {
 		req.Credential = r.Credential(j.parse.Owner)
@@ -218,50 +188,18 @@ func (r *Runner) describe(j *job, f figure, chain []string, redo bool) {
 	case failure != nil:
 		lost(failure)
 	default:
-		r.write(j.parse.ID, f.ref, res)
+		r.write(j.parse.ID, f.Ref, res)
 		r.Store.KeepFigure(j.parse.Owner, key, res)
 		r.Store.UpdateFigureRun(j.parse.ID, func(run *store.FigureRun) {
 			run.Done++
 			run.Usage = run.Usage.Add(res.Usage)
-			delete(run.Failures, f.ref)
+			delete(run.Failures, f.Ref)
 		})
 		r.update(j.parse.ID, func(p *store.Parse) { p.Usage = p.Usage.Add(res.Usage) })
 	}
 }
 
-// write puts a description onto a figure's block. The labels printed in
-// the figure become the block's text when the page's reader gave it none:
-// a text the reader transcribed is kept, since it came with the page.
+// write puts a description onto a figure's block.
 func (r *Runner) write(parseID, ref string, res reader.FigureResult) {
-	r.Store.UpdateBlock(parseID, ref, func(b *document.Block) {
-		b.Description = res.Description
-		b.Figure = &document.Figure{Type: res.Type, Model: res.Model}
-		if b.Text == "" {
-			b.Text = strings.Join(res.Labels, "\n")
-		}
-	})
-}
-
-// figureKey names what describing this figure means: the file's bytes, the
-// page, the figure's place on it, its caption, the languages hinted, and
-// every describer that may come to describe it, each by its version. A
-// describer that names no version promises nothing, and then there is no
-// key.
-func (r *Runner) figureKey(p store.Parse, f figure, chain []string) string {
-	if p.ContentSHA == "" {
-		return ""
-	}
-	parts := []string{
-		p.ContentSHA, strconv.Itoa(f.page), fmt.Sprintf("%.5f,%.5f,%.5f,%.5f", f.box[0], f.box[1], f.box[2], f.box[3]),
-		f.caption, strings.Join(p.Languages, ","),
-	}
-	for _, name := range chain {
-		version := r.Describers[name].Describe().Version
-		if version == "" {
-			return ""
-		}
-		parts = append(parts, name+"="+version)
-	}
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return hex.EncodeToString(sum[:])
+	r.Store.UpdateBlock(parseID, ref, figures.Kept(res).Onto)
 }
