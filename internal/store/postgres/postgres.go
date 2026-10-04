@@ -123,27 +123,49 @@ SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.parse_id DESC), '[]'::jsonb)::t
            AND ($6 = '' OR parse_id < $6)
          ORDER BY parse_id DESC LIMIT $7) p`
 
-	fileSQL          = `SELECT to_jsonb(f)::text FROM files f WHERE f.file_id = $1 AND f.deleted_at IS NULL`
-	fileByContentSQL = `SELECT to_jsonb(f)::text FROM files f WHERE f.owner = $1 AND f.sha256 = $2 AND f.deleted_at IS NULL`
-	fileDeleteSQL    = `SELECT lectio_file_delete($1, $2)`
-	fileForgetSQL    = `DELETE FROM files WHERE file_id = $1 AND deleted_at IS NOT NULL`
+	// A file is read with when it may be removed, which follows from its
+	// row and from the parses that read it.
+	fileSQL = `SELECT (to_jsonb(f) || jsonb_build_object('expires_at', lectio_file_until(f)))::text
+	             FROM files f WHERE f.file_id = $1 AND f.deleted_at IS NULL`
+	fileByContentSQL = `SELECT (to_jsonb(f) || jsonb_build_object('expires_at', lectio_file_until(f)))::text
+	                      FROM files f WHERE f.owner = $1 AND f.sha256 = $2 AND f.deleted_at IS NULL`
+	fileDeleteSQL   = `SELECT lectio_file_delete($1, $2)`
+	fileDeleteAtSQL = `SELECT lectio_file_delete($1, $2, $3)`
+	fileForgetSQL   = `DELETE FROM files WHERE file_id = $1 AND deleted_at IS NOT NULL`
 
 	// fileInsertSQL writes a file's row, or answers the row the owner
-	// already has for the same bytes. It answers no row when another
-	// statement is writing those bytes at the same instant: its row is not
-	// visible to this one, and running the statement again finds it.
+	// already has for the same bytes. Either way the file is kept for the
+	// retention of this upload from now: an upload of bytes the owner has
+	// is a use of the file. $8 is the retention in milliseconds, and 0
+	// keeps the file. $9 stands in for now() when a test set the clock.
+	// The row a conflict finds is locked and written, so two uploads of the
+	// same bytes at one instant answer the same file.
 	fileInsertSQL = `
 WITH ins AS (
-  INSERT INTO files (file_id, owner, name, size, sha256, media_type, object_key)
-  VALUES ($1, $2, $3, $4, $5, $6, $7)
-  ON CONFLICT (owner, sha256) WHERE deleted_at IS NULL DO NOTHING
-  RETURNING *)
-SELECT jsonb_build_object('created', true, 'file', to_jsonb(ins))::text FROM ins
-UNION ALL
-SELECT jsonb_build_object('created', false, 'file', to_jsonb(f))::text FROM files f
- WHERE f.owner = $2 AND f.sha256 = $5 AND f.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM ins)
- LIMIT 1`
-	tasksSQL = `SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.seq, t.task_id), '[]'::jsonb)::text
+  INSERT INTO files AS f (file_id, owner, name, size, sha256, media_type, object_key, retention, kept_until)
+  VALUES ($1, $2, $3, $4, $5, $6, $7,
+          CASE WHEN $8::bigint > 0 THEN $8::bigint * interval '1 millisecond' END,
+          CASE WHEN $8::bigint > 0 THEN coalesce($9::timestamptz, now()) + $8::bigint * interval '1 millisecond' END)
+  ON CONFLICT (owner, sha256) WHERE deleted_at IS NULL
+  DO UPDATE SET retention = EXCLUDED.retention, kept_until = EXCLUDED.kept_until
+  RETURNING f.*, (f.xmax = 0) AS created)
+SELECT jsonb_build_object('created', ins.created,
+         'file', to_jsonb(ins) - 'created' || jsonb_build_object('expires_at', greatest(ins.kept_until,
+                   (SELECT max(p.finished_at) FROM parses p WHERE p.file_id = ins.file_id) + ins.retention)))::text
+  FROM ins`
+
+	// fileKeepSQL keeps a file its owner uploaded again for the retention
+	// of that upload from now.
+	fileKeepSQL = `
+UPDATE files SET retention = CASE WHEN $2::bigint > 0 THEN $2::bigint * interval '1 millisecond' END,
+       kept_until = CASE WHEN $2::bigint > 0 THEN coalesce($3::timestamptz, now()) + $2::bigint * interval '1 millisecond' END
+ WHERE file_id = $1 AND deleted_at IS NULL`
+
+	expiredSQL       = `SELECT lectio_expired($1)`
+	expiredAtSQL     = `SELECT lectio_expired($1, $2)`
+	parseExpireSQL   = `SELECT lectio_parse_expire($1)`
+	parseExpireAtSQL = `SELECT lectio_parse_expire($1, $2)`
+	tasksSQL         = `SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY t.seq, t.task_id), '[]'::jsonb)::text
 	              FROM tasks t WHERE t.parse_id = $1`
 
 	// queueSQL reads every group with its counters per class, its parses
@@ -375,6 +397,10 @@ func (s *Store) stamp(sql, sqlAt string, args []any) (string, []any) {
 	return sql, args
 }
 
+// at is a test's clock as a statement's parameter, and NULL in a running
+// server, where the statement reads the database's now().
+func (s *Store) at() *time.Time { return s.clock.Load() }
+
 // text runs one statement that answers one text value.
 func (s *Store) text(ctx context.Context, sql, sqlAt string, args ...any) (string, error) {
 	sql, args = s.stamp(sql, sqlAt, args)
@@ -445,6 +471,15 @@ type Submission struct {
 	MaxQueued     int    `json:"max_queued"`
 	MaxPriority   int    `json:"max_priority"`
 
+	// PagesPerDay is how many pages the group's parses may count in one
+	// day, and is the group's setting as its bounds are. Zero is no budget.
+	// MaxPages is the most pages this parse may select; zero leaves the
+	// server's own bound alone. Retention is how long the parse is kept
+	// after it ended; zero keeps it.
+	PagesPerDay int           `json:"pages_per_day"`
+	MaxPages    int           `json:"max_pages"`
+	Retention   time.Duration `json:"-"`
+
 	Class    tasks.Class `json:"class"`
 	Priority int         `json:"priority"`
 
@@ -503,10 +538,11 @@ type Origin struct {
 	Version string `json:"version,omitempty"`
 }
 
-// submission is a Submission with the deadline in milliseconds.
+// submission is a Submission with its durations in milliseconds.
 type submission struct {
 	Submission
-	DeadlineMS int64 `json:"deadline_ms"`
+	DeadlineMS  int64 `json:"deadline_ms"`
+	RetentionMS int64 `json:"retention_ms"`
 }
 
 // Submit writes a parse and its prepare task in one transaction. parse is
@@ -516,7 +552,8 @@ type submission struct {
 // the same idempotency key. A group that already holds max_queued parses
 // that have not ended is refused with queue_full; two submits of one group
 // are serialized on the group's row, so they cannot both pass at one below
-// the bound, and two with one idempotency key make one parse.
+// the bound, and two with one idempotency key make one parse. A group whose
+// day holds no page more is refused with budget_exhausted.
 func (s *Store) Submit(ctx context.Context, sub Submission) (parse string, created bool, err error) {
 	switch {
 	case sub.Parse == "" || sub.Owner == "":
@@ -529,7 +566,9 @@ func (s *Store) Submit(ctx context.Context, sub Submission) (parse string, creat
 	if sub.Group == "" {
 		sub.Group = sub.Owner
 	}
-	doc, err := json.Marshal(submission{Submission: sub, DeadlineMS: sub.Deadline.Milliseconds()})
+	doc, err := json.Marshal(submission{
+		Submission: sub, DeadlineMS: sub.Deadline.Milliseconds(), RetentionMS: sub.Retention.Milliseconds(),
+	})
 	if err != nil {
 		return "", false, fmt.Errorf("store: encoding the submit of %s: %w", sub.Parse, err)
 	}
@@ -543,6 +582,8 @@ func (s *Store) Submit(ctx context.Context, sub Submission) (parse string, creat
 	switch answer.Result {
 	case "queue_full":
 		return "", false, fault.New(fault.QueueFull, "the group %s holds as many parses as it may", sub.Group)
+	case "budget_exhausted":
+		return "", false, fault.New(fault.BudgetExhausted, "the group %s has no page left of its %d for the day", sub.Group, sub.PagesPerDay)
 	case "file_not_found":
 		return "", false, fault.New(fault.FileNotFound, "no file %s", sub.File)
 	case "conflict":
@@ -600,6 +641,14 @@ type Parse struct {
 	Labels      map[string]string `json:"labels"`
 	Origin      *Origin           `json:"origin"`
 	PagesReused int               `json:"pages_reused"`
+
+	// MaxPages is the most pages the parse may select, when its allow
+	// named a bound. Reserved is how many pages it holds of its group's
+	// day, and ExpiresAt when it is removed, known once it has ended and
+	// nil for a parse that is kept.
+	MaxPages  int        `json:"max_pages"`
+	Reserved  int        `json:"reserved"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 // Terminal reports whether the parse has ended.
@@ -808,6 +857,14 @@ type File struct {
 	MediaType string    `json:"media_type"`
 	Key       string    `json:"object_key"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Retention is how long the file is kept from an upload of it, and
+	// past the end of the last parse that read it. It is what InsertFile
+	// and KeepFile are told; zero keeps the file. ExpiresAt is when the
+	// file may be removed as its row and its parses stand, and nil for a
+	// file that is kept.
+	Retention time.Duration `json:"-"`
+	ExpiresAt *time.Time    `json:"expires_at"`
 }
 
 // File returns a file whoever owns it. The API reads it before it asks
@@ -841,22 +898,27 @@ func (s *Store) FileByContent(ctx context.Context, owner, sha256 string) (f File
 // InsertFile writes a file's row. The same bytes are one file per owner:
 // when the owner already has a file with the digest, that file is returned
 // and created is false, and the caller removes the object it wrote for f.
+// Either way the file is kept for f.Retention from now.
 func (s *Store) InsertFile(ctx context.Context, f File) (stored File, created bool, err error) {
 	var answer struct {
 		Created bool `json:"created"`
 		File    File `json:"file"`
 	}
-	// The second run is for two uploads of the same bytes at one instant.
-	for range 2 {
-		err = s.decode(ctx, &answer, fileInsertSQL, "", f.ID, f.Owner, f.Name, f.Size, f.SHA256, f.MediaType, f.Key)
-		if !errors.Is(err, pgx.ErrNoRows) {
-			break
-		}
-	}
+	err = s.decode(ctx, &answer, fileInsertSQL, "", f.ID, f.Owner, f.Name, f.Size, f.SHA256, f.MediaType, f.Key, f.Retention.Milliseconds(), s.at())
 	if err != nil {
 		return File{}, false, fmt.Errorf("store: writing %s: %w", f.ID, err)
 	}
 	return answer.File, answer.Created, nil
+}
+
+// KeepFile keeps a file for retention from now: what an upload of bytes
+// the owner already has does to the file that holds them. Zero keeps the
+// file for good.
+func (s *Store) KeepFile(ctx context.Context, fileID string, retention time.Duration) error {
+	if _, err := s.pool.Exec(ctx, fileKeepSQL, fileID, retention.Milliseconds(), s.at()); err != nil {
+		return fmt.Errorf("store: keeping %s: %w", fileID, err)
+	}
+	return nil
 }
 
 // DeleteFile begins the delete of an owner's file and returns the key of
@@ -868,7 +930,7 @@ func (s *Store) DeleteFile(ctx context.Context, owner, fileID string) (key strin
 		Result string `json:"result"`
 		Key    string `json:"key"`
 	}
-	if err := s.decode(ctx, &answer, fileDeleteSQL, "", owner, fileID); err != nil {
+	if err := s.decode(ctx, &answer, fileDeleteSQL, fileDeleteAtSQL, owner, fileID); err != nil {
 		return "", fmt.Errorf("store: deleting %s: %w", fileID, err)
 	}
 	switch answer.Result {
@@ -887,4 +949,48 @@ func (s *Store) ForgetFile(ctx context.Context, fileID string) error {
 		return fmt.Errorf("store: removing the row of %s: %w", fileID, err)
 	}
 	return nil
+}
+
+// ExpiredFile is a file whose delete the retention sweep began: its row is
+// marked, and its object is under Key.
+type ExpiredFile struct {
+	ID  string `json:"file"`
+	Key string `json:"key"`
+}
+
+// Expired is what one run of the retention sweep is to remove.
+type Expired struct {
+	// Due is false when another process ran the sweep within the sweep
+	// interval. Nothing is listed then.
+	Due bool `json:"due"`
+	// Parses are the parses whose retention has ended. The caller removes
+	// the objects under each one's prefix and then calls ExpireParse.
+	Parses []string `json:"parses"`
+	// Files are the files whose delete has begun. The caller removes each
+	// one's object and then calls ForgetFile.
+	Files []ExpiredFile `json:"files"`
+}
+
+// Expired claims the retention sweep when it is due and returns what it is
+// to remove, at most limit parses and limit files. A file is marked here,
+// in the statement that lists it, so it is gone for every caller before its
+// object is removed; a parse is removed by ExpireParse, after its objects.
+// A file whose delete began earlier and did not finish is listed again.
+func (s *Store) Expired(ctx context.Context, limit int) (Expired, error) {
+	var out Expired
+	if err := s.decode(ctx, &out, expiredSQL, expiredAtSQL, limit); err != nil {
+		return Expired{}, fmt.Errorf("store: the retention sweep: %w", err)
+	}
+	return out, nil
+}
+
+// ExpireParse removes the rows of a parse whose retention has ended, once
+// its objects are gone. It reports false for a parse that is not there or
+// has not expired, which is left alone.
+func (s *Store) ExpireParse(ctx context.Context, parseID string) (removed bool, err error) {
+	sql, args := s.stamp(parseExpireSQL, parseExpireAtSQL, []any{parseID})
+	if err := s.pool.QueryRow(ctx, sql, args...).Scan(&removed); err != nil {
+		return false, fmt.Errorf("store: expiring %s: %w", parseID, err)
+	}
+	return removed, nil
 }

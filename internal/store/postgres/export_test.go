@@ -22,8 +22,18 @@ func (s *Store) Decode(ctx context.Context, into any, sql string, args ...any) e
 // SubmitDocument is the document Submit sends to lectio_submit, for a test
 // that queues many parses in one round trip.
 func SubmitDocument(sub Submission) (string, error) {
-	doc, err := json.Marshal(submission{Submission: sub, DeadlineMS: sub.Deadline.Milliseconds()})
+	doc, err := json.Marshal(submission{
+		Submission: sub, DeadlineMS: sub.Deadline.Milliseconds(), RetentionMS: sub.Retention.Milliseconds(),
+	})
 	return string(doc), err
+}
+
+// Reserve makes the one statement that promises pages of a group's day,
+// outside an exchange, so a test runs many of them at once with nothing
+// else serializing them.
+func (s *Store) Reserve(ctx context.Context, group string, day time.Time, pages, limit int) (reserved bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT lectio_reserve($1, $2::date, $3, $4)`, group, day.Format(time.DateOnly), pages, limit).Scan(&reserved)
+	return reserved, err
 }
 
 // MigrationURL and Bound are the unexported helpers, for their own tests.
