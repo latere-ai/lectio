@@ -689,6 +689,42 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [fields]
+      operationId: askField
+      summary: Ask an extraction again
+      description: |
+        Ask an extraction again under its name: with another schema, or
+        with the same one after it failed.
+
+        The extraction is reset to `pending`, with the new request, and
+        nothing of its last object, its citations or its error; its
+        counts of calls and tokens start again at 0, and what its last
+        asking spent stays spent. It runs over the parse's document as a
+        new extraction does, and reads no page again. The body is a
+        request for an extraction; its `name` is the path's, and may be
+        left out. The schema and the instructions are checked as for a
+        new extraction.
+
+        An extraction that has not ended is `conflict`: its task may be
+        running. A name the parse has no extraction of is asked as a new
+        one, as `POST /parses/{parse}/fields` asks it, and is held to the
+        same 64 a parse holds. A body whose `name` is another than the
+        path's is `invalid_request`.
+
+        Answers `202` with the extraction, `pending`. A development
+        server answers `501 not_implemented`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldAgain" }
+      responses:
+        "202": { description: Accepted., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
 
   /openapi.yaml:
     get:
@@ -1276,6 +1312,17 @@ components:
       required: [name, schema]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
+        schema: { type: object, description: A JSON Schema, draft 2020-12, whose root is an object. }
+        instructions: { type: string, maxLength: 4000 }
+        citations: { type: boolean, default: true }
+        extractor: { type: string, description: The name of a configured extractor. Absent, the routing policy decides. }
+
+    FieldAgain:
+      type: object
+      additionalProperties: false
+      required: [schema]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: The path's name. May be left out. }
         schema: { type: object, description: A JSON Schema, draft 2020-12, whose root is an object. }
         instructions: { type: string, maxLength: 4000 }
         citations: { type: boolean, default: true }

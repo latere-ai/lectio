@@ -543,6 +543,34 @@ a field can fail with is:
 | `deadline_exceeded` | the extraction did not end by its deadline |
 | `internal` | a fault of the server's own, or a task that ended the workers that ran it |
 
+### Asking again
+
+`PUT /parses/{parse}/fields/{name}` asks an extraction again under its
+name: with another schema, to change what it fills, or with the same one,
+after it failed. Without it a client that wants other members, or a
+second try, needs another name, and a set of files read under one name
+breaks apart.
+
+- **Only an extraction that has ended.** One that is `pending` is
+  `conflict`: its task may be running, and a second asking would race it.
+- **The row is reset, the history is not rewritten.** The extraction is
+  `pending` with the new request and pin, no object, no citations, no
+  error, and its counts of calls and tokens at 0. What the last asking
+  spent stays in the meter. The result object the asking replaced is
+  removed, since nothing names it any longer.
+- **Its task is queued as a new extraction's.** At once when the parse
+  has ended, and when it ends otherwise; it has the same time from when
+  it is queued. Its lease tokens start at the count of askings less 1,
+  shifted into the high 32 bits, as a figure run's start at its run: a
+  worker that lost the task of an earlier asking removes what it wrote
+  under its own tokens, and none of them is a token of the new asking.
+- **A name the parse has none of is asked as new**, under the bound of
+  64 a parse holds, so a client that does not know whether it asked
+  before sends one request.
+- The body is a request for an extraction without its name, which is the
+  path's; a body that names another is `invalid_request`. The checks are
+  those of a new extraction.
+
 ### Result
 
 ```json

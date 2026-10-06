@@ -22,6 +22,16 @@ refused before it is pushed.
   `page_header`, `page_footer` and `page_number` are left out of the
   text a model is given and out of what a citation may name, so a
   running header is not taken for the document's title.
+- Added: `PUT /parses/{parse}/fields/{name}` asks an extraction again
+  under its name, with another schema or with the same one after it
+  failed. Only an extraction that has ended is asked again; one that is
+  `pending` is `409 conflict`. It is reset to `pending` with the new
+  request and nothing of its last result, the result it replaced is
+  removed, and its task is queued as a new extraction's. A name the
+  parse has no extraction of is asked as a new one. Migration
+  `000007_ask_again` adds a count of askings to an extraction. Pods of
+  v0.4.0 that are running keep working beside it; one that starts after
+  it does not come up, so roll every role.
 
 ## v0.4.0 - 2026-10-04
 
