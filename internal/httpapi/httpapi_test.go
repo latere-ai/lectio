@@ -910,7 +910,7 @@ func TestReadersAreListedWithTheDefaultFirst(t *testing.T) {
 // text, which calls no model.
 type textReader struct{ stub.Reader }
 
-func (textReader) Describe() reader.Description {
+func (*textReader) Describe() reader.Description {
 	d := (&stub.Reader{}).Describe()
 	d.Text, d.Local = true, true
 	return d

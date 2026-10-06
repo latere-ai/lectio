@@ -605,7 +605,7 @@ func TestItemsThatHashAlikeAreOneGroupAndPricedPastTheBound(t *testing.T) {
 		t.Fatalf("the check of them counts %d, want past %d", got, MaxCheckWork)
 	}
 	// Distinct texts hash apart, and so do numbers that differ in size.
-	if hashed("ab") == hashed("a\x04b") || hashed([]any{"a", "b"}) != hashed([]any{"a", "b"}) || hashed(1.5) == hashed(2.5) {
+	if hashed("ab") == hashed("a\x04b") || hashed([]any{"a", "b"}) == hashed([]any{"ab"}) || hashed(1.5) == hashed(2.5) {
 		t.Fatal("the hash does not tell what the validator's tells apart")
 	}
 }
