@@ -447,14 +447,14 @@ func TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails(t *testing.T) {
 // merged object validates against the schema and says how many windows it
 // was merged from.
 func TestALongDocumentIsExtractedInWindowsThroughTheAPI(t *testing.T) {
-	// The invoice is 88 bytes of text in 5 blocks, 4 times a window of 22
-	// bytes, and no 2 of its blocks fit one window.
+	// The invoice reads as 4 blocks, and no 2 of them fit a window of 22
+	// bytes.
 	model := &textModel{maxInput: 22}
 	e, _ := extracting(t, model, nil)
 	pid := e.invoice()
 	e.ask(pid, "invoice", invoiceSchema)
 	got := e.filled(pid, "invoice", "")
-	if got["state"] != "succeeded" || got["windows"] != 5.0 || model.calls() != 5 || got["attempts"] != 1.0 {
+	if got["state"] != "succeeded" || got["windows"] != 4.0 || model.calls() != 4 || got["attempts"] != 1.0 {
 		t.Fatalf("the extraction in windows: %v after %d calls", got, model.calls())
 	}
 	data, err := json.Marshal(got["data"])
@@ -520,7 +520,7 @@ func (w *written) did(parse string) []string {
 // worker removes what it wrote. The same holds for a parse deleted during
 // the first call of its extraction and for one deleted during a later one.
 func TestADeleteLeavesNothingOfAParseWhoseExtractionStillRuns(t *testing.T) {
-	// The invoice is read in 5 windows, so a call returns to a step and
+	// The invoice is read in 4 windows, so a call returns to a step and
 	// not to a result. The first call of the first parse and the second of
 	// the second wait until their parse was deleted.
 	gates := map[int]chan struct{}{1: make(chan struct{}), 3: make(chan struct{})}
