@@ -1340,6 +1340,7 @@ components:
         kinds: { type: array, items: { $ref: "#/components/schemas/Kind" } }
         version: { type: string, description: Names everything in the reader's configuration that changes what it returns for the same page. Pages are reused only between readers of the same version. }
         default: { type: boolean, description: Whether the routing policy tries this reader first. }
+        text_layer: { type: boolean, description: "True for a reader that reads a page from the text its file carries and calls no model; absent or false otherwise." }
 
     ReaderList:
       type: object

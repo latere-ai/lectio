@@ -310,6 +310,10 @@ type readerView struct {
 	Kinds   []document.Kind `json:"kinds,omitempty"`
 	Version string          `json:"version,omitempty"`
 	Default bool            `json:"default,omitempty"`
+	// TextLayer says the reader reads a page from the text its file carries
+	// and calls no model, so a console keeps it out of a picker of models
+	// while the routing policy still tries it first.
+	TextLayer bool `json:"text_layer,omitempty"`
 }
 
 type imageView struct {
@@ -341,8 +345,9 @@ func (s *Server) listReaders(w http.ResponseWriter, r *http.Request, c call) err
 		d := rd.Describe()
 		out.Readers = append(out.Readers, readerView{
 			Name: name, Accepts: d.Accepts, Boxes: d.Boxes, Kinds: d.Kinds, Version: d.Version,
-			Image:   imageView{DPI: d.Image.DPI, LongEdge: d.Image.LongEdge, Format: d.Image.Format},
-			Default: i == 0 && len(s.Chain) > 0,
+			Image:     imageView{DPI: d.Image.DPI, LongEdge: d.Image.LongEdge, Format: d.Image.Format},
+			Default:   i == 0 && len(s.Chain) > 0,
+			TextLayer: d.Text && d.Local,
 		})
 	}
 	httpjson.Write(w, http.StatusOK, out)

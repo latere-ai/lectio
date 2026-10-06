@@ -6,6 +6,11 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: `GET /readers` marks a reader that reads a page from the text
+  its file carries and calls no model with `text_layer: true`, so a
+  console can keep it out of a picker of models while the routing
+  policy still tries it first.
+
 - Fixed: an extraction no longer reads page furniture. Blocks of kind
   `page_header`, `page_footer` and `page_number` are left out of the
   text a model is given and out of what a citation may name, so a

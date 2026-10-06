@@ -906,6 +906,30 @@ func TestReadersAreListedWithTheDefaultFirst(t *testing.T) {
 	}
 }
 
+// textReader is a stub that describes itself as a reader of a file's own
+// text, which calls no model.
+type textReader struct{ stub.Reader }
+
+func (textReader) Describe() reader.Description {
+	d := (&stub.Reader{}).Describe()
+	d.Text, d.Local = true, true
+	return d
+}
+
+// TestAReaderOfTheFilesOwnTextSaysSo: the listing marks a reader that reads
+// the text its file carries and calls no model with text_layer, and leaves
+// the member out of a reader of a model.
+func TestAReaderOfTheFilesOwnTextSaysSo(t *testing.T) {
+	e := serve(t, func(_ *Server, r *run.Runner) {
+		r.Readers = map[string]reader.Reader{"text": &textReader{}, "model": &stub.Reader{}}
+		r.Chain = []string{"text", "model"}
+	})
+	got := e.do("GET", "/readers", nil).json(t)["readers"].([]any)
+	if len(got) != 2 || at(got[0], "name") != "text" || at(got[0], "text_layer") != true || at(got[1], "name") != "model" || at(got[1], "text_layer") != nil {
+		t.Fatalf("readers: %v", got)
+	}
+}
+
 func TestWhatIsNotRoutedAnswersInTheSameShape(t *testing.T) {
 	e := serve(t, nil)
 	if got := e.do("GET", "/nothing", nil); got.status != http.StatusNotFound || got.code(t) != "not_found" {
