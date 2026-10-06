@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.5.0 - 2026-10-06
+
 - Changed: a `uniqueItems` check of a list of more than 20 items is
   priced by the comparisons the validator makes, which are the pairs of
   items whose hashes are equal, and no longer as if every item met every
