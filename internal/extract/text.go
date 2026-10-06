@@ -34,9 +34,11 @@ type Piece struct {
 var fence = regexp.MustCompile(`(?i)<(/?(?:document|schema))>`)
 
 // Pieces is the document as an extraction reads it: the blocks of the pages
-// that were read, in reading order. A running header or footer is left out
-// after its first occurrence, and a page number always, as the document's
-// renderings leave them out. A table is its markup, which keeps merged
+// that were read, in reading order. Page furniture, a running header, a
+// running footer and a page number, is left out wherever it stands: it is
+// not part of what the document says, and a model that reads a running
+// header answers a question about the title with it. What is not read is
+// in no window, so no citation can name it. A table is its markup, which keeps merged
 // cells. A figure is the words printed in it and never its description,
 // which is a reader's own prose and not something the document says. A
 // block with nothing printed in it is left out.
@@ -51,7 +53,7 @@ func Pieces(pages []document.Page) []Piece {
 			continue
 		}
 		for _, b := range page.Blocks {
-			if b.Repeated || b.Kind == document.KindPageNumber {
+			if furniture(b.Kind) {
 				continue
 			}
 			text := b.Text
@@ -74,3 +76,9 @@ func Pieces(pages []document.Page) []Piece {
 // content. The ref marks where the block begins, and the block may run over
 // several lines.
 func line(ref, text string) string { return "[" + ref + "] " + text }
+
+// furniture reports whether a block of this kind is page furniture, which
+// an extraction neither reads nor lets a citation point at.
+func furniture(k document.Kind) bool {
+	return k == document.KindPageHeader || k == document.KindPageFooter || k == document.KindPageNumber
+}

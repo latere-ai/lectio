@@ -6,6 +6,11 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Fixed: an extraction no longer reads page furniture. Blocks of kind
+  `page_header`, `page_footer` and `page_number` are left out of the
+  text a model is given and out of what a citation may name, so a
+  running header is not taken for the document's title.
+
 ## v0.4.0 - 2026-10-04
 
 - Added: extraction with a schema, in the durable server.

@@ -23,8 +23,8 @@ func block(page, order int, kind document.Kind, text string) document.Block {
 }
 
 // TestADocumentIsReadAsItsBlocksWithTheirRefs: an extraction reads the
-// pages that were read, block by block in reading order. A running header
-// after its first occurrence and a page number are left out, a table is its
+// pages that were read, block by block in reading order. Running headers,
+// footers and page numbers are left out, a table is its
 // markup, a figure is the words printed in it and never its description,
 // and a block with nothing printed in it is not there.
 func TestADocumentIsReadAsItsBlocksWithTheirRefs(t *testing.T) {
@@ -51,7 +51,6 @@ func TestADocumentIsReadAsItsBlocksWithTheirRefs(t *testing.T) {
 		got = append(got, fmt.Sprintf("%s|%s|%t", p.Ref, p.Text, p.Section))
 	}
 	want := []string{
-		"1.1|ACME Corp|false",
 		"1.2|Invoice INV-0042|true",
 		"1.3|<table><tr><td>Item</td><td>Price</td></tr></table>|false",
 		"1.4|a b|false",
@@ -65,7 +64,7 @@ func TestADocumentIsReadAsItsBlocksWithTheirRefs(t *testing.T) {
 	if err != nil || len(in.Windows) != 1 || in.Extractor != "text" {
 		t.Fatalf("the plan is %+v, %v", in, err)
 	}
-	if text := in.Windows[0].Text; !strings.HasPrefix(text, "[1.1] ACME Corp\n[1.2] Invoice INV-0042\n[1.3] <table>") || strings.Contains(text, "bar chart") {
+	if text := in.Windows[0].Text; !strings.HasPrefix(text, "[1.2] Invoice INV-0042\n[1.3] <table>") || strings.Contains(text, "bar chart") {
 		t.Fatalf("the window reads %q", text)
 	}
 }
@@ -637,5 +636,36 @@ func TestAValueThatDoesNotEncodeIsWrittenAsNull(t *testing.T) {
 	}
 	if got := encode(map[string]any{"a": json.Number("1.50")}); string(got) != `{"a":1.50}` {
 		t.Fatalf("a number is written as %s", got)
+	}
+}
+
+// TestPageFurnitureIsNotReadNorCited: a running header, a running footer
+// and a page number are in no window, so the text holds the title and not
+// the header, and a reply that cites the header's ref has that citation
+// dropped.
+func TestPageFurnitureIsNotReadNorCited(t *testing.T) {
+	pages := []document.Page{{Number: 1, State: document.PageSucceeded, Blocks: []document.Block{
+		block(1, 1, document.KindPageHeader, "Tide gauge survey, third quarter"),
+		block(1, 2, document.KindTitle, "Harbor Tide Gauge Survey"),
+		block(1, 3, document.KindPageFooter, "Confidential"),
+		block(1, 4, document.KindPageNumber, "1"),
+	}}}
+	in, err := Plan("text", pages, 0)
+	if err != nil || len(in.Windows) != 1 {
+		t.Fatalf("the plan is %+v, %v", in, err)
+	}
+	w := in.Windows[0]
+	if !strings.Contains(w.Text, "Harbor Tide Gauge Survey") || strings.Contains(w.Text, "Tide gauge survey, third quarter") || strings.Contains(w.Text, "Confidential") {
+		t.Fatalf("the window reads %q", w.Text)
+	}
+	if !slices.Equal(w.Refs, []string{"1.2"}) {
+		t.Fatalf("the window may cite %v, want only 1.2", w.Refs)
+	}
+	got := Cited([]byte(`{"title":"x"}`), map[string][]string{"/title": {"1.1", "1.2"}}, w.Refs)
+	if !slices.Equal(got["/title"], []string{"1.2"}) {
+		t.Fatalf("the citations are %v, want the header's ref dropped", got)
+	}
+	if only := Cited([]byte(`{"title":"x"}`), map[string][]string{"/title": {"1.1"}}, w.Refs); len(only) != 0 {
+		t.Fatalf("a citation of the header alone stands: %v", only)
 	}
 }

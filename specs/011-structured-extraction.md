@@ -266,8 +266,11 @@ were read.
 ### How it runs
 
 1. **Input.** The document as text in reading order, each block led by
-   its ref in brackets, repeated headers and footers left out, tables
-   as HTML. A block may run over several lines, as a table does; the
+   its ref in brackets, tables as HTML. Page furniture, which is every
+   block of kind `page_header`, `page_footer` and `page_number`, is
+   left out wherever it stands, so it is in no window, no count of
+   input size and no citation: a model that read a running header
+   answered a question about the title with it. A block may run over several lines, as a table does; the
    ref marks where it begins. A figure contributes the words printed
    inside it and not its description, which is a reader's own prose and
    is never cited as something the document says
