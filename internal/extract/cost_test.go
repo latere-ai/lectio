@@ -574,3 +574,58 @@ func TestWorkPastTheBoundIsNotChecked(t *testing.T) {
 		t.Errorf("not checking 7 objects took %s", took)
 	}
 }
+
+// TestItemsThatHashAlikeAreOneGroupAndPricedPastTheBound: the validator
+// frames a text in the hash of a list's items with no length, so items
+// whose texts are cut at other places hash alike and are compared in full.
+// The meter hashes as the validator does, puts such items in one group and
+// prices their pairs past the bound. The case fails closed when the meter's
+// hash stops following the validator's: items that meet there are then
+// priced as distinct.
+func TestItemsThatHashAlikeAreOneGroupAndPricedPastTheBound(t *testing.T) {
+	big := join(60, func(j int) string { return strconv.Itoa(j) + ".5" })
+	s := compiled(t, `{"type":"object","properties":{"l":{"uniqueItems":true}}}`)
+	data := `{"l":[` + join(len(cuts), func(i int) string { return `[[` + big + `],` + cuts[i] + `]` }) + `]}`
+	value, _, err := decode([]byte(data), MaxValueDepth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := value.(map[string]any)["l"].([]any)
+	first := hashed(list[0])
+	for i, item := range list {
+		if hashed(item) != first {
+			t.Fatalf("item %d of the 462 does not hash as the first does", i)
+		}
+	}
+	m := &meter{measured: s.measured, counted: map[node]int{}, weights: map[uintptr]int{}}
+	if got := m.unique(list); got <= MaxCheckWork {
+		t.Fatalf("462 items in 1 group are priced %d, want past %d", got, MaxCheckWork)
+	}
+	if got := s.work(value); got <= MaxCheckWork {
+		t.Fatalf("the check of them counts %d, want past %d", got, MaxCheckWork)
+	}
+	// Distinct texts hash apart, and so do numbers that differ in size.
+	if hashed("ab") == hashed("a\x04b") || hashed([]any{"a", "b"}) != hashed([]any{"a", "b"}) || hashed(1.5) == hashed(2.5) {
+		t.Fatal("the hash does not tell what the validator's tells apart")
+	}
+}
+
+// TestAListOfDistinctSmallObjectsIsChecked: 2,000 objects of 2 members that
+// differ hash apart, so the check hashes them and compares none, and it is
+// made, in well under a second.
+func TestAListOfDistinctSmallObjectsIsChecked(t *testing.T) {
+	s := compiled(t, `{"type":"object","properties":{"l":{"uniqueItems":true}}}`)
+	data := `{"l":[` + join(2000, func(i int) string { return fmt.Sprintf(`{"id":%d,"name":"item%d"}`, i, i) }) + `]}`
+	began := time.Now()
+	findings := s.Check([]byte(data), false)
+	if unchecked(findings) || len(findings) != 0 {
+		t.Fatalf("2,000 distinct objects: %v", findings)
+	}
+	if took := time.Since(began); took > 500*time.Millisecond*slowdown {
+		t.Fatalf("the check took %s", took)
+	}
+	twice := `{"l":[` + join(2000, func(i int) string { return fmt.Sprintf(`{"id":%d,"name":"item%d"}`, i%1999, i%1999) }) + `]}`
+	if findings := s.Check([]byte(twice), false); unchecked(findings) || len(findings) == 0 {
+		t.Fatalf("a repeated object is not found: %v", findings)
+	}
+}

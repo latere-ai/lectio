@@ -179,7 +179,7 @@ applying a schema that asks nothing is 2:
 | looks up a name a schema requires | 1 for 2 names |
 | counts the characters of a text for `minLength` or `maxLength` | 1 for 32 bytes |
 | matches a pattern against a text or a member's name | 1, and 1 for every 64 steps of the pattern times bytes of the text |
-| finds whether a list holds a value 2 times | for a list of up to 20 items, which is compared each with each, what it weighs as a listed value times its length; for a longer list of scalars, 2 times its weight; for a longer list that holds a list or an object, its weight times half its length, since the validator hashes a text with no length and items whose texts are cut at other places meet and are compared in full |
+| finds whether a list holds a value 2 times | for a list of up to 20 items, which is compared each with each, what it weighs as a listed value times its length; for a longer list, which the validator hashes, 2 times its weight for hashing every item, and for each group of items that have the same hash, its pairs times the weight of its heaviest item, since the validator compares in full the items whose hashes are equal. The meter hashes as the validator does (`writeHash` of its `util.go`, version 6.0.3, which frames a text with no length), so items whose texts are cut at other places meet in one group and are priced as the comparisons they make, and distinct items cost only their hashing: a list of 65,535 objects of 2 small members is checked |
 
 The prices are held above what the validator takes by a test that
 builds 34 cases, each made to be as costly as its keywords allow for

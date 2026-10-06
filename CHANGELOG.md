@@ -6,6 +6,13 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Changed: a `uniqueItems` check of a list of more than 20 items is
+  priced by the comparisons the validator makes, which are the pairs of
+  items whose hashes are equal, and no longer as if every item met every
+  other. A list of distinct objects is checked up to 65,535 small
+  items, where it was refused past about 500; items built to hash alike
+  are still priced past the bound and not checked.
+
 - Added: `GET /readers` marks a reader that reads a page from the text
   its file carries and calls no model with `text_layer: true`, so a
   console can keep it out of a picker of models while the routing

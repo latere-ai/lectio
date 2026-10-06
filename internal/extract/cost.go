@@ -5,7 +5,10 @@ package extract
 
 import (
 	"fmt"
+	"hash/fnv"
+	"io"
 	"maps"
+	"math/big"
 	"reflect"
 	"regexp"
 	"regexp/syntax"
@@ -505,12 +508,15 @@ func (m *meter) cost(s *jsonschema.Schema, value any) int {
 
 // unique is what finding whether a list holds a value 2 times costs. A
 // list of up to fewItems is compared each item with each. A longer one is
-// hashed, each item once, and compared in full where 2 hashes meet. Scalars
-// that differ hash apart, so a list of scalars costs its weight twice. The
-// validator frames a text in a hash with no length, so lists and objects
-// whose texts are cut at other places hash alike: a list that holds one is
-// priced as if every item met every other, its weight times half its length,
-// which is what such a reply makes the validator do.
+// hashed, each item once, and compared in full with each item before it
+// that has the same hash. So the list's items are grouped by the validator's
+// own hash, and the price is hashing every item, twice the list's weight,
+// and for each group of k items its k*(k-1)/2 pairs each at the weight of
+// the group's heaviest item. Items that differ in their hash are never
+// compared, so a list of distinct objects costs its hashing and nothing
+// more, while items whose texts are cut at other places and hash alike,
+// which the hash allows since it frames a text with no length, are priced
+// as the full comparisons they make.
 func (m *meter) unique(list []any) int {
 	at := reflect.ValueOf(list).Pointer()
 	w, ok := m.weights[at]
@@ -521,14 +527,84 @@ func (m *meter) unique(list []any) int {
 	if len(list) <= fewItems {
 		return min(w*len(list), MaxCheckWork+1)
 	}
+	type group struct{ n, weight int }
+	groups := map[uint64]*group{}
 	for _, item := range list {
-		switch item.(type) {
-		case []any, map[string]any:
-			if w > (MaxCheckWork+1)/(len(list)/2) {
-				return MaxCheckWork + 1
-			}
-			return plus(w, w*(len(list)/2))
+		key := hashed(item)
+		g := groups[key]
+		if g == nil {
+			g = &group{}
+			groups[key] = g
+		}
+		g.n++
+		g.weight = max(g.weight, weight(item))
+	}
+	n := plus(w, w)
+	for _, g := range groups {
+		pairs := g.n * (g.n - 1) / 2
+		if pairs == 0 {
+			continue
+		}
+		if g.weight > (MaxCheckWork+1)/pairs {
+			return MaxCheckWork + 1
+		}
+		if n = plus(n, pairs*g.weight); n > MaxCheckWork {
+			return n
 		}
 	}
-	return plus(w, w)
+	return n
+}
+
+// hashed is the hash the validator gives an item of a list that must be
+// unique, as far as it tells items apart: 2 items have the same value here
+// exactly when they have the same input to the validator's hash. The input
+// is written as writeHash of util.go writes it, in version v6.0.3 of
+// github.com/santhosh-tekuri/jsonschema/v6, which duplicates uses for a
+// list of more than 20 items: a tag byte for the kind of value, the members
+// of an object in the order of their names, a text with no length, and for a
+// number the bytes of the numerator and of the denominator of its rational,
+// whose sign is not written. The validator's hash is seeded at random and
+// this one is not, which only ever tells fewer items apart than the
+// validator does. A change of the validator's hash is not followed here
+// unseen: TestItemsThatHashAlikeAreOneGroupAndPricedPastTheBound builds
+// items that meet in this hash and fails when the price is not past the
+// bound.
+func hashed(v any) uint64 {
+	h := fnv.New64a()
+	writeHash(v, h)
+	return h.Sum64()
+}
+
+// writeHash writes the hash input of a value, as writeHash of the
+// validator's util.go does.
+func writeHash(v any, h io.Writer) {
+	switch v := v.(type) {
+	case map[string]any:
+		_, _ = h.Write([]byte{0})
+		for _, name := range slices.Sorted(maps.Keys(v)) {
+			writeHash(name, h)
+			writeHash(v[name], h)
+		}
+	case []any:
+		_, _ = h.Write([]byte{1})
+		for _, item := range v {
+			writeHash(item, h)
+		}
+	case nil:
+		_, _ = h.Write([]byte{2})
+	case bool:
+		if v {
+			_, _ = h.Write([]byte{3, 1})
+		} else {
+			_, _ = h.Write([]byte{3, 0})
+		}
+	case string:
+		_, _ = h.Write([]byte{4})
+		_, _ = io.WriteString(h, v)
+	case float64:
+		_, _ = h.Write([]byte{5})
+		num, _ := new(big.Rat).SetString(fmt.Sprint(v))
+		_, _ = h.Write(num.Num().Bytes())
+		_, _ = h.Write(num.Denom().Bytes())
+	}
 }
