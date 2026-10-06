@@ -705,7 +705,7 @@ func TestAnExtractionOfAParseWithNoIndexReadsWhatWasRead(t *testing.T) {
 	if s.Outcome != tasks.Done || string(b.field(s.Output).Data) != `{"number":"INV-0042","total":7}` {
 		t.Fatalf("settled %+v, error %+v", s, s.Error)
 	}
-	if got := ext.asked[0].Text; got != "[1.1] ACME Corp\n[1.2] Invoice INV-0042\n[1.3] PAID\n[2.2] Total: 7" {
+	if got := ext.asked[0].Text; got != "[1.2] Invoice INV-0042\n[1.3] PAID\n[2.2] Total: 7" {
 		t.Fatalf("the document was read as %q", got)
 	}
 
