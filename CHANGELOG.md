@@ -6,6 +6,11 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Fixed: a `uniqueItems` check of a list too costly to hash is answered
+  as not checked before any item is hashed, so the answer takes no
+  longer than reading the list. v0.5.0 hashed such a list first, which
+  a list of a megabyte made take seconds on a slow machine.
+
 ## v0.5.0 - 2026-10-06
 
 - Changed: a `uniqueItems` check of a list of more than 20 items is

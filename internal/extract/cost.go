@@ -527,6 +527,13 @@ func (m *meter) unique(list []any) int {
 	if len(list) <= fewItems {
 		return min(w*len(list), MaxCheckWork+1)
 	}
+	// Hashing every item costs the list's weight twice, which is also what
+	// the meter spends to group them: a list whose hashing alone is past the
+	// bound is answered so before any item is hashed.
+	n := plus(w, w)
+	if n > MaxCheckWork {
+		return n
+	}
 	type group struct{ n, weight int }
 	groups := map[uint64]*group{}
 	for _, item := range list {
@@ -539,7 +546,6 @@ func (m *meter) unique(list []any) int {
 		g.n++
 		g.weight = max(g.weight, weight(item))
 	}
-	n := plus(w, w)
 	for _, g := range groups {
 		pairs := g.n * (g.n - 1) / 2
 		if pairs == 0 {
