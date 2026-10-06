@@ -108,6 +108,11 @@ type Backend interface {
 	// conflict, and an extractor that is not configured, or none when the
 	// policy names none, with reader_not_found.
 	CreateField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error)
+	// AskField asks an extraction of a parse again under its name, or for
+	// the first time when the parse has none of the name, and returns it
+	// pending. One that has not ended is refused with conflict, and an
+	// extractor as CreateField refuses it.
+	AskField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error)
 	// Field returns one extraction of a parse. ok is false when the parse
 	// has none of the name.
 	Field(ctx context.Context, p store.Parse, name string) (f store.Field, ok bool, err error)
@@ -218,6 +223,11 @@ func (m *Memory) Queue(context.Context, []string) (store.Queue, error) {
 // CreateField is not built in a development server: an extraction is a
 // task of the task store, which holds what it has between 2 of its calls.
 func (m *Memory) CreateField(context.Context, store.Parse, store.FieldRequest) (store.Field, error) {
+	return store.Field{}, undurable("an extraction")
+}
+
+// AskField is not built in a development server, as CreateField is not.
+func (m *Memory) AskField(context.Context, store.Parse, store.FieldRequest) (store.Field, error) {
 	return store.Field{}, undurable("an extraction")
 }
 

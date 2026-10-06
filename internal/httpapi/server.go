@@ -132,6 +132,7 @@ func (s *Server) Routes() []Route {
 		{"POST", "/parses/{parse}/fields", false, s.createField},
 		{"GET", "/parses/{parse}/fields", false, s.listFields},
 		{"GET", "/parses/{parse}/fields/{name}", false, s.getField},
+		{"PUT", "/parses/{parse}/fields/{name}", false, s.askField},
 		{"GET", "/readers", false, s.listReaders},
 		{"GET", "/usage", false, s.getUsage},
 		{"GET", "/queue", false, s.getQueue},

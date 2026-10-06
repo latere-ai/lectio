@@ -70,6 +70,7 @@ var routes = []Route{
 	{http.MethodPost, "/parses/{parse}/fields", authorizer.ActionParseCreate, storedParse},
 	{http.MethodGet, "/parses/{parse}/fields", authorizer.ActionParseRead, storedParse},
 	{http.MethodGet, "/parses/{parse}/fields/{name}", authorizer.ActionParseRead, storedParse},
+	{http.MethodPut, "/parses/{parse}/fields/{name}", authorizer.ActionParseCreate, storedParse},
 
 	{http.MethodGet, "/openapi.yaml", "", nil},
 	{http.MethodGet, "/readers", authorizer.ActionReaderList, nil},

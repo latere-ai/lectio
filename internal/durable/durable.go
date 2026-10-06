@@ -872,23 +872,65 @@ func (b *Backend) until(ctx context.Context, d time.Duration, ended func() bool)
 // of the routing policy's extract chain that has room when its task is
 // claimed.
 func (b *Backend) CreateField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error) {
-	switch {
-	case f.Extractor != "" && b.Extractors[f.Extractor] == nil:
-		return store.Field{}, fault.New(fault.ReaderNotFound, "no extractor is named %q", f.Extractor)
-	case f.Extractor == "" && !slices.ContainsFunc(b.ExtractChain, func(name string) bool { return b.Extractors[name] != nil }):
-		return store.Field{}, fault.New(fault.ReaderNotFound, "no extractor is configured")
+	if err := b.extractorFor(f); err != nil {
+		return store.Field{}, err
 	}
-	request, err := json.Marshal(tasks.Field{Schema: f.Schema, Instructions: f.Instructions, Citations: f.Citations})
-	if err != nil {
-		return store.Field{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
-	}
-	err = b.Store.CreateField(ctx, postgres.FieldRequest{
-		Parse: p.ID, Name: f.Name, Request: string(request), Pin: f.Extractor, Deadline: b.deadline(),
-	})
+	asked, err := fieldRequest(p, f, b.deadline())
 	if err != nil {
 		return store.Field{}, err
 	}
-	return store.Field{Name: f.Name, State: store.FieldPending}, nil
+	if err := b.Store.CreateField(ctx, asked); err != nil {
+		return store.Field{}, err
+	}
+	return store.Field{Name: f.Name, State: store.FieldPending, Schema: f.Schema, Instructions: f.Instructions}, nil
+}
+
+// extractorFor refuses a request that names an extractor that is not
+// configured, or names none when the policy's extract chain holds none.
+func (b *Backend) extractorFor(f store.FieldRequest) error {
+	switch {
+	case f.Extractor != "" && b.Extractors[f.Extractor] == nil:
+		return fault.New(fault.ReaderNotFound, "no extractor is named %q", f.Extractor)
+	case f.Extractor == "" && !slices.ContainsFunc(b.ExtractChain, func(name string) bool { return b.Extractors[name] != nil }):
+		return fault.New(fault.ReaderNotFound, "no extractor is configured")
+	}
+	return nil
+}
+
+// AskField asks an extraction of a parse again under its name, after it has
+// ended, or as a new one when the parse has none of the name. The result the
+// asking replaced is removed: nothing names it any longer. A removal that
+// fails leaves the object to the parse's own removal, and is logged.
+func (b *Backend) AskField(ctx context.Context, p store.Parse, f store.FieldRequest) (store.Field, error) {
+	if err := b.extractorFor(f); err != nil {
+		return store.Field{}, err
+	}
+	asked, err := fieldRequest(p, f, b.deadline())
+	if err != nil {
+		return store.Field{}, err
+	}
+	replaced, err := b.Store.AskFieldAgain(ctx, asked)
+	if errors.Is(err, postgres.ErrNoField) {
+		return b.CreateField(ctx, p, f)
+	}
+	if err != nil {
+		return store.Field{}, err
+	}
+	if replaced != "" {
+		if err := b.Objects.Delete(ctx, replaced); err != nil {
+			b.log().WarnContext(ctx, "the result an asking replaced was not removed", "parse", p.ID, "field", f.Name, "err", err)
+		}
+	}
+	return store.Field{Name: f.Name, State: store.FieldPending, Schema: f.Schema, Instructions: f.Instructions}, nil
+}
+
+// fieldRequest is an extraction's request as the store keeps it.
+func fieldRequest(p store.Parse, f store.FieldRequest, deadline time.Duration) (postgres.FieldRequest, error) {
+	request, err := json.Marshal(tasks.Field{Schema: f.Schema, Instructions: f.Instructions, Citations: f.Citations})
+	if err != nil {
+		return postgres.FieldRequest{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
+	}
+	return postgres.FieldRequest{Parse: p.ID, Name: f.Name, Request: string(request), Pin: f.Extractor, Deadline: deadline}, nil
 }
 
 // Field returns one extraction of a parse: its row, and for one that was

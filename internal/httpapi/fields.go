@@ -14,6 +14,7 @@ import (
 	"latere.ai/x/pkg/httpjson"
 
 	"latere.ai/x/lectio/document"
+	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/store"
@@ -97,29 +98,74 @@ func (s *Server) createField(w http.ResponseWriter, r *http.Request, c call) err
 	if _, err := decode(w, r, &req); err != nil {
 		return err
 	}
-	switch {
-	case !fieldName.MatchString(req.Name):
-		return invalid("name", "name is lower case letters, digits, underscores and hyphens, at most 63, beginning with a letter")
-	case len(req.Schema) == 0:
-		return invalid("schema", "schema is required")
-	case utf8.RuneCountInString(req.Instructions) > maxInstructions:
-		return invalid("instructions", "instructions holds at most %d characters", maxInstructions)
+	asked, err := s.checkField(req, d)
+	if err != nil {
+		return err
 	}
-	if _, err := extract.Compile(req.Schema); err != nil {
-		return fault.Wrap(fault.InvalidSchema, field("schema"), "%s", fault.DetailOf(err))
-	}
-	if l := d.Limits.Readers; req.Extractor != "" && len(l) > 0 && !slices.Contains(l, req.Extractor) {
-		return fault.Wrap(fault.ReaderNotPermitted, field("extractor"), "the extractor %s is not among the readers the caller may pin", req.Extractor)
-	}
-
-	f, err := s.Backend.CreateField(r.Context(), p, store.FieldRequest{
-		Name: req.Name, Schema: req.Schema, Instructions: req.Instructions,
-		Citations: req.Citations == nil || *req.Citations, Extractor: req.Extractor,
-	})
+	f, err := s.Backend.CreateField(r.Context(), p, asked)
 	if err != nil {
 		return err
 	}
 	httpjson.Write(w, http.StatusAccepted, viewField(f))
+	return nil
+}
+
+// checkField checks a request for an extraction, before anything is queued:
+// its name, its schema, its instructions, and the extractor it names against
+// what the caller may pin.
+func (s *Server) checkField(req fieldRequest, d access.Decision) (store.FieldRequest, error) {
+	switch {
+	case !fieldName.MatchString(req.Name):
+		return store.FieldRequest{}, invalid("name", "name is lower case letters, digits, underscores and hyphens, at most 63, beginning with a letter")
+	case len(req.Schema) == 0:
+		return store.FieldRequest{}, invalid("schema", "schema is required")
+	case utf8.RuneCountInString(req.Instructions) > maxInstructions:
+		return store.FieldRequest{}, invalid("instructions", "instructions holds at most %d characters", maxInstructions)
+	}
+	if _, err := extract.Compile(req.Schema); err != nil {
+		return store.FieldRequest{}, fault.Wrap(fault.InvalidSchema, field("schema"), "%s", fault.DetailOf(err))
+	}
+	if l := d.Limits.Readers; req.Extractor != "" && len(l) > 0 && !slices.Contains(l, req.Extractor) {
+		return store.FieldRequest{}, fault.Wrap(fault.ReaderNotPermitted, field("extractor"), "the extractor %s is not among the readers the caller may pin", req.Extractor)
+	}
+	return store.FieldRequest{
+		Name: req.Name, Schema: req.Schema, Instructions: req.Instructions,
+		Citations: req.Citations == nil || *req.Citations, Extractor: req.Extractor,
+	}, nil
+}
+
+// askField asks an extraction of a parse again under its name: with another
+// schema, or with the same one after it failed. The name is the path's; a
+// body that names another is refused. An extraction that has not ended is
+// refused with conflict, since its task may be running, and a name the parse
+// has none of is asked as a new extraction, as POST asks one. The checks are
+// those of a new extraction.
+func (s *Server) askField(w http.ResponseWriter, r *http.Request, c call) error {
+	p, d, err := s.parse(r, c)
+	if err != nil {
+		return err
+	}
+	var req fieldRequest
+	if _, err := decode(w, r, &req); err != nil {
+		return err
+	}
+	name := r.PathValue("name")
+	switch {
+	case !fieldName.MatchString(name):
+		return fault.New(fault.NotFound, "no extraction is named %q", name)
+	case req.Name != "" && req.Name != name:
+		return invalid("name", "name is the path's, %s, or left out", name)
+	}
+	req.Name = name
+	f, err := s.checkField(req, d)
+	if err != nil {
+		return err
+	}
+	asked, err := s.Backend.AskField(r.Context(), p, f)
+	if err != nil {
+		return err
+	}
+	httpjson.Write(w, http.StatusAccepted, viewField(asked))
 	return nil
 }
 

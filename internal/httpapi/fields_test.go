@@ -288,6 +288,86 @@ func TestASchemaIsCheckedWhenAnExtractionIsAsked(t *testing.T) {
 // Each object validates against its schema, and every citation resolves to
 // a block whose text contains the value. The document lists the fields,
 // and its parse is as it was but for what the calls used.
+// TestAnExtractionIsAskedAgainUnderItsName: an extraction that has ended is
+// asked again with another schema and fills it, saying it was asked with
+// the new one; one that has not ended is refused, since its task may be
+// running; a body that names another extraction is refused; and a name the
+// parse has none of is asked as new. The asking that replaced a result
+// reads no page again.
+func TestAnExtractionIsAskedAgainUnderItsName(t *testing.T) {
+	hold, held := make(chan struct{}), atomic.Bool{}
+	model := &textModel{answers: func(n int, _ reader.ExtractRequest) (reader.ExtractResult, bool) {
+		// The 3rd call waits until the test has asked again while it runs.
+		if n == 3 {
+			held.Store(true)
+			<-hold
+		}
+		return reader.ExtractResult{}, false
+	}}
+	e, rd := extracting(t, model, nil)
+	pid := e.invoice()
+	e.ask(pid, "invoice", invoiceSchema)
+	if f := e.filled(pid, "invoice", ""); f["state"] != "succeeded" || at(f, "data", "number") != "INV-0042" {
+		t.Fatalf("the first asking: %v", f)
+	}
+	read := rd.calls.Load()
+
+	put := func(name, body string) (int, map[string]any) {
+		got := e.do("PUT", "/parses/"+pid+"/fields/"+name, body)
+		return got.status, got.json(t)
+	}
+	if code, body := put("invoice", `{"name":"other","schema":`+totalSchema+`}`); code != http.StatusBadRequest {
+		t.Fatalf("a body that names another extraction: %d %v", code, body)
+	}
+	code, body := put("invoice", `{"schema":`+totalSchema+`}`)
+	if code != http.StatusAccepted || body["state"] != "pending" || body["name"] != "invoice" {
+		t.Fatalf("asking again: %d %v", code, body)
+	}
+	f := e.filled(pid, "invoice", "")
+	if f["state"] != "succeeded" || at(f, "data", "total") != 7.0 {
+		t.Fatalf("asked again with the total alone, the extraction is %v", f)
+	}
+	// The model was asked with the new schema.
+	model.mu.Lock()
+	second := model.asked[1]
+	model.mu.Unlock()
+	if !strings.Contains(string(second.Schema), `"total"`) || strings.Contains(string(second.Schema), `"items"`) {
+		t.Fatalf("the 2nd asking sent the model the schema %s", second.Schema)
+	}
+	var want any
+	if err := json.Unmarshal([]byte(totalSchema), &want); err != nil || !reflect.DeepEqual(f["schema"], want) {
+		t.Fatalf("the extraction says it was asked with %v, %v", f["schema"], err)
+	}
+
+	// The 3rd call is held: while it runs the extraction has not ended.
+	if code, body := put("invoice", `{"schema":`+invoiceSchema+`}`); code != http.StatusAccepted {
+		t.Fatalf("asking a 3rd time: %d %v", code, body)
+	}
+	for deadline := time.Now().Add(20 * time.Second); !held.Load(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the 3rd call never began")
+		}
+	}
+	if code, body := put("invoice", `{"schema":`+invoiceSchema+`}`); code != http.StatusConflict || at(body, "error", "code") != "conflict" {
+		t.Fatalf("asking again while it runs: %d %v", code, body)
+	}
+	close(hold)
+	if f := e.filled(pid, "invoice", ""); f["state"] != "succeeded" || at(f, "data", "number") != "INV-0042" {
+		t.Fatalf("the 3rd asking: %v", f)
+	}
+
+	// A name the parse has none of is asked as new.
+	if code, body := put("sum", `{"schema":`+totalSchema+`}`); code != http.StatusAccepted || body["name"] != "sum" {
+		t.Fatalf("asking a new name: %d %v", code, body)
+	}
+	if f := e.filled(pid, "sum", ""); f["state"] != "succeeded" || at(f, "data", "total") != 7.0 {
+		t.Fatalf("the new extraction: %v", f)
+	}
+	if rd.calls.Load() != read {
+		t.Fatalf("asking again read pages: %d calls of the reader, %d before", rd.calls.Load(), read)
+	}
+}
+
 // TestAFieldSaysWhatItWasAskedWith: an extraction returns the schema it
 // was asked with, its members in the order the caller wrote them, and its
 // guidance, while it waits and once it has ended, read alone and listed,
