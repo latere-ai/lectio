@@ -5,6 +5,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -226,6 +227,60 @@ func TestAnExtractionIsATaskOfItsParseOneCallAClaim(t *testing.T) {
 			t.Fatalf("an extraction nobody asked is found: %t, %v", ok, err)
 		}
 		w.settle(filledBy(w.claim(1, 1)[0]))
+	})
+}
+
+// TestAnExtractionIsAskedAgainAfterItEnded: an extraction that has ended is
+// asked again with another request. Its row is pending again with nothing of
+// its last result, the store answers the key of the result it replaced, and
+// its task is queued with lease tokens above every token of the first
+// asking's, so a worker that lost an earlier task can remove nothing of the
+// new one. One that has not ended is refused, a name the parse has none of is
+// answered as absent, and a parse that is gone as missing.
+func TestAnExtractionIsAskedAgainAfterItEnded(t *testing.T) {
+	everywhere(t, withDescribers(), func(t *testing.T, h *harness) {
+		w := h.worker()
+		ctx := context.Background()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme", Owner: "alice"}, 1)
+		h.field("prs_a", "invoice", "")
+		first := w.claim(1, 1)[0]
+		w.settle(filledBy(first))
+		if f := h.read("prs_a", "invoice"); f.State != postgres.FieldSucceeded || f.Calls != 1 {
+			t.Fatalf("the first asking ended %+v", f)
+		}
+
+		const other = `{"schema":{"type":"object","properties":{"number":{"type":"string"}}},"citations":true}`
+		again := postgres.FieldRequest{Parse: "prs_a", Name: "invoice", Request: other, Deadline: time.Hour}
+		replaced, err := h.store.AskFieldAgain(ctx, again)
+		if err != nil || replaced != filledBy(first).Output {
+			t.Fatalf("asking again replaced %q, %v", replaced, err)
+		}
+		f := h.read("prs_a", "invoice")
+		if f.State != postgres.FieldPending || f.Request != other || f.Output != "" || (len(f.Result) > 0 && string(f.Result) != "null") || f.Error != nil ||
+			f.FinishedAt != nil || f.Calls != 0 || f.DeadlineAt == nil {
+			t.Fatalf("an extraction asked again is %+v", f)
+		}
+		// While it has not ended it is not asked again.
+		_, err = h.store.AskFieldAgain(ctx, again)
+		refused(t, "asking again before it ended", err, fault.Conflict)
+
+		second := w.claim(1, 1)[0]
+		if second.Task != "extract-invoice" || second.Token <= 1<<32 || second.Context.Request != other {
+			t.Fatalf("the second asking's claim is %+v", second)
+		}
+		w.settle(filledBy(second))
+		if f := h.read("prs_a", "invoice"); f.State != postgres.FieldSucceeded || f.Output != filledBy(second).Output || f.Calls != 1 {
+			t.Fatalf("the second asking ended %+v", f)
+		}
+		if got := h.metered("extract"); got != "stub:0/2/2000/100" {
+			t.Fatalf("the meter keeps both askings: %s", got)
+		}
+
+		if _, err := h.store.AskFieldAgain(ctx, postgres.FieldRequest{Parse: "prs_a", Name: "other", Request: other, Deadline: time.Hour}); !errors.Is(err, postgres.ErrNoField) {
+			t.Fatalf("a name the parse has none of: %v", err)
+		}
+		_, err = h.store.AskFieldAgain(ctx, postgres.FieldRequest{Parse: "prs_gone", Name: "invoice", Request: other, Deadline: time.Hour})
+		refused(t, "a parse that is not there", err, fault.ParseNotFound)
 	})
 }
 

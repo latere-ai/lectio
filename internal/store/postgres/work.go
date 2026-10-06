@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,8 @@ const MaxFields = 64
 const (
 	fieldCreateSQL   = `SELECT lectio_field_create($1)`
 	fieldCreateAtSQL = `SELECT lectio_field_create($1, $2)`
+	fieldAskSQL      = `SELECT lectio_field_ask($1)`
+	fieldAskAtSQL    = `SELECT lectio_field_ask($1, $2)`
 	fieldSQL         = `SELECT lectio_field($1, $2)`
 	fieldsSQL        = `SELECT lectio_fields($1)`
 
@@ -100,6 +103,55 @@ func (s *Store) CreateField(ctx context.Context, f FieldRequest) error {
 		return fault.New(fault.Conflict, "parse %s holds %d extractions, which is as many as a parse may", f.Parse, MaxFields)
 	}
 	return nil
+}
+
+// ErrNoField is the answer of AskFieldAgain for a name the parse has no
+// extraction of: the caller asks it as a new one.
+var ErrNoField = errors.New("store: the parse has no extraction of that name")
+
+// AskFieldAgain asks an extraction that has ended again under its name, with
+// the request it carries, and queues its task in the same transaction when
+// the parse has ended. It returns the object key of the result the asking
+// replaced, empty when there was none, for the caller to remove. A parse
+// that is not there is refused with parse_not_found, an extraction that has
+// not ended with conflict, and a name the parse has no extraction of with
+// ErrNoField.
+func (s *Store) AskFieldAgain(ctx context.Context, f FieldRequest) (replaced string, err error) {
+	switch {
+	case f.Parse == "" || f.Name == "" || f.Request == "":
+		return "", fault.New(fault.InvalidRequest, "an extraction has a parse, a name and a request")
+	case f.Deadline < time.Millisecond:
+		return "", fault.New(fault.InvalidRequest, "an extraction has a deadline")
+	}
+	doc, err := json.Marshal(fieldRequest{FieldRequest: f, DeadlineMS: f.Deadline.Milliseconds(), MaxFields: MaxFields})
+	if err != nil {
+		return "", fmt.Errorf("store: encoding the extraction %s of %s: %w", f.Name, f.Parse, err)
+	}
+	text, err := s.text(ctx, fieldAskSQL, fieldAskAtSQL, string(doc))
+	if err != nil {
+		return "", fmt.Errorf("store: asking the extraction %s of %s again: %w", f.Name, f.Parse, err)
+	}
+	var answer struct {
+		Answer string  `json:"answer"`
+		Output *string `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(text), &answer); err != nil {
+		return "", fmt.Errorf("store: reading the answer to asking %s of %s again: %w", f.Name, f.Parse, err)
+	}
+	switch answer.Answer {
+	case "missing":
+		return "", fault.New(fault.ParseNotFound, "no parse %s", f.Parse)
+	case "absent":
+		return "", ErrNoField
+	case "busy":
+		return "", fault.New(fault.Conflict, "the extraction %s of parse %s has not ended", f.Name, f.Parse)
+	case "asked":
+		if answer.Output != nil {
+			return *answer.Output, nil
+		}
+		return "", nil
+	}
+	return "", fmt.Errorf("store: asking %s of %s again answered %q", f.Name, f.Parse, answer.Answer)
 }
 
 // Field is one extraction as the store holds it. The result's bytes are in

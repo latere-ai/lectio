@@ -156,11 +156,13 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 			}
 		}
 	}
-	// The tasks of the kinds that are gone went with it, and the counters
-	// of queued tasks with them.
+	// The counters of queued tasks stay a count of the rows. The work the
+	// newest migration leaves runnable stays queued: 000007 adds a count of
+	// askings to an extraction, and an extraction and a figure are tasks of
+	// 000006, which its down file keeps.
 	h.consistent()
-	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure')`); n != 0 {
-		t.Fatalf("%d tasks of the kinds the migration added are left", n)
+	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure')`); n != 2 {
+		t.Fatalf("%d tasks of the kinds 000006 added are left, want 2", n)
 	}
 	if _, err := after.Exec(ctx, migration(t, last+".up.sql")); err != nil {
 		t.Fatalf("the up file, applied again: %v", err)
@@ -208,7 +210,8 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A transaction that has read the parses holds the table.
+	// A transaction that has read the parses and the extractions holds both
+	// tables, one of which every migration since 000006 changes.
 	holder, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +221,7 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT count(*) FROM parses`); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT count(*) FROM parses, fields`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,7 +254,7 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	}
 	var columns, timeout string
 	if err := holder.QueryRow(ctx, `SELECT count(*)::text FROM information_schema.columns
-	      WHERE table_schema = current_schema() AND column_name IN ('describe_chain', 'stuck')`).Scan(&columns); err != nil {
+	      WHERE table_schema = current_schema() AND column_name IN ('asks')`).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
 	if columns != "0" {
