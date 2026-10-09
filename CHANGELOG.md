@@ -6,6 +6,10 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Security
+
+- Built with Go 1.27.2 and golang.org/x/net v0.60.0, which fix GO-2026-6611, GO-2026-6612, GO-2026-6613 and GO-2026-6617.
+
 ## v0.5.1 - 2026-10-07
 
 - Fixed: a `uniqueItems` check of a list too costly to hash is answered
