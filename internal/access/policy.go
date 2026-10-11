@@ -23,16 +23,16 @@ const ReasonUnknownAction = "unknown_action"
 // OwnerPolicy is what decides with LECTIO_AUTHORIZER_URL unset. It is a
 // policy with tests and not the absence of one:
 //
-//   - a subject may perform every action on a parse or a file whose owner
-//     is that subject, and may create one in its own name;
+//   - a subject may perform every action on a parse, a file or a set whose
+//     owner is that subject, and may create one in its own name;
 //   - a list is narrowed to the subject's own, and so is a usage or queue
 //     read that names no owner and no group;
 //   - the group is the owner, so a usage or queue read about a group is
 //     about the subject whose name the group carries;
 //   - every subject may list the readers, which are the server's
 //     configuration and nobody's;
-//   - an admin may read every owner's parses, files, usage and queue, and
-//     may change nothing that is not its own;
+//   - an admin may read every owner's parses, files, sets, usage and
+//     queue, and may change nothing that is not its own;
 //   - the probe and a request with no subject are denied.
 //
 // The owner is read off the resource, because the handler built that
@@ -100,11 +100,11 @@ func (p *OwnerPolicy) decide(req authz.Request) authz.Decision {
 	switch req.Action {
 	case authorizer.ActionReaderList:
 		return allow
-	case authorizer.ActionParseRead, authorizer.ActionFileRead:
+	case authorizer.ActionParseRead, authorizer.ActionFileRead, authorizer.ActionSetRead:
 		if admin {
 			return allow
 		}
-	case authorizer.ActionParseList:
+	case authorizer.ActionParseList, authorizer.ActionSetList:
 		return scoped(req.Subject, admin)
 	case authorizer.ActionUsageRead, authorizer.ActionQueueRead:
 		owner, group := req.Resource.String(authorizer.FieldOwner), req.Resource.String(authorizer.FieldGroup)
@@ -117,7 +117,7 @@ func (p *OwnerPolicy) decide(req authz.Request) authz.Decision {
 		return authz.Decision{Reason: authz.ReasonNotOwner}
 	}
 
-	// What is left is about one parse or one file: the shared frame's
+	// What is left is about one parse, file or set: the shared frame's
 	// rows, with no admin, because an admin's reach ended above.
 	owner := req.Resource.String(authorizer.FieldOwner)
 	if req.Resource.ID != "" && owner == "" {
@@ -147,6 +147,8 @@ func createOf(kind string) string {
 		return authorizer.ActionParseCreate
 	case authorizer.KindFile:
 		return authorizer.ActionFileCreate
+	case authorizer.KindSet:
+		return authorizer.ActionSetCreate
 	}
 	return ""
 }

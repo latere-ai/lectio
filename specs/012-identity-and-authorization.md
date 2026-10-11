@@ -83,6 +83,11 @@ the members each action sends.
 | `Reader` | `reader.list` | none |
 | `Usage` | `usage.read` | `owner`, `group` |
 | `Queue` | `queue.read` | `group` |
+| `Set` | `set.create` | `owner`, `name` |
+| `Set` | `set.read` | `id`, `owner`, `name` |
+| `Set` | `set.list` | none |
+| `Set` | `set.update` | `id`, `owner`, `name` |
+| `Set` | `set.delete` | `id`, `owner`, `name` |
 
 A member Lectio does not know for a request is left out, never sent
 empty. `pages` is the size of the parse's selection and is sent once it
@@ -99,6 +104,12 @@ such an allow hold, and its `owner` is not read. A retry is the one of
 the 3 that takes no limit from its allow: its parse stays in the group
 it was admitted to and is held to that group's bounds as they stand
 ([[003-api]]).
+
+A set ([[018-sets]]) is asked about by its own actions. `set.update` is
+asked by the 2 requests that queue model work on a set's parses: a
+change of its definition and a parse joining it. A join asks about the
+set alone; the parse must be the set's owner's, and the work is the
+parse owner's and held to the parse's limits, as an extraction's is.
 
 On a create, `owner` is the owner the request names. A request may
 name an owner other than the caller's subject (a service submitting
@@ -188,7 +199,10 @@ these keys:
 
 The allow of `parse.create` is read for any of them. The allow of
 `file.create` is read for `owner`, `group`, `max_file_bytes` and
-`retention_seconds`. The limits of any other allow are not read.
+`retention_seconds`. The allows of `set.create` and `set.update` are
+read for `owner` and `readers`: the owner a new set is recorded under,
+and the readers an extractor the set names is held to. The limits of
+any other allow are not read.
 
 `DecodeLimits(authz.Decision)` reads the object into a `WireLimits`,
 and `WireLimits.Over(defaults)` lays what it names over the server's

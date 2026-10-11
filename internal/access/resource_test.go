@@ -77,6 +77,9 @@ func TestWhatIsNotKnownIsLeftOut(t *testing.T) {
 		"usage of an owner and a group": {access.Usage(alice, "acme"), []string{"group", "kind", "owner"}},
 		"the queue with nothing named":  {access.Queue(""), []string{"kind"}},
 		"the queue of a group":          {access.Queue("acme"), []string{"group", "kind"}},
+		"a set with nothing named":      {access.Set{Name: "harbor"}.Resource(), []string{"kind", "name"}},
+		"a stored set":                  {access.Set{ID: "set_1", Owner: bob, Name: "harbor"}.Resource(), []string{"id", "kind", "name", "owner"}},
+		"the list of sets":              {access.Sets(), []string{"kind"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -101,12 +104,15 @@ func TestAResourceSendsOnlyPublishedFields(t *testing.T) {
 	}.Resource()
 	file := access.File{ID: "fil_1", Owner: alice, Size: 10, MediaType: "image/png"}.Resource()
 	upload := access.File{Owner: alice, Size: 10, MediaType: "image/png"}.Resource()
+	set := access.Set{ID: "set_1", Owner: alice, Name: "harbor"}.Resource()
 	cases := map[string]authz.Resource{
 		authorizer.ActionParseCreate: parse, authorizer.ActionParseRead: parse, authorizer.ActionParseCancel: parse,
 		authorizer.ActionParseDelete: parse, authorizer.ActionParseList: access.Parses(),
 		authorizer.ActionFileCreate: upload, authorizer.ActionFileRead: file, authorizer.ActionFileDelete: file,
 		authorizer.ActionReaderList: access.Readers(), authorizer.ActionUsageRead: access.Usage(alice, "acme"),
 		authorizer.ActionQueueRead: access.Queue("acme"),
+		authorizer.ActionSetCreate: access.Set{Owner: alice, Name: "harbor"}.Resource(), authorizer.ActionSetRead: set,
+		authorizer.ActionSetList: access.Sets(), authorizer.ActionSetUpdate: set, authorizer.ActionSetDelete: set,
 	}
 	if len(cases) != len(authorizer.Actions()) {
 		t.Fatalf("%d actions have a resource here, and the vocabulary has %d", len(cases), len(authorizer.Actions()))

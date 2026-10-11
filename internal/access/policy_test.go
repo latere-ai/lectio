@@ -104,6 +104,14 @@ func TestTheOwnerPolicy(t *testing.T) {
 		// No subject, and questions the vocabulary does not have.
 		{"nobody lists the readers", "", authorizer.ActionReaderList, access.Readers(), false, authz.ReasonAnonymous, nil},
 		{"nobody submits", "", authorizer.ActionParseCreate, access.Parse{}.Resource(), false, authz.ReasonAnonymous, nil},
+
+		// A set is decided as a parse is.
+		{"makes a set in its context", alice, authorizer.ActionSetCreate, access.Set{Name: "harbor"}.Resource(), true, "", nil},
+		{"changes its own set", alice, authorizer.ActionSetUpdate, access.Set{ID: "set_1", Owner: alice, Name: "harbor"}.Resource(), true, "", nil},
+		{"changes another's set", alice, authorizer.ActionSetUpdate, access.Set{ID: "set_1", Owner: bob, Name: "harbor"}.Resource(), false, authz.ReasonNotOwner, nil},
+		{"lists sets", alice, authorizer.ActionSetList, access.Sets(), true, "", mine(alice)},
+		{"an admin reads another's set", root, authorizer.ActionSetRead, access.Set{ID: "set_1", Owner: bob, Name: "harbor"}.Resource(), true, "", nil},
+		{"an admin deletes another's set", root, authorizer.ActionSetDelete, access.Set{ID: "set_1", Owner: bob, Name: "harbor"}.Resource(), false, authz.ReasonNotOwner, nil},
 		{"an action outside the vocabulary", alice, "parse.update", parseOf(alice), false, access.ReasonUnknownAction, nil},
 		{"an action about another kind", alice, authorizer.ActionParseRead, fileOf(alice), false, access.ReasonUnknownAction, nil},
 	}

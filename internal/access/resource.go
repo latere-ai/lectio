@@ -89,6 +89,28 @@ func (f File) Resource() authz.Resource {
 	return authz.NewResource(authorizer.KindFile, f.ID, fields)
 }
 
+// Set is the resource of every set action but the list. A create carries
+// no ID: the set does not exist until the create is allowed.
+type Set struct {
+	ID string
+	// Owner is the stored set's owner. On a create it is the owner the
+	// request names, and empty when it names none: in the caller's context.
+	Owner string
+	Name  string
+}
+
+// Resource renders the set as the envelope carries it.
+func (s Set) Resource() authz.Resource {
+	fields := map[string]any{}
+	text(fields, authorizer.FieldOwner, s.Owner)
+	text(fields, authorizer.FieldName, s.Name)
+	return authz.NewResource(authorizer.KindSet, s.ID, fields)
+}
+
+// Sets is the resource of set.list: the kind and nothing else. The answer
+// is a decision whose filter narrows the list.
+func Sets() authz.Resource { return authz.NewResource(authorizer.KindSet, "", nil) }
+
 // Parses is the resource of parse.list: the kind and nothing else. The
 // answer is a decision whose filter narrows the list.
 func Parses() authz.Resource { return authz.NewResource(authorizer.KindParse, "", nil) }

@@ -21,6 +21,7 @@ const (
 	KindReader = "Reader"
 	KindUsage  = "Usage"
 	KindQueue  = "Queue"
+	KindSet    = "Set"
 )
 
 // The actions: every question lectiod asks an authorizer. A constant never
@@ -47,6 +48,20 @@ const (
 	ActionReaderList = "reader.list"
 	ActionUsageRead  = "usage.read"
 	ActionQueueRead  = "queue.read"
+
+	// ActionSetCreate makes a set. The allow carries the owner the set is
+	// recorded under and the readers an extractor it names is held to.
+	ActionSetCreate = "set.create"
+	// ActionSetRead is asked by a read of a set and of its parses.
+	ActionSetRead = "set.read"
+	// ActionSetList is asked by the list of sets. The allow's filter
+	// narrows the list to the owners the caller may see.
+	ActionSetList = "set.list"
+	// ActionSetUpdate is asked by the 2 requests that queue model work on a
+	// set's parses: a change of its definition and a parse joining it. The
+	// allow carries the readers an extractor it names is held to.
+	ActionSetUpdate = "set.update"
+	ActionSetDelete = "set.delete"
 )
 
 // The members a resource carries beside its kind. FieldID is the id of a
@@ -73,6 +88,8 @@ const (
 	FieldMediaType = "media_type"
 	// FieldGroup is the fairness group a usage or queue read is about.
 	FieldGroup = "group"
+	// FieldName is a set's name.
+	FieldName = "name"
 )
 
 // row is one action with the kind it acts on and the members its resource
@@ -88,6 +105,7 @@ type row struct {
 var (
 	parseFields = []string{FieldID, FieldOwner, FieldClass, FieldPriority, FieldReader, FieldLabels, FieldOrigin, FieldPages}
 	fileFields  = []string{FieldID, FieldOwner, FieldSize, FieldMediaType}
+	setFields   = []string{FieldID, FieldOwner, FieldName}
 )
 
 // table is the vocabulary of specs/012-identity-and-authorization.md in
@@ -107,6 +125,12 @@ var table = []row{
 	{ActionReaderList, KindReader, nil},
 	{ActionUsageRead, KindUsage, []string{FieldOwner, FieldGroup}},
 	{ActionQueueRead, KindQueue, []string{FieldGroup}},
+
+	{ActionSetCreate, KindSet, []string{FieldOwner, FieldName}},
+	{ActionSetRead, KindSet, setFields},
+	{ActionSetList, KindSet, nil},
+	{ActionSetUpdate, KindSet, setFields},
+	{ActionSetDelete, KindSet, setFields},
 }
 
 // labels is the name a person reads for each kind, where an interface
@@ -117,6 +141,7 @@ var labels = map[string]string{
 	KindReader: "Readers",
 	KindUsage:  "Usage",
 	KindQueue:  "Queue",
+	KindSet:    "Sets",
 }
 
 // Vocabulary is Lectio's action table as the shared contract reads it:

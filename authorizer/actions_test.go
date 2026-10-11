@@ -92,7 +92,7 @@ func TestVocabulary(t *testing.T) {
 			t.Errorf("%s: the vocabulary says %q, %v, and Kind says %q", action, kind, known, authorizer.Kind(action))
 		}
 	}
-	want := []string{authorizer.KindParse, authorizer.KindFile, authorizer.KindReader, authorizer.KindUsage, authorizer.KindQueue}
+	want := []string{authorizer.KindParse, authorizer.KindFile, authorizer.KindReader, authorizer.KindUsage, authorizer.KindQueue, authorizer.KindSet}
 	if got := v.Kinds(); !slices.Equal(got, want) {
 		t.Errorf("Kinds() = %v, want %v", got, want)
 	}

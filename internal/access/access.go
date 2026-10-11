@@ -217,7 +217,8 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 	}
 
 	var named authorizer.WireLimits
-	if q.Action == authorizer.ActionParseCreate || q.Action == authorizer.ActionFileCreate {
+	if q.Action == authorizer.ActionParseCreate || q.Action == authorizer.ActionFileCreate ||
+		q.Action == authorizer.ActionSetCreate || q.Action == authorizer.ActionSetUpdate {
 		var err error
 		if named, err = authorizer.DecodeLimits(d); err != nil {
 			if unknown, ok := errors.AsType[*authorizer.UnknownLimit](err); ok {
@@ -235,13 +236,19 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 		// the allow names.
 		named.Owner = nil
 	}
-	if q.Action == authorizer.ActionFileCreate {
+	switch q.Action {
+	case authorizer.ActionFileCreate:
 		// A file joins no queue and reads no page, so an upload is held
 		// to these four and to nothing else the allow names.
 		named = authorizer.WireLimits{
 			Owner: named.Owner, Group: named.Group,
 			MaxFileBytes: named.MaxFileBytes, RetentionSeconds: named.RetentionSeconds,
 		}
+	case authorizer.ActionSetCreate, authorizer.ActionSetUpdate:
+		// A set's work is its parses' owner's and is held to their
+		// limits, so a set is held to its owner and to the readers an
+		// extractor it names may be.
+		named = authorizer.WireLimits{Owner: named.Owner, Readers: named.Readers}
 	}
 	limits := named.Over(defaults)
 	var lost []string
