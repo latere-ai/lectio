@@ -118,6 +118,33 @@ type Backend interface {
 	Field(ctx context.Context, p store.Parse, name string) (f store.Field, ok bool, err error)
 	// Fields returns the extractions of a parse, by name.
 	Fields(ctx context.Context, p store.Parse) ([]store.Field, error)
+
+	// CreateSet makes a set and returns it. A name its owner has is refused
+	// with conflict, and an extractor as CreateField refuses it.
+	CreateSet(ctx context.Context, s store.Set) (store.Set, error)
+	// Set returns a set whoever owns it, or set_not_found.
+	Set(ctx context.Context, id string) (store.Set, error)
+	// Sets returns the sets of the owners, newest first: at most limit,
+	// after the set whose id is after, and of the name when one is given.
+	// Nil owners is every owner's, and an empty list is nobody's. more says
+	// others follow.
+	Sets(ctx context.Context, owners []string, name, after string, limit int) (out []store.Set, more bool, err error)
+	// UpdateSet replaces a set's definition, asks every parse of the set
+	// again with it, and returns the set as that leaves it. A set with an
+	// extraction that is queued or running is refused with conflict, and
+	// an extractor as CreateField refuses it.
+	UpdateSet(ctx context.Context, s store.Set) (store.Set, error)
+	// DeleteSet removes a set. Its parses keep their extractions.
+	DeleteSet(ctx context.Context, id string) error
+	// SetParses returns the parses of a set, newest first, each with its
+	// extraction under the set's name: at most limit, after the parse whose
+	// id is after. more says others follow.
+	SetParses(ctx context.Context, s store.Set, after string, limit int) (out []store.Member, more bool, err error)
+	// JoinSet adds a parse to a set, and returns the parse's extraction
+	// under the set's name and whether it was asked. A parse whose
+	// extraction of the name has not ended is refused with conflict, and a
+	// parse of another owner with parse_not_found.
+	JoinSet(ctx context.Context, s store.Set, p store.Parse) (f store.Field, asked bool, err error)
 }
 
 // Memory is the Backend of a development server: everything is kept in the
@@ -239,6 +266,42 @@ func (m *Memory) Field(context.Context, store.Parse, string) (store.Field, bool,
 // Fields is not built in a development server, as CreateField is not.
 func (m *Memory) Fields(context.Context, store.Parse) ([]store.Field, error) {
 	return nil, undurable("an extraction")
+}
+
+// CreateSet is not built in a development server: a set is asked of
+// parses as extractions, which are built over the task store.
+func (m *Memory) CreateSet(context.Context, store.Set) (store.Set, error) {
+	return store.Set{}, undurable("a set")
+}
+
+// Set is not built in a development server, as CreateSet is not.
+func (m *Memory) Set(context.Context, string) (store.Set, error) {
+	return store.Set{}, undurable("a set")
+}
+
+// Sets is not built in a development server, as CreateSet is not.
+func (m *Memory) Sets(context.Context, []string, string, string, int) ([]store.Set, bool, error) {
+	return nil, false, undurable("a set")
+}
+
+// UpdateSet is not built in a development server, as CreateSet is not.
+func (m *Memory) UpdateSet(context.Context, store.Set) (store.Set, error) {
+	return store.Set{}, undurable("a set")
+}
+
+// DeleteSet is not built in a development server, as CreateSet is not.
+func (m *Memory) DeleteSet(context.Context, string) error {
+	return undurable("a set")
+}
+
+// SetParses is not built in a development server, as CreateSet is not.
+func (m *Memory) SetParses(context.Context, store.Set, string, int) ([]store.Member, bool, error) {
+	return nil, false, undurable("a set")
+}
+
+// JoinSet is not built in a development server, as CreateSet is not.
+func (m *Memory) JoinSet(context.Context, store.Set, store.Parse) (store.Field, bool, error) {
+	return store.Field{}, false, undurable("a set")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

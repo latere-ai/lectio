@@ -570,6 +570,10 @@ breaks apart.
 - The body is a request for an extraction without its name, which is the
   path's; a body that names another is `invalid_request`. The checks are
   those of a new extraction.
+- **An extraction a set asked** ([[018-sets]]) is asked again with the
+  set's request alone, as after a failure; another request is
+  `conflict`. A change of what a set's parses are asked is a change of
+  the set.
 
 ### Result
 

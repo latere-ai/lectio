@@ -34,7 +34,8 @@ identity, limits and retention, are `in-progress`. A scaffold of the parsing pat
 beside the specs, and each spec says under `Implementation status`
 what of it is built and what remains. Spec 017 is `vague`: a problem
 statement with a proposed shape and the questions that have to be
-answered before it is a design.
+answered before it is a design. Spec 018, sets, is `in-progress`: built in
+the durable server, with the development server answering `501`.
 
 ## Index
 
@@ -57,6 +58,7 @@ answered before it is a design.
 | [015](015-observability.md) | Observability: a trace per task linked to its parse, the processing record, queue and pool metrics, logs | medium | validated | 004, 006, 007 |
 | [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | validated | 001 |
 | [017](017-agent-driven-parsing.md) | Agent-driven parsing: reader tiers, the text layer, reading a page again, and what an agent needs from the core | xlarge | vague | 002, 003, 008, 009 |
+| [018](018-sets.md) | Sets: a stored definition of fields, made before its files and asked of each parse that joins it | medium | in-progress | 003, 011, 012 |
 
 ## Build order
 

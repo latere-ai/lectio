@@ -851,9 +851,10 @@ func TestACallerIsKnownAndSeesOnlyItsOwn(t *testing.T) {
 	e := serve(t, nil)
 	file := e.upload("scan.png", sheet(t))
 	pid := e.parsed(file, "")["id"].(string)
+	set := walkSet(t, e)
 
 	for _, rt := range e.server.Routes() {
-		path := strings.NewReplacer("{file}", file, "{parse}", pid, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(rt.Path)
+		path := strings.NewReplacer("{file}", file, "{parse}", pid, "{set}", set, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(rt.Path)
 		// No operation answers a caller it does not know.
 		if got := e.as("").do(rt.Method, path, nil); got.status != http.StatusUnauthorized || got.code(t) != "missing_token" {
 			t.Errorf("%s %s with no token: %d %s", rt.Method, rt.Path, got.status, got.body)
@@ -867,9 +868,10 @@ func TestACallerIsKnownAndSeesOnlyItsOwn(t *testing.T) {
 				t.Errorf("%s %s: %d %s", rt.Method, rt.Path, got.status, got.body)
 			}
 		}
-		// Another caller's file or parse is not found, whatever is asked of
-		// it, by an operation that is built and by one that is planned.
-		if strings.Contains(rt.Path, "{") {
+		// Another caller's file, parse or set is not found, whatever is
+		// asked of it, by an operation that is built and by one that is
+		// planned. A server that keeps no set has none of anybody's.
+		if strings.Contains(rt.Path, "{") && !setless(rt.Method+" "+rt.Path) {
 			if got := e.as("bob-token").do(rt.Method, path, nil); got.status != http.StatusNotFound {
 				t.Errorf("%s %s as another caller: %d %s", rt.Method, rt.Path, got.status, got.body)
 			}

@@ -36,6 +36,8 @@ var (
 	storedParse = append([]string{authorizer.FieldID}, newParse...)
 	newFile     = []string{authorizer.FieldOwner, authorizer.FieldSize, authorizer.FieldMediaType}
 	storedFile  = append([]string{authorizer.FieldID}, newFile...)
+	newSet      = []string{authorizer.FieldOwner, authorizer.FieldName}
+	storedSet   = append([]string{authorizer.FieldID}, newSet...)
 )
 
 // routes is the table of specs/003-api.md with the fields of
@@ -71,6 +73,14 @@ var routes = []Route{
 	{http.MethodGet, "/parses/{parse}/fields", authorizer.ActionParseRead, storedParse},
 	{http.MethodGet, "/parses/{parse}/fields/{name}", authorizer.ActionParseRead, storedParse},
 	{http.MethodPut, "/parses/{parse}/fields/{name}", authorizer.ActionParseCreate, storedParse},
+
+	{http.MethodPost, "/sets", authorizer.ActionSetCreate, newSet},
+	{http.MethodGet, "/sets", authorizer.ActionSetList, nil},
+	{http.MethodGet, "/sets/{set}", authorizer.ActionSetRead, storedSet},
+	{http.MethodPut, "/sets/{set}", authorizer.ActionSetUpdate, storedSet},
+	{http.MethodDelete, "/sets/{set}", authorizer.ActionSetDelete, storedSet},
+	{http.MethodGet, "/sets/{set}/parses", authorizer.ActionSetRead, storedSet},
+	{http.MethodPut, "/sets/{set}/parses/{parse}", authorizer.ActionSetUpdate, storedSet},
 
 	{http.MethodGet, "/openapi.yaml", "", nil},
 	{http.MethodGet, "/readers", authorizer.ActionReaderList, nil},

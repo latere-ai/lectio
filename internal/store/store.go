@@ -616,6 +616,46 @@ type Field struct {
 	Error *document.Error
 }
 
+// Set is a stored definition of an extraction, asked of each parse that
+// joins it (specs/018-sets.md). Its name is the name of the extraction it
+// asks of each parse.
+type Set struct {
+	ID    string
+	Owner string
+	Name  string
+
+	// Schema, Instructions, Citations and Extractor are the definition: a
+	// request for an extraction without its name.
+	Schema       []byte
+	Instructions string
+	Citations    bool
+	Extractor    string
+
+	// Version is 1 when the set is made, and 1 more at each change of its
+	// definition.
+	Version int
+
+	// Parses counts the parses in the set by where their extraction stands.
+	Parses SetCounts
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SetCounts are a set's parses by the state of their extraction.
+type SetCounts struct {
+	Total     int `json:"total"`
+	Pending   int `json:"pending"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+}
+
+// Member is one parse of a set, with its extraction under the set's name.
+type Member struct {
+	Parse Parse
+	Field Field
+}
+
 // StartFigureRun records a run for a parse. It is refused while an earlier
 // run of the same parse has not ended: two runs would describe the same
 // figures twice and write over each other.

@@ -991,3 +991,142 @@ func (b *Backend) field(ctx context.Context, row postgres.Field) (store.Field, e
 	}
 	return f, nil
 }
+
+// CreateSet makes a set. Its definition is kept as an extraction's request
+// is kept, so an extraction asked with it holds the same bytes, and a parse
+// whose extraction of the name was asked with the same definition joins
+// without being asked again.
+func (b *Backend) CreateSet(ctx context.Context, s store.Set) (store.Set, error) {
+	request, err := b.setRequest(s)
+	if err != nil {
+		return store.Set{}, err
+	}
+	row, err := b.Store.CreateSet(ctx, request)
+	if err != nil {
+		return store.Set{}, err
+	}
+	return viewSet(row)
+}
+
+// setRequest is a set's definition as the store keeps it, once its
+// extractor is one that is configured.
+func (b *Backend) setRequest(s store.Set) (postgres.SetRequest, error) {
+	if err := b.extractorFor(store.FieldRequest{Extractor: s.Extractor}); err != nil {
+		return postgres.SetRequest{}, err
+	}
+	request, err := json.Marshal(tasks.Field{Schema: s.Schema, Instructions: s.Instructions, Citations: s.Citations})
+	if err != nil {
+		return postgres.SetRequest{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
+	}
+	return postgres.SetRequest{ID: s.ID, Owner: s.Owner, Name: s.Name, Request: string(request), Pin: s.Extractor}, nil
+}
+
+// viewSet is a set's row as the API's set, its definition read back from
+// the request it is kept as.
+func viewSet(row postgres.Set) (store.Set, error) {
+	var asked tasks.Field
+	if err := json.Unmarshal([]byte(row.Request), &asked); err != nil {
+		return store.Set{}, fmt.Errorf("durable: the row of the set %s holds no request: %w", row.ID, err)
+	}
+	return store.Set{
+		ID: row.ID, Owner: row.Owner, Name: row.Name,
+		Schema: asked.Schema, Instructions: asked.Instructions, Citations: asked.Citations, Extractor: row.Pin,
+		Version: row.Version, Parses: store.SetCounts(row.Parses),
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}, nil
+}
+
+// Set returns a set whoever owns it.
+func (b *Backend) Set(ctx context.Context, id string) (store.Set, error) {
+	row, err := b.Store.Set(ctx, id)
+	if err != nil {
+		return store.Set{}, err
+	}
+	return viewSet(row)
+}
+
+// Sets returns the sets of the owners, newest first.
+func (b *Backend) Sets(ctx context.Context, owners []string, name, after string, limit int) ([]store.Set, bool, error) {
+	rows, more, err := b.Store.Sets(ctx, owners, name, after, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]store.Set, len(rows))
+	for i, row := range rows {
+		if out[i], err = viewSet(row); err != nil {
+			return nil, false, err
+		}
+	}
+	return out, more, nil
+}
+
+// UpdateSet replaces a set's definition and asks every parse of the set
+// again with it. The results the askings replaced are removed: nothing
+// names them any longer. A removal that fails leaves the object to its
+// parse's own removal, and is logged.
+func (b *Backend) UpdateSet(ctx context.Context, s store.Set) (store.Set, error) {
+	request, err := b.setRequest(s)
+	if err != nil {
+		return store.Set{}, err
+	}
+	row, replaced, err := b.Store.UpdateSet(ctx, request, b.deadline())
+	if err != nil {
+		return store.Set{}, err
+	}
+	for _, key := range replaced {
+		if err := b.Objects.Delete(ctx, key); err != nil {
+			b.log().WarnContext(ctx, "a result a change of a set replaced was not removed", "set", s.ID, "err", err)
+		}
+	}
+	return viewSet(row)
+}
+
+// DeleteSet removes a set. Its parses keep their extractions.
+func (b *Backend) DeleteSet(ctx context.Context, id string) error {
+	return b.Store.DeleteSet(ctx, id)
+}
+
+// SetParses returns the parses of a set, each with its extraction as Field
+// returns it.
+func (b *Backend) SetParses(ctx context.Context, s store.Set, after string, limit int) ([]store.Member, bool, error) {
+	rows, more, err := b.Store.SetParses(ctx, s.ID, after, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]store.Member, len(rows))
+	for i, row := range rows {
+		f, err := b.field(ctx, row.Field)
+		if err != nil {
+			return nil, false, err
+		}
+		out[i] = store.Member{Parse: view(row.Parse), Field: f}
+	}
+	return out, more, nil
+}
+
+// JoinSet adds a parse to a set, and returns the parse's extraction under
+// the set's name as it stands after. The result an asking replaced is
+// removed, as AskField removes one.
+func (b *Backend) JoinSet(ctx context.Context, s store.Set, p store.Parse) (store.Field, bool, error) {
+	if err := b.extractorFor(store.FieldRequest{Extractor: s.Extractor}); err != nil {
+		return store.Field{}, false, err
+	}
+	asked, replaced, err := b.Store.JoinSet(ctx, postgres.SetJoin{Set: s.ID, Parse: p.ID, Deadline: b.deadline()})
+	if err != nil {
+		return store.Field{}, false, err
+	}
+	if replaced != "" {
+		if err := b.Objects.Delete(ctx, replaced); err != nil {
+			b.log().WarnContext(ctx, "the result a join replaced was not removed", "parse", p.ID, "set", s.ID, "err", err)
+		}
+	}
+	f, ok, err := b.Field(ctx, p, s.Name)
+	switch {
+	case err != nil:
+		return store.Field{}, false, err
+	case !ok:
+		// The parse was removed between the join and the read.
+		return store.Field{}, false, fault.New(fault.ParseNotFound, "no parse %s", p.ID)
+	}
+	return f, asked, nil
+}

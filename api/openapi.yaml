@@ -60,6 +60,8 @@ tags:
     description: Saying what the figures of a parsed document show.
   - name: fields
     description: Extracting an object in the shape of a schema from a parsed document.
+  - name: sets
+    description: A stored definition of an extraction, made before any file is read, and asked of each parse that joins it.
   - name: operations
     description: What is configured and what is running.
 
@@ -726,6 +728,164 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
 
+  /sets:
+    post:
+      tags: [sets]
+      operationId: createSet
+      summary: Make a set
+      description: |
+        Make a set: a name and the definition of an extraction, kept
+        before any file is read. The body is a request for an
+        extraction, checked as `POST /parses/{parse}/fields` checks one.
+        Nothing is asked of any parse. A parse joins the set with
+        `PUT /sets/{set}/parses/{parse}`.
+
+        The name is the name of the extraction the set asks of each of
+        its parses. It is unique among the owner's sets and never
+        changes; a second set of a name the owner has is `conflict`.
+
+        A development server answers `501 not_implemented`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldRequest" }
+      responses:
+        "201": { description: Made., content: { application/json: { schema: { $ref: "#/components/schemas/Set" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [sets]
+      operationId: listSets
+      summary: List sets, newest first
+      description: |
+        List the sets the caller may see, newest first. A development
+        server answers `501 not_implemented`.
+      parameters:
+        - { name: name, in: query, description: The set of this name., schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: A page of sets., content: { application/json: { schema: { $ref: "#/components/schemas/SetList" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /sets/{set}:
+    parameters:
+      - $ref: "#/components/parameters/set"
+    get:
+      tags: [sets]
+      operationId: getSet
+      summary: Read a set
+      description: |
+        Read a set: its definition, its version, and how many parses are
+        in it with where their extractions stand. A development server
+        answers `501 not_implemented`.
+      responses:
+        "200": { description: The set., content: { application/json: { schema: { $ref: "#/components/schemas/Set" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [sets]
+      operationId: updateSet
+      summary: Change a set's definition
+      description: |
+        Replace a set's definition and ask every parse of the set again
+        with it. The body is a request for an extraction; its `name` is
+        the set's, and may be left out, and a member it leaves out is
+        gone. The version goes up by 1.
+
+        An extraction whose parse is still read has its request replaced
+        and is asked with the new one when the parse ends. One that has
+        ended is asked again: `pending`, its last object, citations and
+        error gone, its task queued at once. While an extraction of the
+        set is queued or running the change is `conflict` and nothing
+        changes: its task may be running, as for asking one extraction
+        again.
+
+        A development server answers `501 not_implemented`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FieldAgain" }
+      responses:
+        "200": { description: The set as the change leaves it., content: { application/json: { schema: { $ref: "#/components/schemas/Set" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [sets]
+      operationId: deleteSet
+      summary: Delete a set
+      description: |
+        Delete a set. Its parses stay, and so do their extractions under
+        its name, each an extraction of its parse as any other is. A
+        development server answers `501 not_implemented`.
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /sets/{set}/parses:
+    parameters:
+      - $ref: "#/components/parameters/set"
+    get:
+      tags: [sets]
+      operationId: listSetParses
+      summary: List a set's parses
+      description: |
+        List the parses of a set, newest first, each with its extraction
+        under the set's name, as `GET /parses/{parse}` and
+        `GET /parses/{parse}/fields/{name}` answer them. A development
+        server answers `501 not_implemented`.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: A page of the set's parses., content: { application/json: { schema: { $ref: "#/components/schemas/SetParseList" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /sets/{set}/parses/{parse}:
+    parameters:
+      - $ref: "#/components/parameters/set"
+      - $ref: "#/components/parameters/parse"
+    put:
+      tags: [sets]
+      operationId: joinSet
+      summary: Add a parse to a set
+      description: |
+        Add a parse of the set's owner to the set. Its extraction under
+        the set's name is asked with the set's definition, as
+        `POST /parses/{parse}/fields` asks one, and is held to the 64 a
+        parse holds. A parse that is still read joins too: its
+        extraction waits for the parse to end.
+
+        A parse that already holds an extraction of the name that ended,
+        asked with the set's definition, joins as it stands and nothing
+        is asked: a repeated join, or a client's own earlier extraction.
+        One asked with another definition is asked again with the set's.
+        One that has not ended is `conflict`. A parse of another owner
+        is `parse_not_found`, and a set that holds 10,000 parses is
+        `conflict`. With no extractor configured, or the set's no longer
+        configured, it is `reader_not_found`.
+
+        Answers `202` with the extraction when it was asked, and `200`
+        when nothing was. A development server answers
+        `501 not_implemented`.
+      responses:
+        "200": { description: The parse was in the set or joined with the extraction it held., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "202": { description: The extraction was asked., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
   /openapi.yaml:
     get:
       tags: [operations]
@@ -838,6 +998,11 @@ components:
       in: path
       required: true
       schema: { type: integer, minimum: 1 }
+    set:
+      name: set
+      in: path
+      required: true
+      schema: { type: string, pattern: '^set_[0-9A-Z]{26}$' }
 
   responses:
     Error:
@@ -1371,6 +1536,51 @@ components:
       required: [fields]
       properties:
         fields: { type: array, items: { $ref: "#/components/schemas/Field" } }
+
+    Set:
+      type: object
+      required: [id, name, schema, citations, version, parses, created_at, updated_at]
+      properties:
+        id: { type: string }
+        owner: { type: string }
+        name: { type: string, description: "The name of the extraction the set asks of each parse. Unique among the owner's sets, and never changed." }
+        schema: { type: object, description: "The schema each parse is asked with, as it was sent, its members in the order the caller wrote them." }
+        instructions: { type: string, description: The guidance each parse is asked with. Absent when there is none. }
+        citations: { type: boolean }
+        extractor: { type: string, description: The extractor the set names. Absent, the routing policy decides. }
+        version: { type: integer, description: "1 when the set is made, and 1 more at each change of its definition." }
+        parses:
+          type: object
+          description: How many parses are in the set, and where their extractions stand.
+          required: [total, pending, succeeded, failed]
+          properties:
+            total: { type: integer }
+            pending: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, description: When the definition last changed. }
+
+    SetList:
+      type: object
+      required: [sets]
+      properties:
+        sets: { type: array, items: { $ref: "#/components/schemas/Set" } }
+        next_cursor: { type: string }
+
+    SetParseList:
+      type: object
+      required: [parses]
+      properties:
+        parses:
+          type: array
+          items:
+            type: object
+            required: [parse, field]
+            properties:
+              parse: { $ref: "#/components/schemas/Parse" }
+              field: { $ref: "#/components/schemas/Field" }
+        next_cursor: { type: string }
 
     Reader:
       type: object

@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"latere.ai/x/lectio/authorizer"
 	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/run"
+	"latere.ai/x/lectio/internal/store/postgres"
 )
 
 // operations lists every operation of api/openapi.yaml as "METHOD /path",
@@ -48,8 +50,8 @@ func operations(t *testing.T) []string {
 // may: a pinned reader, labels, an origin, and a counted selection.
 type asked struct {
 	*env
-	rec         *recorder
-	file, parse string
+	rec              *recorder
+	file, parse, set string
 }
 
 func asking(t *testing.T) *asked {
@@ -62,16 +64,42 @@ func asking(t *testing.T) *asked {
 		t.Fatalf("the parse the walk is about ended %v", parse)
 	}
 	rec.take()
-	return &asked{env: e, rec: rec, file: file, parse: parse["id"].(string)}
+	return &asked{env: e, rec: rec, file: file, parse: parse["id"].(string), set: walkSet(t, e)}
 }
+
+// walkSet is a set of alice's for a walk over every operation, made in the
+// store, since the server's extractor is not configured in a walk. Over the
+// development server, which keeps no set, it is an id of none.
+func walkSet(t *testing.T, e *env) string {
+	t.Helper()
+	if over == nil {
+		return "set_00000000000000000000000000"
+	}
+	s, err := storeOf(t, e).CreateSet(context.Background(), postgres.SetRequest{
+		ID: "set_01M4C0QW6Q4V3KJ0Q8ZJ6Y8D2N", Owner: "alice", Name: "harbor", Request: `{"schema":{"type":"object"},"citations":true}`,
+	})
+	if err != nil {
+		t.Fatalf("the set the walk is about: %v", err)
+	}
+	return s.ID
+}
+
+// setless reports whether an operation is about a stored set on a server
+// that keeps none: the development server answers it 501 before it asks
+// anything, so a walk of the questions passes it by.
+func setless(op string) bool { return over == nil && strings.Contains(op, "{set}") }
 
 // request makes the request of one operation, with a body where the
 // operation takes one.
 func (a *asked) request(op string) reply {
 	a.t.Helper()
 	method, path, _ := strings.Cut(op, " ")
-	path = strings.NewReplacer("{file}", a.file, "{parse}", a.parse, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(path)
+	path = strings.NewReplacer("{file}", a.file, "{parse}", a.parse, "{set}", a.set, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(path)
 	switch op {
+	case "POST /sets":
+		return a.do(method, path, `{"name":"walk","schema":{"type":"object"}}`)
+	case "PUT /sets/{set}":
+		return a.do(method, path, `{"schema":{"type":"object"}}`)
 	case "POST /files":
 		return a.do(method, path, sheet(a.t), "Content-Type", "image/png")
 	case "POST /parses":
@@ -87,7 +115,7 @@ func known(row access.Route) []string {
 	switch {
 	case slices.Contains(row.Fields, authorizer.FieldID):
 		return slices.Sorted(slices.Values(row.Fields))
-	case row.Action == authorizer.ActionParseCreate || row.Action == authorizer.ActionFileCreate:
+	case row.Action == authorizer.ActionParseCreate || row.Action == authorizer.ActionFileCreate || row.Action == authorizer.ActionSetCreate:
 		return slices.Sorted(slices.Values(slices.DeleteFunc(row.Fields, func(f string) bool { return f == authorizer.FieldOwner })))
 	}
 	return nil
@@ -109,6 +137,9 @@ func TestEveryRouteAsksItsAction(t *testing.T) {
 		row, ok := access.RouteOf(method, path)
 		if !ok {
 			t.Errorf("%s has no row in the table of routes", op)
+			continue
+		}
+		if setless(op) {
 			continue
 		}
 		got := a.request(op)
@@ -141,8 +172,11 @@ func TestEveryRouteAsksItsAction(t *testing.T) {
 		// A stored object is asked about as it is stored, under its owner.
 		if slices.Contains(row.Fields, authorizer.FieldID) {
 			id := a.parse
-			if q.Resource.Kind == authorizer.KindFile {
+			switch q.Resource.Kind {
+			case authorizer.KindFile:
 				id = a.file
+			case authorizer.KindSet:
+				id = a.set
 			}
 			if q.Resource.ID != id || q.Resource.String(authorizer.FieldOwner) != "alice" {
 				t.Errorf("%s asked about %q of %q", op, q.Resource.ID, q.Resource.String(authorizer.FieldOwner))
@@ -230,12 +264,14 @@ func TestADenyAndAnOutageAnswerBeforeAnythingIsDone(t *testing.T) {
 		}, http.StatusServiceUnavailable, http.StatusServiceUnavailable, "authorizer_unavailable"},
 	} {
 		a.rec.answer = tc.answer
+		asking := 0
 		for _, op := range operations(t) {
 			method, path, _ := strings.Cut(op, " ")
 			row, _ := access.RouteOf(method, path)
-			if row.Action == "" {
+			if row.Action == "" || setless(op) {
 				continue
 			}
+			asking++
 			got := a.request(op)
 			onStored := slices.Contains(row.Fields, authorizer.FieldID)
 			want, code := tc.other, tc.code
@@ -243,8 +279,11 @@ func TestADenyAndAnOutageAnswerBeforeAnythingIsDone(t *testing.T) {
 				want = tc.stored
 				if want == http.StatusNotFound {
 					code = "parse_not_found"
-					if authorizer.Kind(row.Action) == authorizer.KindFile {
+					switch authorizer.Kind(row.Action) {
+					case authorizer.KindFile:
 						code = "file_not_found"
+					case authorizer.KindSet:
+						code = "set_not_found"
 					}
 				}
 			}
@@ -267,8 +306,8 @@ func TestADenyAndAnOutageAnswerBeforeAnythingIsDone(t *testing.T) {
 				t.Errorf("%s, %s: an outage may pass, and the answer does not say so: %s", tc.name, op, got.body)
 			}
 		}
-		if n := len(a.rec.take()); n != len(operations(t))-1 {
-			t.Errorf("%s: %d questions over %d operations that ask", tc.name, n, len(operations(t))-1)
+		if n := len(a.rec.take()); n != asking {
+			t.Errorf("%s: %d questions over %d operations that ask", tc.name, n, asking)
 		}
 	}
 

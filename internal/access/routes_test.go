@@ -123,13 +123,15 @@ func TestEveryRowAsksAnActionOfTheVocabulary(t *testing.T) {
 				t.Errorf("%s sends %q, which the vocabulary does not publish for %s", name, field, rt.Action)
 			}
 		}
-		// A route about a stored parse or file sends its id, and no other
-		// route does: the id is how the row says the object is read first.
-		stored := strings.Contains(rt.Path, "{parse}") || strings.Contains(rt.Path, "{file}")
+		// A route about a stored parse, file or set sends its id, and no
+		// other route does: the id is how the row says the object is read
+		// first. A route about a set and a parse asks about the set.
+		stored := strings.Contains(rt.Path, "{parse}") || strings.Contains(rt.Path, "{file}") || strings.Contains(rt.Path, "{set}")
 		if stored != slices.Contains(rt.Fields, authorizer.FieldID) {
 			t.Errorf("%s names a stored object: %v, and sends its id: %v", name, stored, !stored)
 		}
-		if kind := authorizer.Kind(rt.Action); stored && strings.Contains(rt.Path, "{file}") != (kind == authorizer.KindFile) {
+		if kind := authorizer.Kind(rt.Action); stored && (strings.Contains(rt.Path, "{file}") != (kind == authorizer.KindFile) ||
+			strings.Contains(rt.Path, "{set}") != (kind == authorizer.KindSet)) {
 			t.Errorf("%s asks %s, which acts on a %s", name, rt.Action, kind)
 		}
 	}

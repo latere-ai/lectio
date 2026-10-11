@@ -6,6 +6,28 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: sets. A set is a name and the definition of an extraction,
+  made before any file is read (`POST /sets`), and asked of each parse
+  that joins it (`PUT /sets/{set}/parses/{parse}`). A parse whose
+  extraction of the name was already filled with the set's definition
+  joins without a model call. `PUT /sets/{set}` changes the definition
+  and asks every parse of the set again, and is refused with `conflict`
+  while one of its extractions is queued or running.
+  `GET /sets/{set}/parses` reads a set's table, every parse with its
+  extraction, in one request. Deleting a set leaves its parses and their
+  extractions. A set holds at most 10,000 parses.
+- Added: the `Set` kind and the actions `set.create`, `set.read`,
+  `set.list`, `set.update` and `set.delete`. An authorizer that does not
+  know them refuses the set routes and nothing else; the allows of
+  `set.create` and `set.update` are read for `owner` and `readers`.
+- Added: the error code `set_not_found`.
+- Changed: an extraction a set asked is asked again by name
+  (`PUT /parses/{parse}/fields/{name}`) with the set's request alone;
+  another request is `conflict`.
+- Migration 000008 adds the `sets` table and two columns to `fields`. It
+  takes the lock of `fields` as 000007 does, and its down file keeps the
+  extractions a set asked as extractions of no set.
+
 ### Security
 
 - Built with Go 1.27.2 and golang.org/x/net v0.60.0, which fix GO-2026-6611, GO-2026-6612, GO-2026-6613 and GO-2026-6617.

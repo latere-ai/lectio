@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Latere AI
 // SPDX-License-Identifier: Apache-2.0
 
-// Package id makes the identifiers of files and parses: a prefix that says
+// Package id makes the identifiers of files, parses and sets: a prefix that says
 // what the thing is, and a ULID, which is 48 bits of time followed by 80
 // random bits in 26 characters of Crockford's base 32. An identifier sorts
 // by when it was made, so a list ordered by id is a list ordered by time,
@@ -18,6 +18,7 @@ import (
 const (
 	File  = "fil"
 	Parse = "prs"
+	Set   = "set"
 )
 
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
