@@ -110,6 +110,10 @@ asked by the 2 requests that queue model work on a set's parses: a
 change of its definition and a parse joining it. A join asks about the
 set alone; the parse must be the set's owner's, and the work is the
 parse owner's and held to the parse's limits, as an extraction's is.
+The reach of `set.update` and `set.read` is therefore the set owner's
+parses that join it: an authorizer that decides `parse.create` or
+`parse.read` more narrowly than by owner decides the set actions as
+narrowly ([[018-sets]]).
 
 On a create, `owner` is the owner the request names. A request may
 name an owner other than the caller's subject (a service submitting

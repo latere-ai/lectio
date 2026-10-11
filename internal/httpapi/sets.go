@@ -249,7 +249,9 @@ func (s *Server) joinSet(w http.ResponseWriter, r *http.Request, c call) error {
 		return err
 	}
 	if p.Owner != set.Owner {
-		return fault.New(fault.ParseNotFound, "no parse %s of the set's owner", p.ID)
+		// Answered as Store.Parse answers a parse that is not there, so a
+		// set of one's own tells nothing of another owner's parses.
+		return fault.New(fault.ParseNotFound, "no parse %s", p.ID)
 	}
 	f, asked, err := s.Backend.JoinSet(r.Context(), set, p)
 	if err != nil {

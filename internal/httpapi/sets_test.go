@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -65,8 +66,15 @@ func TestASetIsMadeFirstAndAskedOfEachParseThatJoins(t *testing.T) {
 		t.Fatalf("another caller lists %v", listed)
 	}
 	theirs := bob.parsed(bob.upload("invoice.tiff", testfixtures.Read(t, testfixtures.MultiTIFF)), "")["id"].(string)
-	if got := e.do("PUT", "/sets/"+set+"/parses/"+theirs, nil); got.status != http.StatusNotFound || got.code(t) != "parse_not_found" {
-		t.Fatalf("a parse of another owner joined: %d %s", got.status, got.body)
+	refused := e.do("PUT", "/sets/"+set+"/parses/"+theirs, nil)
+	if refused.status != http.StatusNotFound || refused.code(t) != "parse_not_found" {
+		t.Fatalf("a parse of another owner joined: %d %s", refused.status, refused.body)
+	}
+	// It is answered as a parse that is not there, beyond its id.
+	const none = "prs_00000000000000000000000000"
+	missing := e.do("PUT", "/sets/"+set+"/parses/"+none, nil)
+	if strings.ReplaceAll(string(missing.body), none, "ID") != strings.ReplaceAll(string(refused.body), theirs, "ID") {
+		t.Fatalf("a missing parse answers %s and another owner's %s", missing.body, refused.body)
 	}
 
 	pid := e.invoice()

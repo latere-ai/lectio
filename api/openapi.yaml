@@ -753,6 +753,7 @@ paths:
       responses:
         "201": { description: Made., content: { application/json: { schema: { $ref: "#/components/schemas/Set" } } } }
         "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
     get:
@@ -794,7 +795,9 @@ paths:
         Replace a set's definition and ask every parse of the set again
         with it. The body is a request for an extraction; its `name` is
         the set's, and may be left out, and a member it leaves out is
-        gone. The version goes up by 1.
+        gone. The version goes up by 1. The definition the set already
+        holds, with its members in the same order, changes nothing and
+        asks nothing; a parse that is being deleted is left as it is.
 
         An extraction whose parse is still read has its request replaced
         and is asked with the new one when the parse ends. One that has
@@ -813,6 +816,7 @@ paths:
       responses:
         "200": { description: The set as the change leaves it., content: { application/json: { schema: { $ref: "#/components/schemas/Set" } } } }
         "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
@@ -866,8 +870,9 @@ paths:
         extraction waits for the parse to end.
 
         A parse that already holds an extraction of the name that ended,
-        asked with the set's definition, joins as it stands and nothing
-        is asked: a repeated join, or a client's own earlier extraction.
+        asked with the set's definition (equal as a JSON value), joins as
+        it stands and nothing is asked: a repeated join, or a client's own
+        earlier extraction.
         One asked with another definition is asked again with the set's.
         One that has not ended is `conflict`. A parse of another owner
         is `parse_not_found`, and a set that holds 10,000 parses is

@@ -78,15 +78,17 @@ what the parse holds under the set's name:
 |---|---|
 | nothing under the name | the extraction is asked with the set's definition, as `POST /parses/{parse}/fields` asks one, under the 64 a parse holds |
 | the set's extraction, asked with the set's version | nothing is asked; the extraction is answered as it stands |
-| an extraction of the name that has ended and whose request is the set's, byte for byte | the extraction joins the set as it stands, and nothing is asked |
+| an extraction of the name that has ended and whose request is the set's, equal as a JSON value, with the same extractor | the extraction joins the set as it stands, and nothing is asked |
 | an extraction of the name that has ended, asked with another request | it is asked again with the set's definition ([[011-structured-extraction]], "Asking again") |
 | an extraction of the name that has not ended, and is not the set's at its version | `conflict`: its task may be running |
 
 The third row is what lets a client that kept its own sets, as the
 console did, move them into stored sets without paying for a model
-call again. The request of an extraction is kept as the text of one
-JSON document, and a set's definition is kept the same way, so the
-comparison is of the bytes the core wrote for each.
+call again. The request of an extraction and a set's definition are
+each kept as the text of one JSON document, and the 2 are compared as
+JSON values: the order of members and the spelling of a number do not
+make them differ, and 2 requests that differ in a value never compare
+equal.
 
 A parse joins a set while it is read too. Its extraction then waits for
 the parse to end, as one asked of a running parse waits.
@@ -101,16 +103,22 @@ extractions go with it. There is no other way to leave a set in this
 version (see Non-goals).
 
 An extraction of a set is asked with the set's definition and with no
-other. `PUT /parses/{parse}/fields/{name}` on it with the set's request
-asks it again, as after a failure, and it stays in the set; with
-another request it is `conflict`, since the set's table would then
-hold a row the set did not ask. A change of what a set's parses are
-asked is a change of the set.
+other. `PUT /parses/{parse}/fields/{name}` on it with the set's request,
+equal as a JSON value, asks it again, as after a failure, with the
+set's own bytes, and it stays in the set; with another request it is
+`conflict`, since the set's table would then hold a row the set did not
+ask. A change of what a set's parses are asked is a change of the set.
 
 ### A change of the definition
 
 `PUT /sets/{set}` replaces the definition and adds 1 to the version.
-Each parse in the set is then in one of 3 places, and the change does
+The definition the set holds, byte for byte, changes nothing and asks
+nothing, so a client that sends it again spends no call. The same
+members in another order are a change: the order is the order a model
+is asked in and a table shows its columns in. A parse whose delete has
+begun, so whose retention has ended, is left as it is: none of its work
+is queued, so nothing is written that its delete has not listed. Each
+other parse in the set is then in one of 3 places, and the change does
 for each what asking it again would:
 
 - **Its parse is still being read**, so its extraction has no task yet.
@@ -124,7 +132,9 @@ for each what asking it again would:
   with `conflict`, and nothing of the set or of any parse changes.
 
 The last is the rule an extraction asked again already has: a task that
-may be running is not raced. A change waits for the set's running
+may be running is not raced. The change is of every parse of the set at
+once, so a client that wants a single failed parse filled again asks its
+extraction again by name, with the set's request. A change waits for the set's running
 extractions to end, which is a call or a few each. The answer says
 nothing of which parse was busy; the set's `parses.pending` says how
 many are, and its list of parses which.
@@ -171,7 +181,15 @@ read for `owner`, the owner the set is recorded under, and for
 `readers`. The work a set queues is its parses' owner's, so the limits
 of a parse hold it, not the limits of the allow. A join asks about the
 set alone: the parse must be the set's owner's, and a parse of another
-owner is answered as one that is not there.
+owner is answered as one that is not there, with the same detail.
+
+So the reach of a set's actions is its owner's: `set.update` on a set
+queues extraction work on any parse of the set's owner that joins it,
+and `set.read` reads every parse in the set with its extraction. An
+authorizer that decides `parse.create` or `parse.read` more narrowly
+than by owner, by label or by parse, decides `set.update` and
+`set.read` as narrowly or not at all, since a set is asked about as a
+whole.
 
 ### What is stored
 
@@ -180,21 +198,22 @@ JSON document kept byte for byte, the extractor, the version, and the
 2 times; unique on the owner and the name. The deadline of an
 extraction is the server's, sent with each request that asks one. Each row of `fields` gains the set that asked it, a
 reference that becomes null when the set is deleted, and the version
-of the set it was asked with. Every statement is a SQL function that
-takes the lock the exchange takes, as the extraction's do, so a change
-of a set is wholly before or wholly after any settle, retry, cancel or
-delete of its parses.
+of the set it was asked with. Every statement is a SQL function, and
+every one that changes an extraction takes the lock the exchange takes,
+as the extraction's do, so a change of a set is wholly before or wholly
+after any settle, retry, cancel or delete of its parses. Making a set
+touches no parse and takes the lock of its own row alone.
 
 ## API
 
 | Method | Path | Answer |
 |---|---|---|
-| `POST` | `/sets` | `201` the set; `conflict` for a name the owner has |
-| `GET` | `/sets` | `200` a page of sets; `?name=`, `?after=`, `?limit=` |
+| `POST` | `/sets` | `201` the set; `conflict` for a name the owner has; `reader_not_permitted` for an extractor the caller may not name |
+| `GET` | `/sets` | `200` a page of sets; `?name=`, `?cursor=`, `?limit=` |
 | `GET` | `/sets/{set}` | `200` the set; `set_not_found` |
 | `PUT` | `/sets/{set}` | `200` the set; `conflict` while an extraction of it is queued or running |
 | `DELETE` | `/sets/{set}` | `204`; the parses stay |
-| `GET` | `/sets/{set}/parses` | `200` a page of the set's parses, each with its extraction; `?after=`, `?limit=` |
+| `GET` | `/sets/{set}/parses` | `200` a page of the set's parses, each with its extraction; `?cursor=`, `?limit=` |
 | `PUT` | `/sets/{set}/parses/{parse}` | `202` the extraction when it is asked, `200` when nothing is; `parse_not_found`, `conflict` |
 
 The body of `POST /sets` is a request for an extraction: `name`,
@@ -256,6 +275,14 @@ set, as it does on extraction.
   high 32 bits, and adds 1 to the version.
 - A change while an extraction of the set is queued or running is
   `conflict`, and changes nothing.
+- A change leaves a parse whose delete has begun as it is, queues
+  nothing of it, and is not held back by an extraction of it the delete
+  left pending.
+- A change to the definition the set holds, byte for byte, asks nothing
+  and keeps the version; the same members in another order are a
+  change.
+- A join and an asking by name take a request equal to the set's as a
+  JSON value as the set's.
 - A deleted set leaves its parses with their extractions, read by name.
 - A deleted or expired parse leaves its sets.
 - The down migration restores the functions of the migration before it
