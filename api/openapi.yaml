@@ -874,6 +874,7 @@ components:
                 - reader_not_found
                 - file_not_found
                 - parse_not_found
+                - set_not_found
                 - page_not_found
                 - page_not_ready
                 - block_not_found

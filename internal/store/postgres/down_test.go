@@ -113,8 +113,8 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 		}
 	}
 
-	// The other holds them all, with an extraction and a figure queued,
-	// which are tasks of kinds the newest migration added.
+	// The other holds them all, with an extraction, a figure and the
+	// extraction of a set queued.
 	dsn := database(t, srv)
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
@@ -136,8 +136,10 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 	h.through(w, "prs_a", 1)
 	h.field("prs_a", "invoice", "")
 	h.figures("prs_a", "", false, "1.2")
-	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure') AND state = 'queued'`); n != 2 {
-		t.Fatalf("%d tasks of the new kinds are queued, want 2", n)
+	h.makeSet("set_1", "alice", "harbor")
+	h.join("set_1", "prs_a")
+	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure') AND state = 'queued'`); n != 3 {
+		t.Fatalf("%d extractions and figures are queued, want 3", n)
 	}
 
 	if _, err := after.Exec(ctx, migration(t, last+".down.sql")); err != nil {
@@ -157,12 +159,12 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 		}
 	}
 	// The counters of queued tasks stay a count of the rows. The work the
-	// newest migration leaves runnable stays queued: 000007 adds a count of
-	// askings to an extraction, and an extraction and a figure are tasks of
-	// 000006, which its down file keeps.
+	// newest migration leaves runnable stays queued: 000008 adds sets, and
+	// the extraction a set asked stays, an extraction of no set, with the
+	// extraction and the figure of 000006.
 	h.consistent()
-	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure')`); n != 2 {
-		t.Fatalf("%d tasks of the kinds 000006 added are left, want 2", n)
+	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure')`); n != 3 {
+		t.Fatalf("%d extractions and figures are left, want 3", n)
 	}
 	if _, err := after.Exec(ctx, migration(t, last+".up.sql")); err != nil {
 		t.Fatalf("the up file, applied again: %v", err)
@@ -254,7 +256,7 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	}
 	var columns, timeout string
 	if err := holder.QueryRow(ctx, `SELECT count(*)::text FROM information_schema.columns
-	      WHERE table_schema = current_schema() AND column_name IN ('asks')`).Scan(&columns); err != nil {
+	      WHERE table_schema = current_schema() AND column_name IN ('set_id', 'set_version')`).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
 	if columns != "0" {

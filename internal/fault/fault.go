@@ -31,6 +31,7 @@ const (
 	ReaderNotFound       Code = "reader_not_found"
 	FileNotFound         Code = "file_not_found"
 	ParseNotFound        Code = "parse_not_found"
+	SetNotFound          Code = "set_not_found"
 	PageNotFound         Code = "page_not_found"
 	PageNotReady         Code = "page_not_ready"
 	BlockNotFound        Code = "block_not_found"

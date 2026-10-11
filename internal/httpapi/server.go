@@ -315,6 +315,7 @@ var problems = map[fault.Code]problem{
 	fault.NotFound:              {http.StatusNotFound, "There is nothing at this address.", false},
 	fault.FileNotFound:          {http.StatusNotFound, "The file was not found.", false},
 	fault.ParseNotFound:         {http.StatusNotFound, "The parse was not found.", false},
+	fault.SetNotFound:           {http.StatusNotFound, "The set was not found.", false},
 	fault.PageNotFound:          {http.StatusNotFound, "The page was not found.", false},
 	fault.BlockNotFound:         {http.StatusNotFound, "The block was not found.", false},
 	fault.MethodNotAllowed:      {http.StatusMethodNotAllowed, "This address does not take that method.", false},

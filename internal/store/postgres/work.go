@@ -114,8 +114,9 @@ var ErrNoField = errors.New("store: the parse has no extraction of that name")
 // the parse has ended. It returns the object key of the result the asking
 // replaced, empty when there was none, for the caller to remove. A parse
 // that is not there is refused with parse_not_found, an extraction that has
-// not ended with conflict, and a name the parse has no extraction of with
-// ErrNoField.
+// not ended with conflict, an extraction of a set asked with another request
+// than the set's with conflict, and a name the parse has no extraction of
+// with ErrNoField.
 func (s *Store) AskFieldAgain(ctx context.Context, f FieldRequest) (replaced string, err error) {
 	switch {
 	case f.Parse == "" || f.Name == "" || f.Request == "":
@@ -145,6 +146,8 @@ func (s *Store) AskFieldAgain(ctx context.Context, f FieldRequest) (replaced str
 		return "", ErrNoField
 	case "busy":
 		return "", fault.New(fault.Conflict, "the extraction %s of parse %s has not ended", f.Name, f.Parse)
+	case "set":
+		return "", fault.New(fault.Conflict, "the extraction %s of parse %s is asked by a set, with the set's request alone; a change of it is a change of the set", f.Name, f.Parse)
 	case "asked":
 		if answer.Output != nil {
 			return *answer.Output, nil
@@ -183,6 +186,11 @@ type Field struct {
 	Calls        int   `json:"calls"`
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
+
+	// SetID is the set that asked the extraction, empty when none did, and
+	// SetVersion the version of the set's definition it was asked with.
+	SetID      string `json:"set_id"`
+	SetVersion int    `json:"set_version"`
 
 	CreatedAt  time.Time  `json:"created_at"`
 	FinishedAt *time.Time `json:"finished_at"`
