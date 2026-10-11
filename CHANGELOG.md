@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.6.0 - 2026-10-11
+
 - Added: sets. A set is a name and the definition of an extraction,
   made before any file is read (`POST /sets`), and asked of each parse
   that joins it (`PUT /sets/{set}/parses/{parse}`). A parse whose
