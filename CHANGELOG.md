@@ -6,8 +6,6 @@ refused before it is pushed.
 
 ## Unreleased
 
-## Unreleased
-
 - Changed: the summary of `PUT /sets/{set}/parses/{parse}` in the
   contract reads "Add a parse", short enough for a reference's
   navigation, which lists it under its tag, `sets`.
