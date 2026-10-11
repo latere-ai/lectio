@@ -126,7 +126,8 @@ $$;
 --   nothing                       the extraction is asked with the set's definition
 --   the set's, at its version     nothing is asked
 --   one that ended, asked with    it joins as it stands, and nothing is asked
---     the set's request and pin
+--     the set's request, equal
+--     as a JSON value, and pin
 --   another one that ended        it is asked again with the set's definition
 --   another one, pending          busy: its task may be running
 --
@@ -177,7 +178,7 @@ BEGIN
     UPDATE parses SET fields = fields + 1 WHERE parse_id = v_parse;
   ELSIF v_f.state = 'pending' THEN
     RETURN '{"answer":"busy"}';
-  ELSIF v_f.request = v_s.request AND v_f.pin IS NOT DISTINCT FROM v_s.pin THEN
+  ELSIF v_f.request::jsonb = v_s.request::jsonb AND v_f.pin IS NOT DISTINCT FROM v_s.pin THEN
     UPDATE fields SET set_id = v_set, set_version = v_s.version
      WHERE parse_id = v_parse AND name = v_s.name;
     RETURN '{"answer":"joined"}';
@@ -194,8 +195,13 @@ BEGIN
 END $$;
 
 -- lectio_set_update replaces a set's definition and asks every extraction of
--- the set again with it. It takes the lock the exchange takes, then the
--- set's row and its parses' rows in the order of their ids. An extraction
+-- the set again with it. The definition the set holds, byte for byte, with
+-- the same pin, changes nothing and asks nothing; one that only orders the
+-- members otherwise is a change, since the order is the order a model is
+-- asked in and a table's columns are shown in. It takes the lock the
+-- exchange takes, then the set's row and its parses' rows in the order of
+-- their ids. A parse whose retention has ended is being removed: it is left
+-- as it is, and none of its work is queued. Of the others, an extraction
 -- whose parse is still read has no task yet, and its request is replaced
 -- where it stands; one that has ended is asked again, as lectio_field_ask
 -- asks it; and while one has a task, which may be running, nothing changes
@@ -212,6 +218,7 @@ DECLARE
   v_pin     text := nullif(u->>'pin', '');
   v_wait    interval := (u->>'deadline_ms')::bigint * interval '1 millisecond';
   v_s       sets%ROWTYPE;
+  v_parses  text[];
   v_outputs jsonb;
   v_parse   text;
 BEGIN
@@ -220,26 +227,32 @@ BEGIN
   IF NOT FOUND THEN
     RETURN '{"answer":"no_set"}';
   END IF;
-  PERFORM 1 FROM parses WHERE parse_id IN (SELECT parse_id FROM fields WHERE set_id = v_set)
-    ORDER BY parse_id FOR UPDATE;
-  IF EXISTS (SELECT 1 FROM fields WHERE set_id = v_set AND state = 'pending' AND deadline_at IS NOT NULL) THEN
+  IF v_s.request = v_request AND v_s.pin IS NOT DISTINCT FROM v_pin THEN
+    RETURN jsonb_build_object('answer', 'updated', 'set', lectio_set_view(v_s), 'outputs', '[]'::jsonb)::text;
+  END IF;
+  SELECT coalesce(array_agg(p.parse_id ORDER BY p.parse_id), '{}') INTO v_parses
+    FROM fields f JOIN parses p USING (parse_id)
+   WHERE f.set_id = v_set AND (p.expires_at IS NULL OR p.expires_at > v_now);
+  PERFORM 1 FROM parses WHERE parse_id = ANY (v_parses) ORDER BY parse_id FOR UPDATE;
+  IF EXISTS (SELECT 1 FROM fields WHERE set_id = v_set AND parse_id = ANY (v_parses)
+                AND state = 'pending' AND deadline_at IS NOT NULL) THEN
     RETURN '{"answer":"busy"}';
   END IF;
   UPDATE sets SET request = v_request, pin = v_pin, version = version + 1, updated_at = v_now
    WHERE set_id = v_set
   RETURNING * INTO v_s;
   SELECT coalesce(jsonb_agg(output), '[]'::jsonb) INTO v_outputs
-    FROM fields WHERE set_id = v_set AND state <> 'pending' AND output IS NOT NULL;
+    FROM fields WHERE set_id = v_set AND parse_id = ANY (v_parses) AND state <> 'pending' AND output IS NOT NULL;
   UPDATE fields SET request = v_request, pin = v_pin, wait = v_wait, set_version = v_s.version
-   WHERE set_id = v_set AND state = 'pending';
+   WHERE set_id = v_set AND parse_id = ANY (v_parses) AND state = 'pending';
   UPDATE fields SET state = 'pending', request = v_request, pin = v_pin, wait = v_wait, deadline_at = NULL,
          output = NULL, result = NULL, error = NULL, calls = 0, input_tokens = 0, output_tokens = 0,
          finished_at = NULL, asks = asks + 1, set_version = v_s.version
-   WHERE set_id = v_set AND state <> 'pending';
+   WHERE set_id = v_set AND parse_id = ANY (v_parses) AND state <> 'pending';
   FOR v_parse IN
-    SELECT f.parse_id FROM fields f JOIN parses p USING (parse_id)
-     WHERE f.set_id = v_set AND p.state IN ('succeeded', 'failed', 'canceled')
-     ORDER BY f.parse_id
+    SELECT parse_id FROM parses
+     WHERE parse_id = ANY (v_parses) AND state IN ('succeeded', 'failed', 'canceled')
+     ORDER BY parse_id
   LOOP
     PERFORM lectio_fields_release(v_parse, v_now);
   END LOOP;
@@ -263,17 +276,21 @@ BEGIN
 END $$;
 
 -- lectio_field_ask as 000007 wrote it, and an extraction of a set is asked
--- again with the set's request and pin alone: answer set for another. A
--- set's table holds the rows the set asked.
+-- again with the set's request, equal as a JSON value, and its pin alone:
+-- answer set for another. It is asked with the set's own bytes, so a
+-- schema reaches the model with its members in the order the set has them.
+-- A set's table holds the rows the set asked.
 CREATE OR REPLACE FUNCTION lectio_field_ask(p_field text, p_now timestamptz DEFAULT NULL)
 RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
-  f       jsonb := p_field::jsonb;
-  v_now   timestamptz := coalesce(p_now, now());
-  v_parse text := f->>'parse';
-  v_name  text := f->>'name';
-  v_p     parses%ROWTYPE;
-  v_f     fields%ROWTYPE;
+  f         jsonb := p_field::jsonb;
+  v_now     timestamptz := coalesce(p_now, now());
+  v_parse   text := f->>'parse';
+  v_name    text := f->>'name';
+  v_request text := f->>'request';
+  v_p       parses%ROWTYPE;
+  v_f       fields%ROWTYPE;
+  v_s       sets%ROWTYPE;
 BEGIN
   PERFORM lectio_lock();
   SELECT * INTO v_p FROM parses WHERE parse_id = v_parse FOR UPDATE;
@@ -287,12 +304,14 @@ BEGIN
   IF v_f.state = 'pending' THEN
     RETURN '{"answer":"busy"}';
   END IF;
-  IF v_f.set_id IS NOT NULL AND NOT EXISTS (
-       SELECT 1 FROM sets s WHERE s.set_id = v_f.set_id
-          AND s.request = f->>'request' AND s.pin IS NOT DISTINCT FROM nullif(f->>'pin', '')) THEN
-    RETURN '{"answer":"set"}';
+  IF v_f.set_id IS NOT NULL THEN
+    SELECT * INTO STRICT v_s FROM sets WHERE set_id = v_f.set_id;
+    IF v_s.request::jsonb <> v_request::jsonb OR v_s.pin IS DISTINCT FROM nullif(f->>'pin', '') THEN
+      RETURN '{"answer":"set"}';
+    END IF;
+    v_request := v_s.request;
   END IF;
-  UPDATE fields SET state = 'pending', request = f->>'request', pin = nullif(f->>'pin', ''),
+  UPDATE fields SET state = 'pending', request = v_request, pin = nullif(f->>'pin', ''),
          wait = (f->>'deadline_ms')::bigint * interval '1 millisecond', deadline_at = NULL,
          output = NULL, result = NULL, error = NULL, calls = 0, input_tokens = 0, output_tokens = 0,
          finished_at = NULL, asks = asks + 1

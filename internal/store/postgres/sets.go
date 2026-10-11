@@ -170,7 +170,8 @@ type setJoin struct {
 }
 
 // JoinSet adds a parse to a set, which asks the set's extraction of it
-// unless the parse holds one the set's definition already filled. asked
+// unless the parse holds one the set's definition, equal as a JSON value,
+// already filled. asked
 // says whether an extraction was asked; replaced is the object key of the
 // result an asking replaced, empty when there was none, for the caller to
 // remove. A set that is not there is refused with set_not_found; a parse
@@ -199,7 +200,9 @@ func (s *Store) JoinSet(ctx context.Context, j SetJoin) (asked bool, replaced st
 	case "no_set":
 		return false, "", fault.New(fault.SetNotFound, "no set %s", j.Set)
 	case "missing":
-		return false, "", fault.New(fault.ParseNotFound, "no parse %s of the set's owner", j.Parse)
+		// As Parse answers a parse that is not there: a parse of another
+		// owner is not told apart from one that is not there.
+		return false, "", fault.New(fault.ParseNotFound, "no parse %s", j.Parse)
 	case "busy":
 		return false, "", fault.New(fault.Conflict, "the extraction of parse %s under the set's name has not ended", j.Parse)
 	case "full":
@@ -227,7 +230,10 @@ type setUpdate struct {
 
 // UpdateSet replaces a set's definition and asks every extraction of the set
 // again with it, in one transaction: one whose parse is still read has its
-// request replaced, and one that has ended is asked again. It returns the
+// request replaced, and one that has ended is asked again. A parse that is
+// being removed is left as it is. The definition the set holds, byte for
+// byte and with the same extractor, changes nothing; one that orders the
+// members otherwise is a change. It returns the
 // set as that leaves it and the object keys of the results the askings
 // replaced, for the caller to remove. A set that is not there is refused
 // with set_not_found, and a set with an extraction whose task is queued or

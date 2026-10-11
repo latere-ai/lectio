@@ -379,3 +379,99 @@ func TestADeletedSetLeavesItsParsesAndAParseThatGoesLeavesItsSets(t *testing.T) 
 		h.consistent()
 	})
 }
+
+// reordered is the suite's request with its members in another order: equal
+// to it as a JSON value, and other bytes.
+const reordered = `{"citations":true,"schema":{"properties":{"a":{"const":null},"total":{"type":"number"}},"type":"object"}}`
+
+// TestAChangeOfASetLeavesAParseBeingRemoved: a parse whose delete has begun,
+// so its retention has ended, is left as it is by a change of its set:
+// its extraction is not asked again and nothing of it is queued, so no
+// object is written that the delete has not listed. An extraction the delete
+// left pending, with no task, does not hold the change back.
+func TestAChangeOfASetLeavesAParseBeingRemoved(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		w := h.worker()
+		for _, id := range []string{"prs_kept", "prs_done", "prs_queued"} {
+			h.readThrough(w, postgres.Submission{Parse: id, Group: "acme", Owner: "alice"}, 1)
+		}
+		h.makeSet("set_1", "alice", "harbor")
+		h.join("set_1", "prs_kept")
+		kept := h.fill(w, "prs_kept")
+		h.join("set_1", "prs_done")
+		h.fill(w, "prs_done")
+		h.join("set_1", "prs_queued")
+		for _, id := range []string{"prs_done", "prs_queued"} {
+			if err := h.store.DeleteParse(ctx, "alice", id); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		s, replaced, err := h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: other}, time.Hour)
+		if err != nil || s.Version != 2 || len(replaced) != 1 || replaced[0] != filledBy(kept).Output {
+			t.Fatalf("the change answered %+v, replaced %v, %v", s, replaced, err)
+		}
+		if f := h.read("prs_done", "harbor"); f.State != postgres.FieldSucceeded || f.Request != asked || f.SetVersion != 1 {
+			t.Fatalf("the extraction of a parse being removed after the change is %+v", f)
+		}
+		if f := h.read("prs_queued", "harbor"); f.State != postgres.FieldPending || f.Request != asked {
+			t.Fatalf("the pending extraction of a parse being removed after the change is %+v", f)
+		}
+		if got := value[string](h, `SELECT string_agg(parse_id, ',' ORDER BY parse_id) FROM tasks WHERE kind = 'extract'`); got != "prs_kept" {
+			t.Fatalf("after the change the extractions queued are of %s, want prs_kept alone", got)
+		}
+		h.consistent()
+	})
+}
+
+// TestASetChangedToWhatItHoldsChangesNothing: a change to the definition the
+// set holds, byte for byte, asks nothing and keeps the version. The same
+// members in another order are a change: the order is the order a model is
+// asked in.
+func TestASetChangedToWhatItHoldsChangesNothing(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		w := h.worker()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme", Owner: "alice"}, 1)
+		h.makeSet("set_1", "alice", "harbor")
+		h.join("set_1", "prs_a")
+		h.fill(w, "prs_a")
+
+		s, replaced, err := h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: asked}, time.Hour)
+		if err != nil || s.Version != 1 || len(replaced) != 0 {
+			t.Fatalf("a change to what the set holds answered %+v, replaced %v, %v", s, replaced, err)
+		}
+		if f := h.read("prs_a", "harbor"); f.State != postgres.FieldSucceeded {
+			t.Fatalf("a change to what the set holds asked again: %+v", f)
+		}
+		if s, _, err = h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: reordered}, time.Hour); err != nil || s.Version != 2 || s.Request != reordered {
+			t.Fatalf("a change of the members' order answered %+v, %v", s, err)
+		}
+	})
+}
+
+// TestARequestEqualAsAValueIsTheSets: an extraction asked with the set's
+// request in another order of members is taken in by a join with nothing
+// asked, and asked again by name, with the set's own bytes.
+func TestARequestEqualAsAValueIsTheSets(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		w := h.worker()
+		h.readThrough(w, postgres.Submission{Parse: "prs_a", Group: "acme", Owner: "alice"}, 1)
+		if err := h.store.CreateField(ctx, postgres.FieldRequest{Parse: "prs_a", Name: "harbor", Request: reordered, Deadline: time.Hour}); err != nil {
+			t.Fatal(err)
+		}
+		h.fill(w, "prs_a")
+		h.makeSet("set_1", "alice", "harbor")
+		if asked, _ := h.join("set_1", "prs_a"); asked {
+			t.Fatal("a join asked again an extraction whose request is the set's as a value")
+		}
+		if _, err := h.store.AskFieldAgain(ctx, postgres.FieldRequest{Parse: "prs_a", Name: "harbor", Request: reordered, Deadline: time.Hour}); err != nil {
+			t.Fatalf("asking again with the set's request in another order: %v", err)
+		}
+		if f := h.read("prs_a", "harbor"); f.State != postgres.FieldPending || f.Request != asked {
+			t.Fatalf("asked again by name, the extraction is %+v, want the set's own bytes", f)
+		}
+	})
+}
