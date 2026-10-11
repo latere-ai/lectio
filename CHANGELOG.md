@@ -6,6 +6,12 @@ refused before it is pushed.
 
 ## Unreleased
 
+## Unreleased
+
+- Changed: the summary of `PUT /sets/{set}/parses/{parse}` in the
+  contract reads "Add a parse", short enough for a reference's
+  navigation, which lists it under its tag, `sets`.
+
 ## v0.6.0 - 2026-10-11
 
 - Added: sets. A set is a name and the definition of an extraction,

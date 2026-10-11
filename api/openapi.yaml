@@ -861,7 +861,7 @@ paths:
     put:
       tags: [sets]
       operationId: joinSet
-      summary: Add a parse to a set
+      summary: Add a parse
       description: |
         Add a parse of the set's owner to the set. Its extraction under
         the set's name is asked with the set's definition, as
