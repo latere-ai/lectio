@@ -291,5 +291,10 @@ set, as it does on extraction.
 ## Implementation status
 
 Built in the durable server: the table, the functions, the 7 routes,
-the `Set` kind and its 5 actions. The development server answers
-`501 not_implemented` on every route of a set.
+the `Set` kind and its 5 actions, released in v0.6.0 and reviewed by a
+reader working apart from its author, whose findings are in it (a parse
+being removed left out of a change, requests compared as values, an
+unchanged definition asking nothing). The development server answers
+`501 not_implemented` on every route of a set. Open beside it: a parse
+does not say which sets hold it, a join's answer does not say on its
+body whether it asked, and a parse leaves a set only by being deleted.
