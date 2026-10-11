@@ -475,3 +475,37 @@ func TestARequestEqualAsAValueIsTheSets(t *testing.T) {
 		}
 	})
 }
+
+// TestASetRequestIsCompleteBeforeItIsSent: a set with no id, owner, name or
+// request, a join with no set, parse or deadline, and a change with no set,
+// request or deadline are refused before anything reaches the database.
+func TestASetRequestIsCompleteBeforeItIsSent(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		_, err := h.store.CreateSet(ctx, postgres.SetRequest{ID: "set_1", Owner: "alice", Name: "harbor"})
+		refused(t, "a set with no request", err, fault.InvalidRequest)
+		_, _, err = h.store.JoinSet(ctx, postgres.SetJoin{Set: "set_1", Deadline: time.Hour})
+		refused(t, "a join with no parse", err, fault.InvalidRequest)
+		_, _, err = h.store.JoinSet(ctx, postgres.SetJoin{Set: "set_1", Parse: "prs_a"})
+		refused(t, "a join with no deadline", err, fault.InvalidRequest)
+		_, _, err = h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1"}, time.Hour)
+		refused(t, "a change with no request", err, fault.InvalidRequest)
+		_, _, err = h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: asked}, 0)
+		refused(t, "a change with no deadline", err, fault.InvalidRequest)
+		if n := value[int](h, `SELECT count(*) FROM sets`); n != 0 {
+			t.Fatalf("%d sets after refused requests", n)
+		}
+	})
+}
+
+// TestAJoinPastTheExtractionsAParseHoldsIsRefused: a parse that holds as many
+// extractions as it may joins no set that would add one.
+func TestAJoinPastTheExtractionsAParseHoldsIsRefused(t *testing.T) {
+	logic(t, defaults(), func(t *testing.T, h *harness) {
+		h.submit(postgres.Submission{Parse: "prs_a", Group: "acme", Owner: "alice"})
+		h.exec(`UPDATE parses SET fields = $1 WHERE parse_id = 'prs_a'`, postgres.MaxFields)
+		h.makeSet("set_1", "alice", "harbor")
+		_, _, err := h.store.JoinSet(context.Background(), postgres.SetJoin{Set: "set_1", Parse: "prs_a", Deadline: time.Hour})
+		refused(t, "a join of a parse that holds as many extractions as it may", err, fault.Conflict)
+	})
+}

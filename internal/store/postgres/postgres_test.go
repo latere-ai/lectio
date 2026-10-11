@@ -423,6 +423,29 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 			return h.store.StartFigures(ctx, postgres.FigureStart{Parse: "prs_a", Deadline: time.Hour})
 		},
 		"Figures": func() error { _, _, err := h.store.Figures(ctx, "prs_a"); return err },
+		"AskFieldAgain": func() error {
+			_, err := h.store.AskFieldAgain(ctx, postgres.FieldRequest{Parse: "prs_a", Name: "invoice", Request: asked, Deadline: time.Hour})
+			return err
+		},
+		"CreateSet": func() error {
+			_, err := h.store.CreateSet(ctx, postgres.SetRequest{ID: "set_1", Owner: "acme", Name: "harbor", Request: asked})
+			return err
+		},
+		"Set":  func() error { _, err := h.store.Set(ctx, "set_1"); return err },
+		"Sets": func() error { _, _, err := h.store.Sets(ctx, []string{"acme"}, "", "", 10); return err },
+		"SetParses": func() error {
+			_, _, err := h.store.SetParses(ctx, "set_1", "", 10)
+			return err
+		},
+		"JoinSet": func() error {
+			_, _, err := h.store.JoinSet(ctx, postgres.SetJoin{Set: "set_1", Parse: "prs_a", Deadline: time.Hour})
+			return err
+		},
+		"UpdateSet": func() error {
+			_, _, err := h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: asked}, time.Hour)
+			return err
+		},
+		"DeleteSet": func() error { return h.store.DeleteSet(ctx, "set_1") },
 	} {
 		if err := call(); err == nil || fault.CodeOf(err) != fault.Internal {
 			t.Errorf("%s on a closed store = %v", name, err)
