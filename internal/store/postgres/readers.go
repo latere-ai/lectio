@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"latere.ai/x/lectio/internal/fault"
@@ -19,15 +20,18 @@ import (
 const (
 	readerStateSQL    = `SELECT lectio_reader_state()`
 	readerVersionSQL  = `SELECT version FROM reader_policy`
-	readerPutSQL      = `SELECT lectio_reader_put($1, $2)`
-	readerPutAtSQL    = `SELECT lectio_reader_put($1, $2, $3)`
+	readerPutSQL      = `SELECT lectio_reader_put($1, $2, $3)`
+	readerPutAtSQL    = `SELECT lectio_reader_put($1, $2, $3, $4)`
 	readerDeleteSQL   = `SELECT lectio_reader_delete($1)`
 	readerDeleteAtSQL = `SELECT lectio_reader_delete($1, $2)`
-	policyPutSQL      = `SELECT lectio_policy_put($1)`
-	policyPutAtSQL    = `SELECT lectio_policy_put($1, $2)`
-	policyDeleteSQL   = `SELECT lectio_policy_put(NULL)`
-	policyDeleteAtSQL = `SELECT lectio_policy_put(NULL, $1)`
+	policyPutSQL      = `SELECT coalesce(lectio_policy_put($1, $2), 'moved')`
+	policyPutAtSQL    = `SELECT coalesce(lectio_policy_put($1, $2, $3), 'moved')`
 )
+
+// ErrMoved is a change checked against a version of what is stored that
+// another change has since replaced: nothing was changed, and the caller
+// checks the change again against what is stored now.
+var ErrMoved = errors.New("store: what is stored changed after the change was checked")
 
 // ReaderState is what is stored: its version, the policy's spec, empty
 // while the configured policy is in force, and the readers by name.
@@ -64,11 +68,15 @@ func (s *Store) ReaderVersion(ctx context.Context) (int64, error) {
 }
 
 // PutReader stores a reader's spec under its name, replacing the one there,
-// and reports whether the name was new.
-func (s *Store) PutReader(ctx context.Context, name, spec string) (created bool, err error) {
-	answer, err := s.text(ctx, readerPutSQL, readerPutAtSQL, name, spec)
-	if err != nil {
+// and reports whether the name was new. It is checked against what is
+// stored at version, and is ErrMoved once that changed.
+func (s *Store) PutReader(ctx context.Context, name, spec string, version int64) (created bool, err error) {
+	answer, err := s.text(ctx, readerPutSQL, readerPutAtSQL, name, spec, version)
+	switch {
+	case err != nil:
 		return false, fmt.Errorf("store: storing the reader %s: %w", name, err)
+	case answer == "moved":
+		return false, ErrMoved
 	}
 	return answer == "created", nil
 }
@@ -99,19 +107,25 @@ func (s *Store) DeleteReader(ctx context.Context, name string) error {
 }
 
 // PutPolicy stores the routing policy's spec, which is in force in the
-// place of the configured one.
-func (s *Store) PutPolicy(ctx context.Context, spec string) error {
-	if _, err := s.text(ctx, policyPutSQL, policyPutAtSQL, spec); err != nil {
-		return fmt.Errorf("store: storing the routing policy: %w", err)
-	}
-	return nil
+// place of the configured one. It is checked against what is stored at
+// version, and is ErrMoved once that changed.
+func (s *Store) PutPolicy(ctx context.Context, spec string, version int64) error {
+	return s.putPolicy(ctx, &spec, version)
 }
 
 // DeletePolicy removes the stored routing policy, so the configured one is
-// in force again.
-func (s *Store) DeletePolicy(ctx context.Context) error {
-	if _, err := s.text(ctx, policyDeleteSQL, policyDeleteAtSQL); err != nil {
-		return fmt.Errorf("store: removing the routing policy: %w", err)
+// in force again, as PutPolicy is checked.
+func (s *Store) DeletePolicy(ctx context.Context, version int64) error {
+	return s.putPolicy(ctx, nil, version)
+}
+
+func (s *Store) putPolicy(ctx context.Context, spec *string, version int64) error {
+	answer, err := s.text(ctx, policyPutSQL, policyPutAtSQL, spec, version)
+	switch {
+	case err != nil:
+		return fmt.Errorf("store: storing the routing policy: %w", err)
+	case answer == "moved":
+		return ErrMoved
 	}
 	return nil
 }

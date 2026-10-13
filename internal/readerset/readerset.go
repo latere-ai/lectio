@@ -35,10 +35,10 @@ const DefaultPoll = 10 * time.Second
 type Store interface {
 	ReaderState(ctx context.Context) (postgres.ReaderState, error)
 	ReaderVersion(ctx context.Context) (int64, error)
-	PutReader(ctx context.Context, name, spec string) (created bool, err error)
+	PutReader(ctx context.Context, name, spec string, version int64) (created bool, err error)
 	DeleteReader(ctx context.Context, name string) error
-	PutPolicy(ctx context.Context, spec string) error
-	DeletePolicy(ctx context.Context) error
+	PutPolicy(ctx context.Context, spec string, version int64) error
+	DeletePolicy(ctx context.Context, version int64) error
 	Configure(ctx context.Context, settings tasks.Settings) error
 }
 
@@ -62,6 +62,11 @@ type Manager struct {
 	// stored through the store that is opening.
 	Store Store
 
+	// Later runs f after d: a chain made shorter is written again after a
+	// lease, for the work that was claimed while it changed. Nil takes
+	// time.AfterFunc.
+	Later func(d time.Duration, f func())
+
 	live *config.Live
 
 	// mu holds one change or reload of this process at a time.
@@ -71,14 +76,17 @@ type Manager struct {
 
 // Settle builds the set from what is stored, puts it in force and answers
 // the settings the store opens with: postgres.Options.Readers. A stored
-// set that does not build is logged, and the configured documents alone
-// are in force until one does.
+// set that does not build, as a binary older than the one that stored it
+// may find, is logged, and the configured documents alone are in force in
+// this process until one does; the settings are not written, so the
+// processes that can build it keep dispatching to it.
 func (m *Manager) Settle(_ context.Context, stored postgres.ReaderState) (tasks.Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	set, err := m.build(stored)
-	if err != nil {
-		m.log().Error("the stored readers do not build; the configured ones alone are in force", "error", err)
+	keep := err != nil
+	if keep {
+		m.log().Error("the stored readers do not build; the configured ones alone are in force in this process", "error", err)
 		if set, err = m.File.Build(nil, nil); err != nil {
 			return tasks.Settings{}, err
 		}
@@ -89,6 +97,9 @@ func (m *Manager) Settle(_ context.Context, stored postgres.ReaderState) (tasks.
 		m.live = config.NewLive(set)
 	} else {
 		m.live.Set(set)
+	}
+	if keep {
+		return tasks.Settings{}, postgres.ErrKeepSettings
 	}
 	return m.Queue(set), nil
 }
@@ -161,11 +172,41 @@ func (m *Manager) reload(ctx context.Context) error {
 	if err := m.Store.Configure(ctx, m.Queue(set)); err != nil {
 		return err
 	}
+	if shorter(m.live.Current(), &set) {
+		m.again(m.Queue(set))
+	}
 	m.live.Set(set)
 	m.version = stored.Version
 	m.log().InfoContext(ctx, "readers in force", "version", stored.Version, "readers", slices.Sorted(maps.Keys(set.Readers)),
 		"read", set.Chain, "describe", set.DescribeChain, "extract", set.ExtractChain, "policy", set.PolicySource)
 	return nil
+}
+
+// shorter reports whether a chain of next is shorter than the one of was.
+func shorter(was, next *config.Readers) bool {
+	return len(next.Chain) < len(was.Chain) || len(next.DescribeChain) < len(was.DescribeChain) || len(next.ExtractChain) < len(was.ExtractChain)
+}
+
+// again writes the settings once more after a lease and a sweep: work that
+// was claimed while a chain got shorter, and was put back at a place the
+// chain no longer has, is moved to its last place then, as the work that
+// waited was when the change was written. The set in force then is
+// written, so a change made since is not undone.
+func (m *Manager) again(settings tasks.Settings) {
+	settings = settings.WithDefaults()
+	later := m.Later
+	if later == nil {
+		later = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+	}
+	later(settings.Lease+settings.SweepInterval, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if err := m.Store.Configure(ctx, m.Queue(*m.live.Current())); err != nil {
+			m.log().WarnContext(ctx, "the settings were not written again after a chain got shorter", "error", err)
+		}
+	})
 }
 
 // build is the set of what is stored, laid under Wrap.
@@ -198,6 +239,10 @@ func addedOf(stored postgres.ReaderState) ([]config.Added, []byte) {
 	return added, policy
 }
 
+// tries is how often a change is checked again when another process changed
+// what is stored between its check and its write.
+const tries = 3
+
 // PutReader stores a reader once the set with it builds, and puts that set
 // in force in this process at once; the others follow within Poll. A spec
 // the set would not build with is invalid_request, and a configured
@@ -208,22 +253,38 @@ func (m *Manager) PutReader(ctx context.Context, name string, spec []byte) (crea
 	} else if err != nil {
 		return false, invalid("spec", err)
 	}
+	err = m.change(ctx, func(stored postgres.ReaderState) error {
+		added, policy := addedOf(stored)
+		added = slices.DeleteFunc(added, func(a config.Added) bool { return a.Name == name })
+		added = append(added, config.Added{Name: name, Spec: spec})
+		if _, err := m.File.Build(added, policy); err != nil {
+			return invalid("spec", err)
+		}
+		created, err = m.Store.PutReader(ctx, name, string(spec), stored.Version)
+		return err
+	})
+	return created, err
+}
+
+// change checks and writes one change against what is stored, again when
+// another process changed it in between, and puts the set it makes in
+// force in this process.
+func (m *Manager) change(ctx context.Context, write func(postgres.ReaderState) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	stored, err := m.Store.ReaderState(ctx)
-	if err != nil {
-		return false, err
+	for range tries {
+		stored, err := m.Store.ReaderState(ctx)
+		if err != nil {
+			return err
+		}
+		if err = write(stored); errors.Is(err, postgres.ErrMoved) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		return m.reload(ctx)
 	}
-	added, policy := addedOf(stored)
-	added = slices.DeleteFunc(added, func(a config.Added) bool { return a.Name == name })
-	added = append(added, config.Added{Name: name, Spec: spec})
-	if _, err := m.File.Build(added, policy); err != nil {
-		return false, invalid("spec", err)
-	}
-	if created, err = m.Store.PutReader(ctx, name, string(spec)); err != nil {
-		return false, err
-	}
-	return created, m.reload(ctx)
+	return fault.New(fault.Conflict, "the readers were changed by another request %d times while this one was checked; send it again", tries)
 }
 
 // DeleteReader removes a stored reader and puts the set without it in
@@ -242,41 +303,27 @@ func (m *Manager) DeleteReader(ctx context.Context, name string) error {
 }
 
 // PutPolicy stores the routing policy once the set with it builds and names
-// a reader in each chain, and puts it in force in this process at once.
+// a reader in its read chain, and puts it in force in this process at once.
 func (m *Manager) PutPolicy(ctx context.Context, spec []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	stored, err := m.Store.ReaderState(ctx)
-	if err != nil {
-		return err
-	}
-	added, _ := addedOf(stored)
-	if err := m.File.CheckPolicy(added, spec); err != nil {
-		return invalid("policy", err)
-	}
-	if err := m.Store.PutPolicy(ctx, string(spec)); err != nil {
-		return err
-	}
-	return m.reload(ctx)
+	return m.change(ctx, func(stored postgres.ReaderState) error {
+		added, _ := addedOf(stored)
+		if err := m.File.CheckPolicy(added, spec); err != nil {
+			return invalid("policy", err)
+		}
+		return m.Store.PutPolicy(ctx, string(spec), stored.Version)
+	})
 }
 
 // DeletePolicy removes the stored policy, once the configured one orders
 // the readers there are, and puts it in force in this process at once.
 func (m *Manager) DeletePolicy(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	stored, err := m.Store.ReaderState(ctx)
-	if err != nil {
-		return err
-	}
-	added, _ := addedOf(stored)
-	if _, err := m.File.Build(added, nil); err != nil {
-		return invalid("policy", err)
-	}
-	if err := m.Store.DeletePolicy(ctx); err != nil {
-		return err
-	}
-	return m.reload(ctx)
+	return m.change(ctx, func(stored postgres.ReaderState) error {
+		added, _ := addedOf(stored)
+		if _, err := m.File.Build(added, nil); err != nil {
+			return invalid("policy", err)
+		}
+		return m.Store.DeletePolicy(ctx, stored.Version)
+	})
 }
 
 // invalid is a request the set would not build with: what of the body

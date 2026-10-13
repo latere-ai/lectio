@@ -42,14 +42,19 @@ $$;
 
 -- lectio_reader_put stores a reader, or replaces the one of the name, and
 -- answers created or replaced. The row of the policy is taken first, so 2
--- changes are one after the other and each adds 1 to the version.
-CREATE FUNCTION lectio_reader_put(p_name text, p_spec text, p_now timestamptz DEFAULT NULL)
+-- changes are one after the other and each adds 1 to the version. A change
+-- is checked against what is stored at p_version, and one made after
+-- another process changed what is stored answers moved and changes
+-- nothing, so it is checked again.
+CREATE FUNCTION lectio_reader_put(p_name text, p_spec text, p_version bigint, p_now timestamptz DEFAULT NULL)
 RETURNS text LANGUAGE plpgsql AS $$
 DECLARE
   v_now timestamptz := coalesce(p_now, now());
   v_new boolean;
 BEGIN
-  PERFORM 1 FROM reader_policy FOR UPDATE;
+  IF (SELECT version FROM reader_policy FOR UPDATE) <> p_version THEN
+    RETURN 'moved';
+  END IF;
   INSERT INTO readers (name, spec, created_at, updated_at) VALUES (p_name, p_spec, v_now, v_now)
   ON CONFLICT (name) DO UPDATE SET spec = EXCLUDED.spec, updated_at = EXCLUDED.updated_at
   RETURNING xmax = 0 INTO v_new;
@@ -97,9 +102,12 @@ END $$;
 
 -- lectio_policy_put stores the policy's spec, or with NULL removes the one
 -- stored, so the configured one is in force again, and answers which is.
-CREATE FUNCTION lectio_policy_put(p_spec text, p_now timestamptz DEFAULT NULL)
+-- As lectio_reader_put, a change checked against another version answers
+-- moved and changes nothing.
+CREATE FUNCTION lectio_policy_put(p_spec text, p_version bigint, p_now timestamptz DEFAULT NULL)
 RETURNS text LANGUAGE sql AS $$
   UPDATE reader_policy SET spec = p_spec, version = version + 1, updated_at = coalesce(p_now, now())
+   WHERE version = p_version
   RETURNING CASE WHEN spec IS NULL THEN 'configured' ELSE 'set' END;
 $$;
 

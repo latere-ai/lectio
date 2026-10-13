@@ -78,6 +78,11 @@ type Options struct {
 	Readers func(ctx context.Context, stored ReaderState) (tasks.Settings, error)
 }
 
+// ErrKeepSettings is what Options.Readers answers for a process that cannot
+// build what is stored: the store opens and writes no settings, so the ones
+// the processes that can build it wrote stay in force.
+var ErrKeepSettings = errors.New("store: the settings in force are kept")
+
 // Store is the task store over one connection pool.
 type Store struct {
 	pool *pgxpool.Pool
@@ -328,7 +333,9 @@ func (s *Store) prepare(ctx context.Context, settings tasks.Settings, readers fu
 		if err != nil {
 			return err
 		}
-		if settings, err = readers(ctx, stored); err != nil {
+		if settings, err = readers(ctx, stored); errors.Is(err, ErrKeepSettings) {
+			return nil
+		} else if err != nil {
 			return fmt.Errorf("store: %w", err)
 		}
 		settings = settings.WithDefaults()

@@ -30,6 +30,19 @@ type memory struct {
 	written  []tasks.Settings
 	failRead error
 	failSave error
+	// races is how many writes find another change made after their check.
+	races int
+}
+
+// moved reports whether a write checked at version finds what is stored
+// changed, as another process's change in between would leave it.
+func (m *memory) moved(version int64) bool {
+	if m.races > 0 {
+		m.races--
+		m.version++
+		return true
+	}
+	return version != m.version
 }
 
 func newMemory() *memory { return &memory{readers: map[string]string{}} }
@@ -59,9 +72,12 @@ func (m *memory) ReaderVersion(context.Context) (int64, error) {
 	return m.version, m.failRead
 }
 
-func (m *memory) PutReader(_ context.Context, name, spec string) (bool, error) {
+func (m *memory) PutReader(_ context.Context, name, spec string, version int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.moved(version) {
+		return false, postgres.ErrMoved
+	}
 	_, had := m.readers[name]
 	m.readers[name] = spec
 	m.version++
@@ -79,17 +95,23 @@ func (m *memory) DeleteReader(_ context.Context, name string) error {
 	return nil
 }
 
-func (m *memory) PutPolicy(_ context.Context, spec string) error {
+func (m *memory) PutPolicy(_ context.Context, spec string, version int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.moved(version) {
+		return postgres.ErrMoved
+	}
 	m.policy = &spec
 	m.version++
 	return nil
 }
 
-func (m *memory) DeletePolicy(context.Context) error {
+func (m *memory) DeletePolicy(_ context.Context, version int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.moved(version) {
+		return postgres.ErrMoved
+	}
 	m.policy = nil
 	m.version++
 	return nil
@@ -126,7 +148,7 @@ func manager(t *testing.T, m *memory, log *bytes.Buffer) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.Settle(context.Background(), st); err != nil {
+	if _, err := mgr.Settle(context.Background(), st); err != nil && !errors.Is(err, postgres.ErrKeepSettings) {
 		t.Fatal(err)
 	}
 	return mgr
@@ -183,7 +205,7 @@ func TestWhatWouldNotBuildIsRefusedAndChangesNothing(t *testing.T) {
 		"removing configured":  mgr.DeleteReader(ctx, "stub"),
 		"a spec that is none":  first(mgr.PutReader(ctx, "own", []byte(`{"adapter":"vision"}`))),
 		"a policy naming none": mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["gone"]},"describe":{"chain":["stub"]},"extract":{"chain":["stub"]}}`)),
-		"an empty chain":       mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["stub"]}}`)),
+		"an empty read chain":  mgr.PutPolicy(ctx, []byte(`{"describe":{"chain":["stub"]}}`)),
 		"removing what is not": mgr.DeleteReader(ctx, "gone"),
 	} {
 		want := fault.InvalidRequest
@@ -269,6 +291,10 @@ func TestAStoredSetThatDoesNotBuildAtStartLeavesTheConfiguredOne(t *testing.T) {
 	if !strings.Contains(log.String(), "the configured ones alone are in force") {
 		t.Fatalf("the log: %s", log.String())
 	}
+	// The settings the processes that build it wrote are kept.
+	if _, err := mgr.Settle(context.Background(), postgres.ReaderState{Readers: []postgres.StoredReader{{Name: "broken", Spec: `{"adapter":"vision"}`}}}); !errors.Is(err, postgres.ErrKeepSettings) {
+		t.Fatalf("a process that cannot build the stored set answers %v", err)
+	}
 	wrapped := &Manager{File: config.StubFile(), Queue: config.Settings{}.Queue, Wrap: func(r config.Readers) config.Readers {
 		r.Chain = append(r.Chain, "wrapped")
 		return r
@@ -332,4 +358,56 @@ func TestAStoreThatFailsChangesNothingInForce(t *testing.T) {
 	if mgr.Live().Current().Readers["own"] != nil {
 		t.Fatal("a set whose settings were not written is in force")
 	}
+}
+
+// TestAChangeMadeBesideAnotherIsCheckedAgain: a change whose check another
+// process's change overtook is checked again against what is stored now,
+// and one overtaken every time is conflict and changes nothing.
+func TestAChangeMadeBesideAnotherIsCheckedAgain(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	mgr := manager(t, m, &bytes.Buffer{})
+	m.races = 1
+	if _, err := mgr.PutReader(ctx, "own", []byte(textReader)); err != nil || mgr.Live().Current().Readers["own"] == nil {
+		t.Fatalf("a reader whose first check was overtaken: %v", err)
+	}
+	m.races = tries
+	if err := mgr.DeletePolicy(ctx); fault.CodeOf(err) != fault.Conflict {
+		t.Fatalf("a change overtaken every time: %v", err)
+	}
+}
+
+// TestAShorterChainIsWrittenAgainAfterALease: a change that makes a chain
+// shorter writes the settings once more after a lease and a sweep, with
+// the set in force then, for the work that was claimed while it changed.
+func TestAShorterChainIsWrittenAgainAfterALease(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	mgr := manager(t, m, &bytes.Buffer{})
+	var waited time.Duration
+	var later []func()
+	mgr.Later = func(d time.Duration, f func()) { waited, later = d, append(later, f) }
+	if _, err := mgr.PutReader(ctx, "own", []byte(textReader)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["own","stub"]},"describe":{"chain":["stub"]},"extract":{"chain":["stub"]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(later) != 0 {
+		t.Fatal("a longer chain was written again")
+	}
+	if err := mgr.DeletePolicy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	settings := config.Settings{}.Queue(*mgr.Live().Current()).WithDefaults()
+	if len(later) != 1 || waited != settings.Lease+settings.SweepInterval {
+		t.Fatalf("a shorter chain is written again %d times, after %v", len(later), waited)
+	}
+	written := len(m.written)
+	later[0]()
+	if len(m.written) != written+1 || strings.Join(m.lastChains(), ",") != "stub" {
+		t.Fatalf("the second write: %d writes, chains %v", len(m.written)-written, m.lastChains())
+	}
+	m.failSave = errors.New("the database is away")
+	later[0]()
 }

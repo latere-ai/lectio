@@ -5,6 +5,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -37,19 +38,19 @@ func TestStoredReadersAndThePolicyAreKeptAsSent(t *testing.T) {
 		}
 
 		const spec = `{"adapter":"chat",  "model":"m"}`
-		if created, err := h.store.PutReader(ctx, "added", spec); err != nil || !created {
+		if created, err := h.store.PutReader(ctx, "added", spec, 0); err != nil || !created {
 			t.Fatalf("storing a reader: created %t, %v", created, err)
 		}
-		if created, err := h.store.PutReader(ctx, "added", `{"adapter":"chat","model":"n"}`); err != nil || created {
+		if created, err := h.store.PutReader(ctx, "added", `{"adapter":"chat","model":"n"}`, 1); err != nil || created {
 			t.Fatalf("replacing a reader: created %t, %v", created, err)
 		}
-		if _, err := h.store.PutReader(ctx, "another", spec); err != nil {
+		if _, err := h.store.PutReader(ctx, "another", spec, 2); err != nil {
 			t.Fatal(err)
 		}
 		if v := version(); v != 3 {
 			t.Fatalf("after 3 changes the version is %d", v)
 		}
-		if err := h.store.PutPolicy(ctx, storedPolicy); err != nil {
+		if err := h.store.PutPolicy(ctx, storedPolicy, 3); err != nil {
 			t.Fatal(err)
 		}
 		st, err := h.store.ReaderState(ctx)
@@ -58,10 +59,18 @@ func TestStoredReadersAndThePolicyAreKeptAsSent(t *testing.T) {
 			st.Readers[1] != (postgres.StoredReader{Name: "another", Spec: spec}) {
 			t.Fatalf("the store holds %+v, %v", st, err)
 		}
-		if err := h.store.DeletePolicy(ctx); err != nil {
+		// A change checked against a version another change replaced
+		// changes nothing.
+		if _, err := h.store.PutReader(ctx, "late", spec, 3); !errors.Is(err, postgres.ErrMoved) {
+			t.Fatalf("a reader checked against an old version: %v", err)
+		}
+		if err := h.store.DeletePolicy(ctx, 3); !errors.Is(err, postgres.ErrMoved) {
+			t.Fatalf("a policy checked against an old version: %v", err)
+		}
+		if err := h.store.DeletePolicy(ctx, 4); err != nil {
 			t.Fatal(err)
 		}
-		if st, err := h.store.ReaderState(ctx); err != nil || st.Version != 5 || st.Policy != nil {
+		if st, err := h.store.ReaderState(ctx); err != nil || st.Version != 5 || st.Policy != nil || len(st.Readers) != 2 {
 			t.Fatalf("after the policy was removed the store holds %+v, %v", st, err)
 		}
 		// Writing the settings is no change of what is stored.
@@ -90,7 +99,7 @@ func TestAStoredReaderThatIsNamedIsNotRemoved(t *testing.T) {
 			}
 		}
 		refused(t, "a reader that is not stored", h.store.DeleteReader(ctx, "added"), fault.NotFound)
-		if _, err := h.store.PutReader(ctx, "added", `{"adapter":"chat","model":"m"}`); err != nil {
+		if _, err := h.store.PutReader(ctx, "added", `{"adapter":"chat","model":"m"}`, 0); err != nil {
 			t.Fatal(err)
 		}
 
@@ -107,11 +116,11 @@ func TestAStoredReaderThatIsNamedIsNotRemoved(t *testing.T) {
 		if err := h.store.Configure(ctx, defaults()); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.store.PutPolicy(ctx, storedPolicy); err != nil {
+		if err := h.store.PutPolicy(ctx, storedPolicy, 1); err != nil {
 			t.Fatal(err)
 		}
 		refusedAs("a reader the stored policy names", fault.Conflict)
-		if err := h.store.DeletePolicy(ctx); err != nil {
+		if err := h.store.DeletePolicy(ctx, 2); err != nil {
 			t.Fatal(err)
 		}
 

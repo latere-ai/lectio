@@ -4,9 +4,9 @@
 -- Back to the schema of 000009: readers and the policy are the
 -- configuration's alone. What was stored through the API is dropped, and a
 -- process of the version before reads the configuration it is given.
-DROP FUNCTION lectio_policy_put(text, timestamptz);
+DROP FUNCTION lectio_policy_put(text, bigint, timestamptz);
 DROP FUNCTION lectio_reader_delete(text, timestamptz);
-DROP FUNCTION lectio_reader_put(text, text, timestamptz);
+DROP FUNCTION lectio_reader_put(text, text, bigint, timestamptz);
 DROP FUNCTION lectio_reader_state();
 DROP TABLE reader_policy;
 DROP TABLE readers;
