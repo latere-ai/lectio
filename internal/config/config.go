@@ -613,6 +613,11 @@ func assemble(where string, docs []document, policy *document) (Readers, error) 
 		out.Chain, out.DescribeChain, out.ExtractChain = spec.Read.Chain, spec.Describe.Chain, spec.Extract.Chain
 		if policy.source == SourceSet {
 			out.PolicySource = SourceSet
+			if len(spec.Read.Chain) == 0 {
+				// A stored policy is the whole policy: one with no read chain
+				// would leave no page a reader.
+				return Readers{}, errors.New("config: the stored policy's read chain names no reader")
+			}
 		}
 		if len(spec.Extract.Chain) > 0 {
 			// Extraction is built over the task store, which a
@@ -625,14 +630,18 @@ func assemble(where string, docs []document, policy *document) (Readers, error) 
 	}
 
 	if len(out.Chain) == 0 {
-		// With no policy, one reader is the chain. With several, the order
-		// would be a guess.
-		if len(out.Readers) > 1 {
-			return Readers{}, fmt.Errorf("config: %s declares %d readers and no Policy to order them", where, len(out.Readers))
+		// With no policy, one configured reader is the chain, whatever was
+		// stored beside it. With several, the order would be a guess.
+		var configured []string
+		for name, source := range out.Sources {
+			if source == SourceConfigured {
+				configured = append(configured, name)
+			}
 		}
-		for name := range out.Readers {
-			out.Chain = []string{name}
+		if len(configured) != 1 {
+			return Readers{}, fmt.Errorf("config: %s declares %d readers and no Policy to order them", where, len(configured))
 		}
+		out.Chain = configured
 	}
 	for _, name := range out.Chain {
 		if out.Readers[name] == nil {

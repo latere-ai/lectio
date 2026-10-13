@@ -155,8 +155,8 @@ func stubPolicy() *document {
 // load from the file, the stub adapter, or an endpoint outside Endpoints.
 func (f File) CheckReader(name string, spec []byte) error {
 	switch {
-	case !readerName.MatchString(name):
-		return errors.New("a reader's name is 1 to 63 of a-z, 0-9, '.' and '-', starting with a letter or a digit")
+	case !readerName.MatchString(name) || name == ReservedName:
+		return errors.New("a reader's name is 1 to 63 of a-z, 0-9, '.' and '-', starting with a letter or a digit, and is not policy")
 	case f.Configured(name):
 		return ErrConfigured
 	}
@@ -169,24 +169,24 @@ func (f File) CheckReader(name string, spec []byte) error {
 }
 
 // CheckPolicy reports why a policy the API is asked to store could not be:
-// a spec that would not load with the readers there are, or a chain that
-// names no reader. A stored policy names a reader in each of its chains,
-// so that no kind of work is left with nobody to do it.
+// a spec that would not load with the readers there are, or one whose read
+// chain names no reader, which no page could be read by. A describe or an
+// extract chain may be empty, as the file's may: a figure or a field is
+// then described or extracted only by the reader its request names.
 func (f File) CheckPolicy(added []Added, policy []byte) error {
 	r, err := f.Build(added, policy)
 	if err != nil {
 		return err
 	}
-	for _, chain := range []struct {
-		name    string
-		readers []string
-	}{{"read", r.Chain}, {"describe", r.DescribeChain}, {"extract", r.ExtractChain}} {
-		if len(chain.readers) == 0 {
-			return fmt.Errorf("the %s chain names no reader", chain.name)
-		}
+	if len(r.Chain) == 0 {
+		return errors.New("the read chain names no reader")
 	}
 	return nil
 }
+
+// ReservedName is no reader's name: an authorizer is asked about the
+// routing policy under it.
+const ReservedName = "policy"
 
 // ErrConfigured is a change asked of a configured reader.
 var ErrConfigured = errors.New("the reader is declared by the configuration, which the API does not change")

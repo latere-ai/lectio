@@ -78,6 +78,7 @@ func TestWhatTheAPIMayStoreIsHeldToTheDeployment(t *testing.T) {
 	}{
 		"a name outside the pattern": {"Second", added, "a reader's name"},
 		"a long name":                {strings.Repeat("a", 64), added, "a reader's name"},
+		"the policy's name":          {"policy", added, "is not policy"},
 		"a configured name":          {"default", added, ErrConfigured.Error()},
 		"not an object":              {"x", `[]`, "not one JSON object"},
 		"not JSON":                   {"x", `{`, "not one JSON object"},
@@ -133,7 +134,7 @@ func TestAStoredPolicyNamesAReaderInEachChain(t *testing.T) {
 		"not an object":         {`[]`, "not one JSON object"},
 		"a member no spec has":  {`{"write":{"chain":["default"]}}`, "write"},
 		"a reader that is none": {`{"read":{"chain":["gone"]},"describe":{"chain":["default"]},"extract":{"chain":["default"]}}`, `names "gone"`},
-		"an empty chain":        {`{"read":{"chain":["default"]},"describe":{"chain":["default"]}}`, "extract chain names no reader"},
+		"an empty read chain":   {`{"describe":{"chain":["default"]},"extract":{"chain":["default"]}}`, "read chain names no reader"},
 		"a layout describing":   {`{"read":{"chain":["default"]},"describe":{"chain":["engine"]},"extract":{"chain":["default"]}}`, "cannot describe"},
 	} {
 		if err := f.CheckPolicy(nil, []byte(tc.spec)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -165,6 +166,23 @@ func TestTheStubConfigurationTakesStoredReaders(t *testing.T) {
 	}
 	if got, err = f.Build([]Added{{Name: "model", Spec: []byte(`{"adapter":"chat","model":"m"}`)}}, nil); err != nil || strings.Join(got.Chain, ",") != "stub" {
 		t.Fatalf("the stub file with a stored reader and no stored policy: %v, %v", got.Chain, err)
+	}
+	// A file of one reader and no Policy keeps it as the chain when a
+	// reader is stored beside it, and a policy may leave a chain empty.
+	one, err := ReadFile(write(t, map[string]string{"a.yaml": "apiVersion: lectio.latere.ai/v1\nkind: Reader\nmetadata: {name: own}\nspec: {adapter: text}\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one = one.WithEndpoints([]string{"http://gateway.internal/v1"})
+	stored := []Added{{Name: "model", Spec: []byte(`{"adapter":"chat","model":"m"}`)}}
+	if err := one.CheckReader("model", stored[0].Spec); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := one.Build(stored, nil); err != nil || strings.Join(got.Chain, ",") != "own" {
+		t.Fatalf("a file of one reader with a stored one: %v, %v", got.Chain, err)
+	}
+	if err := one.CheckPolicy(stored, []byte(`{"read":{"chain":["own","model"]}}`)); err != nil {
+		t.Fatalf("a policy that leaves the describe and extract chains empty: %v", err)
 	}
 }
 
