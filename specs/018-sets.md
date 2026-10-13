@@ -9,7 +9,7 @@ depends_on:
 affects: [api/, authorizer/, internal/access/, internal/httpapi/, internal/durable/, internal/store/, internal/id/]
 effort: medium
 created: 2026-10-11
-updated: 2026-10-11
+updated: 2026-10-13
 author: changkun
 ---
 
@@ -99,8 +99,27 @@ parse in the set in one transaction, and the bound keeps that
 transaction short.
 
 A parse leaves a set when it is deleted or its retention ends: its
-extractions go with it. There is no other way to leave a set in this
-version (see Non-goals).
+extractions go with it.
+
+`DELETE /sets/{set}/parses/{parse}` takes a parse out of a set and
+leaves the parse. Its extraction under the set's name stays on the
+parse with its values, as an extraction of no set, as it does when the
+set is deleted: the set no longer counts or lists the parse, and a
+change of the set no longer asks it. A later join takes the extraction
+in as it stands, by the third row of the table above, while it was
+asked with the set's definition. A parse whose extraction of the set
+has not ended is `conflict`, since its task may be running and would
+fill an extraction the set no longer holds; a parse that holds no
+extraction of the set, and a parse of another owner, are
+`parse_not_found`. The answer is the extraction as it stands after.
+
+An extraction says which set holds it: `set`, the set's id, and
+`set_version`, the version of the definition it was asked with, on
+every read of it. They are absent on an extraction no set asked, and
+on one whose set was deleted or whose parse left the set. A client that
+wants a parse's sets reads its extractions. A join's answer carries
+`asked` besides, `true` when the join asked the extraction, as its
+status `202` says.
 
 An extraction of a set is asked with the set's definition and with no
 other. `PUT /parses/{parse}/fields/{name}` on it with the set's request,
@@ -171,11 +190,12 @@ A set is a resource of its own kind, `Set`, with 5 actions:
 | `set.create` | `POST /sets` | `owner`, `name` |
 | `set.read` | `GET /sets/{set}`, `GET /sets/{set}/parses` | `id`, `owner`, `name` |
 | `set.list` | `GET /sets` | none |
-| `set.update` | `PUT /sets/{set}`, `PUT /sets/{set}/parses/{parse}` | `id`, `owner`, `name` |
+| `set.update` | `PUT /sets/{set}`, `PUT /sets/{set}/parses/{parse}`, `DELETE /sets/{set}/parses/{parse}` | `id`, `owner`, `name` |
 | `set.delete` | `DELETE /sets/{set}` | `id`, `owner`, `name` |
 
-`set.update` is asked by the 2 requests that queue model work. Its
-allow is read for `readers`, which an extractor the set names is held
+`set.update` is asked by the 2 requests that queue model work, and by
+taking a parse out, which changes what the set holds. Its allow is read
+for `readers`, which an extractor the set names is held
 to, as the extraction's own request is. The allow of `set.create` is
 read for `owner`, the owner the set is recorded under, and for
 `readers`. The work a set queues is its parses' owner's, so the limits
@@ -214,7 +234,8 @@ touches no parse and takes the lock of its own row alone.
 | `PUT` | `/sets/{set}` | `200` the set; `conflict` while an extraction of it is queued or running |
 | `DELETE` | `/sets/{set}` | `204`; the parses stay |
 | `GET` | `/sets/{set}/parses` | `200` a page of the set's parses, each with its extraction; `?cursor=`, `?limit=` |
-| `PUT` | `/sets/{set}/parses/{parse}` | `202` the extraction when it is asked, `200` when nothing is; `parse_not_found`, `conflict` |
+| `PUT` | `/sets/{set}/parses/{parse}` | `202` the extraction when it is asked, `200` when nothing is, `asked` on the body saying the same; `parse_not_found`, `conflict` |
+| `DELETE` | `/sets/{set}/parses/{parse}` | `200` the extraction, which stays on the parse; `parse_not_found`, `conflict` while it has not ended |
 
 The body of `POST /sets` is a request for an extraction: `name`,
 `schema`, and optionally `instructions`, `citations` and `extractor`,
@@ -245,7 +266,6 @@ set, as it does on extraction.
   parse is read.
 - **Renaming a set**, since its name is the name of every extraction it
   asked.
-- **Leaving a set** without deleting the parse.
 - **A set across owners**, or a parse in a set of another owner.
 - **A deadline per set.** An extraction of a set has the deadline any
   extraction has.
@@ -284,6 +304,13 @@ set, as it does on extraction.
 - A join and an asking by name take a request equal to the set's as a
   JSON value as the set's.
 - A deleted set leaves its parses with their extractions, read by name.
+- A parse taken out of a set keeps its extraction with its values, of no
+  set; the set no longer counts or lists it, a change of the set does
+  not ask it, and a later join takes it in as it stands. One whose
+  extraction of the set has not ended is `conflict`, and one that holds
+  no extraction of the set is `parse_not_found`.
+- An extraction's every read names the set that holds it and the
+  version it was asked with; a join's answer says whether it asked.
 - A deleted or expired parse leaves its sets.
 - The down migration restores the functions of the migration before it
   byte for byte and drops what this one added.
@@ -294,7 +321,9 @@ Built in the durable server: the table, the functions, the 7 routes,
 the `Set` kind and its 5 actions, released in v0.6.0 and reviewed by a
 reader working apart from its author, whose findings are in it (a parse
 being removed left out of a change, requests compared as values, an
-unchanged definition asking nothing). The development server answers
-`501 not_implemented` on every route of a set. Open beside it: a parse
-does not say which sets hold it, a join's answer does not say on its
-body whether it asked, and a parse leaves a set only by being deleted.
+unchanged definition asking nothing). The 3 gaps left open by v0.6.0
+are closed in v0.7.0: an extraction names its set and the version it
+was asked with, a join's answer carries `asked`, and
+`DELETE /sets/{set}/parses/{parse}` takes a parse out of a set, in
+migration 000009. The development server answers
+`501 not_implemented` on every route of a set.

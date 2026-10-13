@@ -6,6 +6,21 @@ refused before it is pushed.
 
 ## Unreleased
 
+- Added: `DELETE /sets/{set}/parses/{parse}` takes a parse out of a set
+  and leaves the parse. Its extraction under the set's name stays on the
+  parse with its values, as an extraction of no set; the set no longer
+  counts or lists it, and a change of the set no longer asks it. A later
+  join takes it back in without a model call while it was asked with the
+  set's definition. It is `conflict` while that extraction has not ended,
+  and asks `set.update`.
+- Added: an extraction names the set that asked it, `set`, and the
+  version of the set's definition it was asked with, `set_version`, on
+  every read. Both are absent on an extraction no set asked, and once its
+  set is deleted or its parse leaves it.
+- Added: the answer of `PUT /sets/{set}/parses/{parse}` carries `asked`,
+  `true` when the join asked the extraction, as its status `202` says.
+- Migration 000009 adds one function and changes no table.
+
 ## v0.6.1 - 2026-10-11
 
 - Changed: the summary of `PUT /sets/{set}/parses/{parse}` in the
