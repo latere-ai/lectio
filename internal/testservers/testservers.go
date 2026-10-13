@@ -11,6 +11,11 @@
 // TestMain, so a failed run leaves no container and no network behind. Where
 // no container runtime answers, the start functions return an error and the
 // caller skips.
+//
+// A binary that never reaches Stop, because it panicked on -timeout or was
+// killed, leaves its containers to the next start: each container carries
+// the labels of latere.ai/x/ci-gate/reap, and every start first removes the
+// labeled ones whose owner process has exited.
 package testservers
 
 import (
@@ -34,6 +39,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"latere.ai/x/ci-gate/reap"
 )
 
 const (
@@ -95,6 +101,15 @@ var (
 	runtimeOnce sync.Once
 )
 
+// sweep, newNetwork and the runs reach the container engine; variables so a
+// test can stand in for it.
+var (
+	sweep        = reap.Sweep
+	newNetwork   = network.New
+	runPostgres  = tcpostgres.Run
+	runContainer = testcontainers.Run
+)
+
 // keep records a container for Stop. A container that failed to start is
 // still kept when the library returned one: it may hold a name or a port.
 func keep(c testcontainers.Container) {
@@ -119,18 +134,20 @@ func StartPostgres() (Postgres, error) {
 
 func startPostgres(ctx context.Context) (Postgres, error) {
 	runtime(ctx)
-	nw, err := network.New(ctx)
+	_, _ = sweep(ctx)
+	nw, err := newNetwork(ctx)
 	if err != nil {
 		return Postgres{}, err
 	}
 	mu.Lock()
 	shared = nw
 	mu.Unlock()
-	pg, err := tcpostgres.Run(ctx, postgresImage,
+	pg, err := runPostgres(ctx, postgresImage,
 		tcpostgres.WithDatabase(adminDB),
 		tcpostgres.WithUsername(dbUser),
 		tcpostgres.WithPassword(dbPassword),
 		network.WithNetwork([]string{dbAlias}, nw),
+		testcontainers.WithLabels(reap.Labels()),
 		// The suites are not a durability test of Postgres: they trade the
 		// server's own crash safety for speed. The connection bound holds
 		// the pools of every case, and of every process, that runs at once.
@@ -170,8 +187,9 @@ func StartPooler(size int) (string, error) {
 
 func startPooler(ctx context.Context, nw *testcontainers.DockerNetwork, size int) (string, error) {
 	// Any database name is passed through to the server.
-	pooler, err := testcontainers.Run(ctx, poolerImage,
+	pooler, err := runContainer(ctx, poolerImage,
 		network.WithNetwork(nil, nw),
+		testcontainers.WithLabels(reap.Labels()),
 		testcontainers.WithExposedPorts("5432/tcp"),
 		testcontainers.WithEnv(map[string]string{
 			"DB_HOST": dbAlias, "DB_USER": dbUser, "DB_PASSWORD": dbPassword,
@@ -207,7 +225,9 @@ func StartObjects() (Objects, error) {
 
 func startObjects(ctx context.Context) (Objects, error) {
 	runtime(ctx)
-	c, err := testcontainers.Run(ctx, objectsImage,
+	_, _ = sweep(ctx)
+	c, err := runContainer(ctx, objectsImage,
+		testcontainers.WithLabels(reap.Labels()),
 		testcontainers.WithExposedPorts("9000/tcp"),
 		testcontainers.WithEnv(map[string]string{"MINIO_ROOT_USER": objectsUser, "MINIO_ROOT_PASSWORD": objectsPassword}),
 		// A directory at the root of the server's one drive is a bucket, so
@@ -326,7 +346,7 @@ func NameOf(t testing.TB, dsn string) string {
 // runtime points the container library at a Podman machine where no Docker
 // socket answers, which is what a developer on macOS may have. Ryuk, the
 // library's reaper container, does not start on rootless Podman, and Stop
-// removes what this binary started anyway.
+// and the sweep remove what it would have.
 func runtime(ctx context.Context) {
 	runtimeOnce.Do(func() {
 		if host := os.Getenv("DOCKER_HOST"); host != "" {

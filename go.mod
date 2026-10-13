@@ -20,6 +20,7 @@ require (
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.60.0
 	golang.org/x/text v0.42.0
+	latere.ai/x/ci-gate v0.52.0
 	latere.ai/x/pkg v0.91.0
 )
 
@@ -95,5 +96,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	latere.ai/x/ci-gate v0.51.0 // indirect
 )
