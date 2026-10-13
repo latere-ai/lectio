@@ -966,6 +966,7 @@ func (b *Backend) field(ctx context.Context, row postgres.Field) (store.Field, e
 	f := store.Field{
 		Name: row.Name, State: row.State,
 		Usage: document.Usage{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens},
+		SetID: row.SetID, SetVersion: row.SetVersion,
 	}
 	if row.Error != nil {
 		f.Error = &document.Error{Code: row.Error.Code, Detail: row.Error.Detail}
@@ -1129,4 +1130,21 @@ func (b *Backend) JoinSet(ctx context.Context, s store.Set, p store.Parse) (stor
 		return store.Field{}, false, fault.New(fault.ParseNotFound, "no parse %s", p.ID)
 	}
 	return f, asked, nil
+}
+
+// LeaveSet takes a parse out of a set, and returns the parse's extraction
+// under the set's name as it stands after: on the parse, of no set.
+func (b *Backend) LeaveSet(ctx context.Context, s store.Set, p store.Parse) (store.Field, error) {
+	if err := b.Store.LeaveSet(ctx, s.ID, p.ID); err != nil {
+		return store.Field{}, err
+	}
+	f, ok, err := b.Field(ctx, p, s.Name)
+	switch {
+	case err != nil:
+		return store.Field{}, err
+	case !ok:
+		// The parse was removed between the leave and the read.
+		return store.Field{}, fault.New(fault.ParseNotFound, "no parse %s", p.ID)
+	}
+	return f, nil
 }

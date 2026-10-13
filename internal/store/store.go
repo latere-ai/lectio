@@ -614,6 +614,12 @@ type Field struct {
 	// failed.
 	Usage document.Usage
 	Error *document.Error
+
+	// SetID is the set that asked the extraction, empty when none did or
+	// its parse left it, and SetVersion the version of the set's
+	// definition it was asked with.
+	SetID      string
+	SetVersion int
 }
 
 // Set is a stored definition of an extraction, asked of each parse that

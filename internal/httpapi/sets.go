@@ -261,6 +261,36 @@ func (s *Server) joinSet(w http.ResponseWriter, r *http.Request, c call) error {
 	if asked {
 		status = http.StatusAccepted
 	}
-	httpjson.Write(w, status, viewField(f))
+	httpjson.Write(w, status, joinView{fieldView: viewField(f), Asked: asked})
+	return nil
+}
+
+// joinView is a join's answer: the parse's extraction under the set's name,
+// and whether the join asked it, which the status says as well.
+type joinView struct {
+	fieldView
+	Asked bool `json:"asked"`
+}
+
+// leaveSet takes a parse out of a set. Its extraction under the set's name
+// stays on the parse, of no set, and is the answer.
+func (s *Server) leaveSet(w http.ResponseWriter, r *http.Request, c call) error {
+	set, _, err := s.set(r, c)
+	if err != nil {
+		return err
+	}
+	p, err := s.Backend.Parse(r.Context(), r.PathValue("parse"))
+	if err != nil {
+		return err
+	}
+	if p.Owner != set.Owner {
+		// Answered as joinSet answers it.
+		return fault.New(fault.ParseNotFound, "no parse %s", p.ID)
+	}
+	f, err := s.Backend.LeaveSet(r.Context(), set, p)
+	if err != nil {
+		return err
+	}
+	httpjson.Write(w, http.StatusOK, viewField(f))
 	return nil
 }

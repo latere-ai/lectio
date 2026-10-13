@@ -61,13 +61,15 @@ type fieldView struct {
 	Windows      int              `json:"windows,omitempty"`
 	Usage        *document.Usage  `json:"usage,omitempty"`
 	Error        *document.Error  `json:"error,omitempty"`
+	Set          string           `json:"set,omitempty"`
+	SetVersion   int              `json:"set_version,omitempty"`
 }
 
 // viewField is a field as the API returns it, each citation a ref.
 func viewField(f store.Field) fieldView {
 	out := fieldView{
 		Name: f.Name, State: f.State, Schema: f.Schema, Instructions: f.Instructions, Data: f.Data, Model: f.Model, Constrained: f.Constrained,
-		Attempts: f.Attempts, Windows: f.Windows, Error: f.Error,
+		Attempts: f.Attempts, Windows: f.Windows, Error: f.Error, Set: f.SetID, SetVersion: f.SetVersion,
 	}
 	if f.Usage != (document.Usage{}) {
 		out.Usage = &f.Usage

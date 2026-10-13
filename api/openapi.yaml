@@ -880,12 +880,35 @@ paths:
         configured, it is `reader_not_found`.
 
         Answers `202` with the extraction when it was asked, and `200`
-        when nothing was. A development server answers
-        `501 not_implemented`.
+        when nothing was; `asked` says the same on the body. A
+        development server answers `501 not_implemented`.
       responses:
         "200": { description: The parse was in the set or joined with the extraction it held., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
         "202": { description: The extraction was asked., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
         "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [sets]
+      operationId: leaveSet
+      summary: Remove a parse
+      description: |
+        Take a parse out of the set. Its extraction under the set's name
+        stays on the parse with its values, as an extraction of no set,
+        as it does when the set is deleted: the set no longer counts or
+        lists the parse, and a change of the set no longer asks it. A
+        later join takes the extraction in as it stands while it was
+        asked with the set's definition.
+
+        A parse that holds no extraction of the set, and a parse of
+        another owner, are `parse_not_found`. One whose extraction of the
+        set has not ended is `conflict`: its task may be running. Answers
+        the extraction as it stands after. A development server answers
+        `501 not_implemented`.
+      responses:
+        "200": { description: The parse left the set; its extraction stays., content: { application/json: { schema: { $ref: "#/components/schemas/Field" } } } }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
@@ -1527,6 +1550,9 @@ components:
         windows: { type: integer, description: "How many parts the document was read in. Above 1, the object was merged from the replies to each: lists joined, and of 2 other values the first that is not null." }
         usage: { $ref: "#/components/schemas/Usage" }
         error: { $ref: "#/components/schemas/Problem" }
+        set: { type: string, description: "The id of the set that asked the extraction. Absent when no set did, when the set was deleted, or when the parse left it." }
+        set_version: { type: integer, description: "The version of the set's definition the extraction was asked with. Absent with `set`." }
+        asked: { type: boolean, description: "On the answer of a join alone: `true` when the join asked the extraction, as the status `202` says, and `false` when the parse was in the set or joined with the extraction it held." }
 
     Citation:
       type: object

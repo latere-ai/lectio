@@ -81,6 +81,7 @@ var routes = []Route{
 	{http.MethodDelete, "/sets/{set}", authorizer.ActionSetDelete, storedSet},
 	{http.MethodGet, "/sets/{set}/parses", authorizer.ActionSetRead, storedSet},
 	{http.MethodPut, "/sets/{set}/parses/{parse}", authorizer.ActionSetUpdate, storedSet},
+	{http.MethodDelete, "/sets/{set}/parses/{parse}", authorizer.ActionSetUpdate, storedSet},
 
 	{http.MethodGet, "/openapi.yaml", "", nil},
 	{http.MethodGet, "/readers", authorizer.ActionReaderList, nil},

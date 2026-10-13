@@ -145,6 +145,12 @@ type Backend interface {
 	// extraction of the name has not ended is refused with conflict, and a
 	// parse of another owner with parse_not_found.
 	JoinSet(ctx context.Context, s store.Set, p store.Parse) (f store.Field, asked bool, err error)
+	// LeaveSet takes a parse out of a set, and returns the parse's
+	// extraction under the set's name, which stays on the parse as an
+	// extraction of no set. A parse that holds no extraction of the set is
+	// refused with parse_not_found, and one whose extraction of the set has
+	// not ended with conflict.
+	LeaveSet(ctx context.Context, s store.Set, p store.Parse) (store.Field, error)
 }
 
 // Memory is the Backend of a development server: everything is kept in the
@@ -302,6 +308,11 @@ func (m *Memory) SetParses(context.Context, store.Set, string, int) ([]store.Mem
 // JoinSet is not built in a development server, as CreateSet is not.
 func (m *Memory) JoinSet(context.Context, store.Set, store.Parse) (store.Field, bool, error) {
 	return store.Field{}, false, undurable("a set")
+}
+
+// LeaveSet is not built in a development server, as CreateSet is not.
+func (m *Memory) LeaveSet(context.Context, store.Set, store.Parse) (store.Field, error) {
+	return store.Field{}, undurable("a set")
 }
 
 // DeleteParse removes an owner's parse and what it wrote.

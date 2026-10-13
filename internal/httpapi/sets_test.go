@@ -80,13 +80,13 @@ func TestASetIsMadeFirstAndAskedOfEachParseThatJoins(t *testing.T) {
 	pid := e.invoice()
 	read := rd.calls.Load()
 	join := e.do("PUT", "/sets/"+set+"/parses/"+pid, nil)
-	if join.status != http.StatusAccepted || join.json(t)["name"] != "invoices" || join.json(t)["state"] != "pending" {
+	if v := join.json(t); join.status != http.StatusAccepted || v["name"] != "invoices" || v["state"] != "pending" || v["asked"] != true || v["set"] != set || v["set_version"] != 1.0 {
 		t.Fatalf("a parse joining: %d %s", join.status, join.body)
 	}
-	if f := e.filled(pid, "invoices", ""); f["state"] != "succeeded" || at(f, "data", "number") != "INV-0042" || f["instructions"] != guidance {
+	if f := e.filled(pid, "invoices", ""); f["state"] != "succeeded" || at(f, "data", "number") != "INV-0042" || f["instructions"] != guidance || f["set"] != set || f["asked"] != nil {
 		t.Fatalf("the set's extraction of the parse: %v", f)
 	}
-	if again := e.do("PUT", "/sets/"+set+"/parses/"+pid, nil); again.status != http.StatusOK || again.json(t)["state"] != "succeeded" {
+	if again := e.do("PUT", "/sets/"+set+"/parses/"+pid, nil); again.status != http.StatusOK || again.json(t)["state"] != "succeeded" || again.json(t)["asked"] != false {
 		t.Fatalf("a join repeated: %d %s", again.status, again.body)
 	}
 	members := e.do("GET", "/sets/"+set+"/parses", nil).json(t)["parses"].([]any)
@@ -130,6 +130,25 @@ func TestASetIsMadeFirstAndAskedOfEachParseThatJoins(t *testing.T) {
 	}
 	if f := e.filled(pid, "invoices", ""); f["state"] != "succeeded" || at(f, "data", "total") != 7.0 || !reflect.DeepEqual(f["schema"], changed) {
 		t.Fatalf("after the change the extraction is %v", f)
+	}
+
+	// The parse leaves the set and keeps its extraction, of no set; a
+	// parse not in the set, and another owner's, are not found.
+	if got := e.do("DELETE", "/sets/"+set+"/parses/"+theirs, nil); got.status != http.StatusNotFound || got.code(t) != "parse_not_found" {
+		t.Fatalf("another owner's parse leaving: %d %s", got.status, got.body)
+	}
+	left := e.do("DELETE", "/sets/"+set+"/parses/"+pid, nil)
+	if v := left.json(t); left.status != http.StatusOK || v["state"] != "succeeded" || v["set"] != nil || at(v, "data", "total") != 7.0 {
+		t.Fatalf("the parse leaving the set: %d %s", left.status, left.body)
+	}
+	if got := e.do("DELETE", "/sets/"+set+"/parses/"+pid, nil); got.status != http.StatusNotFound || got.code(t) != "parse_not_found" {
+		t.Fatalf("a parse leaving a set it is not in: %d %s", got.status, got.body)
+	}
+	if got := e.do("GET", "/sets/"+set, nil).json(t); at(got, "parses", "total") != 0.0 {
+		t.Fatalf("after the parse left, the set counts %v", got["parses"])
+	}
+	if rejoin := e.do("PUT", "/sets/"+set+"/parses/"+pid, nil); rejoin.status != http.StatusOK || rejoin.json(t)["asked"] != false || rejoin.json(t)["set"] != set {
+		t.Fatalf("the parse joining again with the extraction it kept: %d %s", rejoin.status, rejoin.body)
 	}
 
 	if got := e.do("DELETE", "/sets/"+set, nil); got.status != http.StatusNoContent {

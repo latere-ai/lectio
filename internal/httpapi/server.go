@@ -140,6 +140,7 @@ func (s *Server) Routes() []Route {
 		{"DELETE", "/sets/{set}", false, s.deleteSet},
 		{"GET", "/sets/{set}/parses", false, s.listSetParses},
 		{"PUT", "/sets/{set}/parses/{parse}", false, s.joinSet},
+		{"DELETE", "/sets/{set}/parses/{parse}", false, s.leaveSet},
 		{"GET", "/readers", false, s.listReaders},
 		{"GET", "/usage", false, s.getUsage},
 		{"GET", "/queue", false, s.getQueue},
