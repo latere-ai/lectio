@@ -222,6 +222,7 @@ func TestEachLimitOfASubmit(t *testing.T) {
 		`{"max_priority": 1}`:               func(l *authorizer.Limits) { l.MaxPriority = 1 },
 		`{"classes": ["batch"]}`:            func(l *authorizer.Limits) { l.Classes = []string{"batch"} },
 		`{"readers": ["small"]}`:            func(l *authorizer.Limits) { l.Readers = []string{"small"} },
+		`{"reader": "small"}`:               func(l *authorizer.Limits) { l.Reader = "small" },
 		`{"max_file_bytes": 1024}`:          func(l *authorizer.Limits) { l.MaxFileBytes = 1024 },
 		`{"max_pages": 10}`:                 func(l *authorizer.Limits) { l.MaxPages = 10 },
 		`{"pages_per_day": 500}`:            func(l *authorizer.Limits) { l.PagesPerDay = 500 },

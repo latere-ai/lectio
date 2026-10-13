@@ -80,6 +80,8 @@ func TestWhatIsNotKnownIsLeftOut(t *testing.T) {
 		"a set with nothing named":      {access.Set{Name: "harbor"}.Resource(), []string{"kind", "name"}},
 		"a stored set":                  {access.Set{ID: "set_1", Owner: bob, Name: "harbor"}.Resource(), []string{"id", "kind", "name", "owner"}},
 		"the list of sets":              {access.Sets(), []string{"kind"}},
+		"a reader":                      {access.Reader("second"), []string{"kind", "name"}},
+		"the routing policy":            {access.Reader(access.PolicyName), []string{"kind", "name"}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -113,6 +115,7 @@ func TestAResourceSendsOnlyPublishedFields(t *testing.T) {
 		authorizer.ActionQueueRead: access.Queue("acme"),
 		authorizer.ActionSetCreate: access.Set{Owner: alice, Name: "harbor"}.Resource(), authorizer.ActionSetRead: set,
 		authorizer.ActionSetList: access.Sets(), authorizer.ActionSetUpdate: set, authorizer.ActionSetDelete: set,
+		authorizer.ActionReaderUpdate: access.Reader("second"), authorizer.ActionReaderDelete: access.Reader("second"),
 	}
 	if len(cases) != len(authorizer.Actions()) {
 		t.Fatalf("%d actions have a resource here, and the vocabulary has %d", len(cases), len(authorizer.Actions()))

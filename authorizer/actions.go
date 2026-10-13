@@ -46,8 +46,15 @@ const (
 	ActionFileDelete = "file.delete"
 
 	ActionReaderList = "reader.list"
-	ActionUsageRead  = "usage.read"
-	ActionQueueRead  = "queue.read"
+	// ActionReaderUpdate stores a reader, or the routing policy, through the
+	// API (specs/019-readers-at-runtime.md). The readers are the
+	// deployment's and nobody's: an authorizer allows it to the
+	// deployment's operators alone.
+	ActionReaderUpdate = "reader.update"
+	// ActionReaderDelete removes a reader stored through the API.
+	ActionReaderDelete = "reader.delete"
+	ActionUsageRead    = "usage.read"
+	ActionQueueRead    = "queue.read"
 
 	// ActionSetCreate makes a set. The allow carries the owner the set is
 	// recorded under and the readers an extractor it names is held to.
@@ -88,7 +95,8 @@ const (
 	FieldMediaType = "media_type"
 	// FieldGroup is the fairness group a usage or queue read is about.
 	FieldGroup = "group"
-	// FieldName is a set's name.
+	// FieldName is a set's name, and a reader's; a question about the
+	// routing policy names it "policy".
 	FieldName = "name"
 )
 
@@ -123,6 +131,8 @@ var table = []row{
 	{ActionFileDelete, KindFile, fileFields},
 
 	{ActionReaderList, KindReader, nil},
+	{ActionReaderUpdate, KindReader, []string{FieldName}},
+	{ActionReaderDelete, KindReader, []string{FieldName}},
 	{ActionUsageRead, KindUsage, []string{FieldOwner, FieldGroup}},
 	{ActionQueueRead, KindQueue, []string{FieldGroup}},
 

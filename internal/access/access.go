@@ -246,9 +246,10 @@ func (a *asker) limits(caller Caller, q Question, d authz.Decision) (authorizer.
 		}
 	case authorizer.ActionSetCreate, authorizer.ActionSetUpdate:
 		// A set's work is its parses' owner's and is held to their
-		// limits, so a set is held to its owner and to the readers an
-		// extractor it names may be.
-		named = authorizer.WireLimits{Owner: named.Owner, Readers: named.Readers}
+		// limits, so a set is held to its owner, to the readers an
+		// extractor it names may be, and to the extractor a definition
+		// that names none takes.
+		named = authorizer.WireLimits{Owner: named.Owner, Readers: named.Readers, Reader: named.Reader}
 	}
 	limits := named.Over(defaults)
 	var lost []string

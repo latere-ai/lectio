@@ -85,6 +85,12 @@ func TestTheOwnerPolicy(t *testing.T) {
 		{"reads its own group's queue", alice, authorizer.ActionQueueRead, access.Queue(alice), true, "", nil},
 		{"reads another group's queue", alice, authorizer.ActionQueueRead, access.Queue(bob), false, authz.ReasonNotOwner, nil},
 		{"lists the readers", alice, authorizer.ActionReaderList, access.Readers(), true, "", nil},
+		{"stores a reader", alice, authorizer.ActionReaderUpdate, access.Reader("second"), false, authz.ReasonNotOwner, nil},
+		{"sets the policy", alice, authorizer.ActionReaderUpdate, access.Reader(access.PolicyName), false, authz.ReasonNotOwner, nil},
+		{"removes a reader", alice, authorizer.ActionReaderDelete, access.Reader("second"), false, authz.ReasonNotOwner, nil},
+		{"an admin stores a reader", root, authorizer.ActionReaderUpdate, access.Reader("second"), true, "", nil},
+		{"an admin sets the policy", root, authorizer.ActionReaderUpdate, access.Reader(access.PolicyName), true, "", nil},
+		{"an admin removes a reader", root, authorizer.ActionReaderDelete, access.Reader("second"), true, "", nil},
 
 		// An admin reads every owner's and changes nothing but its own.
 		{"an admin reads another's parse", root, authorizer.ActionParseRead, parseOf(bob), true, "", nil},

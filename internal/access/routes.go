@@ -85,6 +85,12 @@ var routes = []Route{
 
 	{http.MethodGet, "/openapi.yaml", "", nil},
 	{http.MethodGet, "/readers", authorizer.ActionReaderList, nil},
+	{http.MethodGet, "/readers/{name}", authorizer.ActionReaderList, nil},
+	{http.MethodPut, "/readers/{name}", authorizer.ActionReaderUpdate, []string{authorizer.FieldName}},
+	{http.MethodDelete, "/readers/{name}", authorizer.ActionReaderDelete, []string{authorizer.FieldName}},
+	{http.MethodGet, "/policy", authorizer.ActionReaderList, nil},
+	{http.MethodPut, "/policy", authorizer.ActionReaderUpdate, []string{authorizer.FieldName}},
+	{http.MethodDelete, "/policy", authorizer.ActionReaderUpdate, []string{authorizer.FieldName}},
 	{http.MethodGet, "/usage", authorizer.ActionUsageRead, []string{authorizer.FieldOwner, authorizer.FieldGroup}},
 	{http.MethodGet, "/queue", authorizer.ActionQueueRead, []string{authorizer.FieldGroup}},
 }

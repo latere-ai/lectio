@@ -22,7 +22,7 @@ import (
 // already emits. A key added, dropped or renamed is a change of the wire.
 var wireKeys = []string{
 	"owner", "group", "weight", "project", "project_weight", "max_running", "max_queued",
-	"max_priority", "classes", "readers", "max_file_bytes", "max_pages", "pages_per_day",
+	"max_priority", "classes", "readers", "reader", "max_file_bytes", "max_pages", "pages_per_day",
 	"retention_seconds",
 }
 
@@ -33,7 +33,7 @@ func full() authorizer.WireLimits {
 	return authorizer.WireLimits{
 		Owner: ptr("https://issuer.example|org"), Group: ptr("org"), Weight: ptr(4),
 		Project: ptr("reports"), ProjectWeight: ptr(2), MaxRunning: ptr(8), MaxQueued: ptr(100),
-		MaxPriority: ptr(5), Classes: []string{"batch"}, Readers: []string{"small"},
+		MaxPriority: ptr(5), Classes: []string{"batch"}, Readers: []string{"small"}, Reader: ptr("small"),
 		MaxFileBytes: ptr(int64(1 << 20)), MaxPages: ptr(50), PagesPerDay: ptr(1000),
 		RetentionSeconds: ptr(int64(3600)),
 	}
@@ -198,6 +198,7 @@ func TestEachMemberOverTheDefaults(t *testing.T) {
 		{"max_priority", authorizer.WireLimits{MaxPriority: ptr(1)}, func(l *authorizer.Limits) { l.MaxPriority = 1 }},
 		{"classes", authorizer.WireLimits{Classes: []string{"batch"}}, func(l *authorizer.Limits) { l.Classes = []string{"batch"} }},
 		{"readers", authorizer.WireLimits{Readers: []string{"small"}}, func(l *authorizer.Limits) { l.Readers = []string{"small"} }},
+		{"reader", authorizer.WireLimits{Reader: ptr("small")}, func(l *authorizer.Limits) { l.Reader = "small" }},
 		{"max_file_bytes", authorizer.WireLimits{MaxFileBytes: ptr(int64(1024))}, func(l *authorizer.Limits) { l.MaxFileBytes = 1024 }},
 		{"max_pages", authorizer.WireLimits{MaxPages: ptr(10)}, func(l *authorizer.Limits) { l.MaxPages = 10 }},
 		{"pages_per_day", authorizer.WireLimits{PagesPerDay: ptr(500)}, func(l *authorizer.Limits) { l.PagesPerDay = 500 }},
@@ -281,5 +282,24 @@ func TestOverCopiesItsLists(t *testing.T) {
 	got.Classes[0], got.Readers[0] = "changed", "changed"
 	if named.Classes[0] != "batch" || named.Readers[0] != "large" {
 		t.Errorf("the answer became %v and %v", named.Classes, named.Readers)
+	}
+}
+
+// TestADefaultReaderIsOneTheCallerMayName: an answer whose reader its own
+// readers leave out is no decision, since nobody could be held to it; one
+// within them, or with no list, is read.
+func TestADefaultReaderIsOneTheCallerMayName(t *testing.T) {
+	if _, err := authorizer.DecodeLimits(decision(`{"reader":"large","readers":["small"]}`)); err == nil {
+		t.Error("a default outside the readers was read")
+	}
+	for _, raw := range []string{`{"reader":"small","readers":["small"]}`, `{"reader":"small"}`, `{"reader":""}`} {
+		w, err := authorizer.DecodeLimits(decision(raw))
+		if err != nil {
+			t.Errorf("%s: %v", raw, err)
+			continue
+		}
+		if got := w.Over(authorizer.Limits{Reader: "kept"}).Reader; (raw == `{"reader":""}`) != (got == "kept") {
+			t.Errorf("%s laid over a default reads %q", raw, got)
+		}
 	}
 }

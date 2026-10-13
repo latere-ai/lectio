@@ -30,7 +30,7 @@ const ReasonUnknownAction = "unknown_action"
 //   - the group is the owner, so a usage or queue read about a group is
 //     about the subject whose name the group carries;
 //   - every subject may list the readers, which are the server's
-//     configuration and nobody's;
+//     configuration and nobody's, and an admin alone may change them;
 //   - an admin may read every owner's parses, files, sets, usage and
 //     queue, and may change nothing that is not its own;
 //   - the probe and a request with no subject are denied.
@@ -100,6 +100,12 @@ func (p *OwnerPolicy) decide(req authz.Request) authz.Decision {
 	switch req.Action {
 	case authorizer.ActionReaderList:
 		return allow
+	case authorizer.ActionReaderUpdate, authorizer.ActionReaderDelete:
+		// The readers are the deployment's, and no owner's to change.
+		if admin {
+			return allow
+		}
+		return authz.Decision{Reason: authz.ReasonNotOwner}
 	case authorizer.ActionParseRead, authorizer.ActionFileRead, authorizer.ActionSetRead:
 		if admin {
 			return allow

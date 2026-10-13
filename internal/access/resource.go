@@ -118,6 +118,17 @@ func Parses() authz.Resource { return authz.NewResource(authorizer.KindParse, ""
 // Readers is the resource of reader.list.
 func Readers() authz.Resource { return authz.NewResource(authorizer.KindReader, "", nil) }
 
+// Reader is the resource of reader.update and reader.delete: the reader the
+// request names, or PolicyName for the routing policy.
+func Reader(name string) authz.Resource {
+	fields := map[string]any{}
+	text(fields, authorizer.FieldName, name)
+	return authz.NewResource(authorizer.KindReader, "", fields)
+}
+
+// PolicyName is the name a question about the routing policy carries.
+const PolicyName = "policy"
+
 // Usage is the resource of usage.read: the owner and the group the read
 // is about, each empty when the request names none.
 func Usage(owner, group string) authz.Resource {

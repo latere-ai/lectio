@@ -55,6 +55,11 @@ type Limits struct {
 	Classes []string
 	// Readers are the readers the caller may pin. Empty is all.
 	Readers []string
+	// Reader is the reader a request that names none is held to, for the
+	// role the request asks of a reader: its pages, its figures, its
+	// fields (specs/019-readers-at-runtime.md). Empty is the routing
+	// policy's.
+	Reader string
 	// MaxFileBytes is the largest file the caller may upload or name. An
 	// allow lowers the server's figure and never raises it.
 	MaxFileBytes int64
@@ -90,6 +95,7 @@ type WireLimits struct {
 	MaxPriority      *int     `json:"max_priority,omitempty"`
 	Classes          []string `json:"classes,omitempty"`
 	Readers          []string `json:"readers,omitempty"`
+	Reader           *string  `json:"reader,omitempty"`
 	MaxFileBytes     *int64   `json:"max_file_bytes,omitempty"`
 	MaxPages         *int     `json:"max_pages,omitempty"`
 	PagesPerDay      *int     `json:"pages_per_day,omitempty"`
@@ -191,6 +197,11 @@ func (w WireLimits) validate() error {
 			return errors.New("limits." + name + " holds an empty name")
 		}
 	}
+	// A default the same answer does not let the caller name is no
+	// default anyone can be held to.
+	if r := w.Reader; r != nil && *r != "" && len(w.Readers) > 0 && !slices.Contains(w.Readers, *r) {
+		return fmt.Errorf("limits.reader is %q, which limits.readers leaves out", *r)
+	}
 	return nil
 }
 
@@ -198,8 +209,8 @@ func (w WireLimits) validate() error {
 // the limits in force. A member the answer does not name leaves the
 // default. Of the members it names:
 //
-//   - owner, group and project replace the default when they are not
-//     empty, and so do classes and readers;
+//   - owner, group, project and reader replace the default when they are
+//     not empty, and so do classes and readers;
 //   - weight and project_weight replace it when above zero;
 //   - max_running, max_queued, max_priority and pages_per_day replace it
 //     whatever they are, zero included;
@@ -212,7 +223,7 @@ func (w WireLimits) Over(defaults Limits) Limits {
 	for _, f := range []struct {
 		named *string
 		into  *string
-	}{{w.Owner, &l.Owner}, {w.Group, &l.Group}, {w.Project, &l.Project}} {
+	}{{w.Owner, &l.Owner}, {w.Group, &l.Group}, {w.Project, &l.Project}, {w.Reader, &l.Reader}} {
 		if f.named != nil && *f.named != "" {
 			*f.into = *f.named
 		}
