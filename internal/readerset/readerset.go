@@ -80,13 +80,13 @@ type Manager struct {
 // may find, is logged, and the configured documents alone are in force in
 // this process until one does; the settings are not written, so the
 // processes that can build it keep dispatching to it.
-func (m *Manager) Settle(_ context.Context, stored postgres.ReaderState) (tasks.Settings, error) {
+func (m *Manager) Settle(ctx context.Context, stored postgres.ReaderState) (tasks.Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	set, err := m.build(stored)
 	keep := err != nil
 	if keep {
-		m.log().Error("the stored readers do not build; the configured ones alone are in force in this process", "error", err)
+		m.log().ErrorContext(ctx, "the stored readers do not build; the configured ones alone are in force in this process", "error", err)
 		if set, err = m.File.Build(nil, nil); err != nil {
 			return tasks.Settings{}, err
 		}
@@ -173,7 +173,7 @@ func (m *Manager) reload(ctx context.Context) error {
 		return err
 	}
 	if shorter(m.live.Current(), &set) {
-		m.again(m.Queue(set))
+		m.again(ctx, m.Queue(set))
 	}
 	m.live.Set(set)
 	m.version = stored.Version
@@ -192,14 +192,15 @@ func shorter(was, next *config.Readers) bool {
 // chain no longer has, is moved to its last place then, as the work that
 // waited was when the change was written. The set in force then is
 // written, so a change made since is not undone.
-func (m *Manager) again(settings tasks.Settings) {
+func (m *Manager) again(ctx context.Context, settings tasks.Settings) {
 	settings = settings.WithDefaults()
 	later := m.Later
 	if later == nil {
 		later = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
 	}
 	later(settings.Lease+settings.SweepInterval, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		// The write outlives the request that made the change.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		m.mu.Lock()
 		defer m.mu.Unlock()
