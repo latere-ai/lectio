@@ -76,6 +76,13 @@ type Settings struct {
 	// resolve to.
 	FetchAllow []string // LECTIO_FETCH_ALLOW
 
+	// ReaderEndpoints are the endpoints a reader stored through the API may
+	// reach; with none, the ones the configured readers reach. ReadersPoll
+	// is how often a process checks whether the stored readers changed;
+	// zero takes 10 seconds (specs/019-readers-at-runtime.md).
+	ReaderEndpoints []string      // LECTIO_READER_ENDPOINTS
+	ReadersPoll     time.Duration // LECTIO_READERS_POLL
+
 	// FileRetention is how long a file is kept from an upload of it, and
 	// past the end of the last parse that read it. ParseRetention is how
 	// long a parse and what it wrote are kept after it ended. An allow
@@ -248,10 +255,16 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 	duration("LECTIO_WORKER_POLL", &s.Poll)
 	duration("LECTIO_POOL_RECOVERY", &s.PoolRecovery)
 	duration("LECTIO_POOL_RESUME", &s.PoolResume)
+	duration("LECTIO_READERS_POLL", &s.ReadersPoll)
 	errs = append(errs, s.readKeys(getenv)...)
 	for host := range strings.SplitSeq(getenv("LECTIO_FETCH_ALLOW"), ",") {
 		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
 			s.FetchAllow = append(s.FetchAllow, host)
+		}
+	}
+	for endpoint := range strings.SplitSeq(getenv("LECTIO_READER_ENDPOINTS"), ",") {
+		if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
+			s.ReaderEndpoints = append(s.ReaderEndpoints, endpoint)
 		}
 	}
 	errs = append(errs, s.readIdentity(getenv)...)
@@ -361,6 +374,13 @@ type document struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec yaml.Node `yaml:"spec"`
+
+	// where names the document in an error. source is where it came from,
+	// SourceConfigured or the source of what the API stored; adapter and
+	// model are what its spec names, set when it is built; raw is the spec
+	// as the API stored it.
+	where, source, adapter, model string
+	raw                           []byte
 }
 
 // readerSpec is the spec of a Reader.
@@ -442,6 +462,17 @@ type Readers struct {
 	// bound of its calls in flight and the cost of one call.
 	Pools []tasks.Pool
 
+	// Sources says where each reader came from, SourceConfigured or
+	// SourceAdded; Adapters and Models are what each one's spec names, the
+	// model only for one that reaches a model; Specs holds the spec of each
+	// added reader as the API stored it. PolicySource says whether the
+	// chains are the configured Policy's or the one the API set.
+	Sources      map[string]string
+	Adapters     map[string]string
+	Models       map[string]string
+	Specs        map[string][]byte
+	PolicySource string
+
 	// Unapplied names what the documents set that this build reads and
 	// does not act on, so a start can say so and not stay silent.
 	// RunnerUnapplied names what the task store applies and the in-process
@@ -462,15 +493,28 @@ func Stub() Readers {
 }
 
 // Load reads the documents at path, a file or a directory of .yaml, .yml
-// and .json files. Everything must hold: a document of an unknown kind or
-// version, a member a spec does not have, a reader that cannot be built, a
-// name used twice, and a chain that names a reader that is not there are
-// each an error, and nothing is returned. A configuration that half loads
-// would read pages with a model nobody chose.
+// and .json files, and builds them. Everything must hold: a document of an
+// unknown kind or version, a member a spec does not have, a reader that
+// cannot be built, a name used twice, and a chain that names a reader that
+// is not there are each an error, and nothing is returned. A configuration
+// that half loads would read pages with a model nobody chose.
 func Load(path string) (Readers, error) {
+	f, err := ReadFile(path)
+	if err != nil {
+		return Readers{}, err
+	}
+	return f.Build(nil, nil)
+}
+
+// ReadFile reads the documents at path, a file or a directory of .yaml,
+// .yml and .json files read in name order, without building them: a
+// document of an unknown kind or version, a name used twice and a second
+// Policy are errors here, and what a document's spec holds is checked when
+// it is built.
+func ReadFile(path string) (File, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return Readers{}, fmt.Errorf("config: %w", err)
+		return File{}, fmt.Errorf("config: %w", err)
 	}
 	files := []string{path}
 	if info.IsDir() {
@@ -483,14 +527,12 @@ func Load(path string) (Readers, error) {
 		slices.Sort(files)
 	}
 
-	out := Readers{
-		Readers: map[string]reader.Reader{}, Describers: map[string]reader.Describer{}, Extractors: map[string]reader.Extractor{},
-	}
-	policies := 0
+	out := File{path: path}
+	names := map[string]bool{}
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
-			return Readers{}, fmt.Errorf("config: %w", err)
+			return File{}, fmt.Errorf("config: %w", err)
 		}
 		dec := yaml.NewDecoder(bytes.NewReader(raw))
 		for n := 1; ; n++ {
@@ -498,61 +540,95 @@ func Load(path string) (Readers, error) {
 			if err := dec.Decode(&doc); errors.Is(err, io.EOF) {
 				break
 			} else if err != nil {
-				return Readers{}, fmt.Errorf("config: %s, document %d: %w", file, n, err)
+				return File{}, fmt.Errorf("config: %s, document %d: %w", file, n, err)
 			}
-			where := fmt.Sprintf("config: %s, %s %q", file, doc.Kind, doc.Metadata.Name)
+			doc.where = fmt.Sprintf("config: %s, %s %q", file, doc.Kind, doc.Metadata.Name)
 			if doc.APIVersion != APIVersion {
-				return Readers{}, fmt.Errorf("%s: apiVersion is %q, want %s", where, doc.APIVersion, APIVersion)
+				return File{}, fmt.Errorf("%s: apiVersion is %q, want %s", doc.where, doc.APIVersion, APIVersion)
 			}
 			switch doc.Kind {
 			case "Reader":
-				if _, taken := out.Readers[doc.Metadata.Name]; taken {
-					return Readers{}, fmt.Errorf("%s: the name is used twice", where)
+				if names[doc.Metadata.Name] {
+					return File{}, fmt.Errorf("%s: the name is used twice", doc.where)
 				}
-				rd, describer, extractor, pool, unapplied, err := build(doc)
-				if err != nil {
-					return Readers{}, fmt.Errorf("%s: %w", where, err)
-				}
-				out.Readers[doc.Metadata.Name] = rd
-				if describer != nil {
-					out.Describers[doc.Metadata.Name] = describer
-				}
-				if extractor != nil {
-					out.Extractors[doc.Metadata.Name] = extractor
-				}
-				out.Pools = append(out.Pools, pool)
-				out.RunnerUnapplied = append(out.RunnerUnapplied, unapplied...)
+				names[doc.Metadata.Name] = true
+				out.readers = append(out.readers, doc)
 			case "Policy":
-				if policies++; policies > 1 {
-					return Readers{}, fmt.Errorf("%s: there is one Policy, and this is the second", where)
+				if out.policy != nil {
+					return File{}, fmt.Errorf("%s: there is one Policy, and this is the second", doc.where)
 				}
-				var spec policySpec
-				if err := strict(doc.Spec, &spec); err != nil {
-					return Readers{}, fmt.Errorf("%s: %w", where, err)
-				}
-				out.Chain, out.DescribeChain, out.ExtractChain = spec.Read.Chain, spec.Describe.Chain, spec.Extract.Chain
-				if len(spec.Extract.Chain) > 0 {
-					// Extraction is built over the task store, which a
-					// development server does not have.
-					out.RunnerUnapplied = append(out.RunnerUnapplied, "Policy extract.chain")
-				}
-				if spec.Escalate.OnInvalid != 0 || spec.Escalate.Max != 0 {
-					out.Unapplied = append(out.Unapplied, "Policy escalate")
-				}
+				out.policy = &doc
 			default:
-				return Readers{}, fmt.Errorf("%s: the kind is not Reader or Policy", where)
+				return File{}, fmt.Errorf("%s: the kind is not Reader or Policy", doc.where)
 			}
 		}
 	}
-
-	if len(out.Readers) == 0 {
-		return Readers{}, fmt.Errorf("config: %s declares no Reader", path)
+	if len(out.readers) == 0 {
+		return File{}, fmt.Errorf("config: %s declares no Reader", path)
 	}
+	return out, nil
+}
+
+// assemble builds the Reader documents and orders them by the policy, the
+// configured documents before the added ones. policy is nil when no Policy
+// is in force. Everything must hold, as Load says.
+func assemble(where string, docs []document, policy *document) (Readers, error) {
+	out := Readers{
+		Readers: map[string]reader.Reader{}, Describers: map[string]reader.Describer{}, Extractors: map[string]reader.Extractor{},
+		Sources: map[string]string{}, Adapters: map[string]string{}, Models: map[string]string{}, Specs: map[string][]byte{},
+		PolicySource: SourceConfigured,
+	}
+	for i := range docs {
+		doc := &docs[i]
+		if _, taken := out.Readers[doc.Metadata.Name]; taken {
+			return Readers{}, fmt.Errorf("%s: the name is used twice", doc.where)
+		}
+		rd, describer, extractor, pool, unapplied, err := build(doc)
+		if err != nil {
+			return Readers{}, fmt.Errorf("%s: %w", doc.where, err)
+		}
+		name := doc.Metadata.Name
+		out.Readers[name] = rd
+		if describer != nil {
+			out.Describers[name] = describer
+		}
+		if extractor != nil {
+			out.Extractors[name] = extractor
+		}
+		out.Pools = append(out.Pools, pool)
+		out.RunnerUnapplied = append(out.RunnerUnapplied, unapplied...)
+		out.Sources[name], out.Adapters[name] = doc.source, doc.adapter
+		if doc.model != "" {
+			out.Models[name] = doc.model
+		}
+		if doc.source == SourceAdded {
+			out.Specs[name] = doc.raw
+		}
+	}
+	if policy != nil {
+		var spec policySpec
+		if err := strict(policy.Spec, &spec); err != nil {
+			return Readers{}, fmt.Errorf("%s: %w", policy.where, err)
+		}
+		out.Chain, out.DescribeChain, out.ExtractChain = spec.Read.Chain, spec.Describe.Chain, spec.Extract.Chain
+		if policy.source == SourceSet {
+			out.PolicySource = SourceSet
+		}
+		if len(spec.Extract.Chain) > 0 {
+			// Extraction is built over the task store, which a
+			// development server does not have.
+			out.RunnerUnapplied = append(out.RunnerUnapplied, "Policy extract.chain")
+		}
+		if spec.Escalate.OnInvalid != 0 || spec.Escalate.Max != 0 {
+			out.Unapplied = append(out.Unapplied, "Policy escalate")
+		}
+	}
+
 	if len(out.Chain) == 0 {
 		// With no policy, one reader is the chain. With several, the order
 		// would be a guess.
 		if len(out.Readers) > 1 {
-			return Readers{}, fmt.Errorf("config: %s declares %d readers and no Policy to order them", path, len(out.Readers))
+			return Readers{}, fmt.Errorf("config: %s declares %d readers and no Policy to order them", where, len(out.Readers))
 		}
 		for name := range out.Readers {
 			out.Chain = []string{name}
@@ -603,7 +679,7 @@ func strict(node yaml.Node, into any) error {
 // of its own, or that reads a page's own text and reaches nothing, cannot.
 // All 3 reach the same model with the same parameters, under one name and
 // one pool. pool is the reader as the task store sees it.
-func build(doc document) (rd reader.Reader, describer reader.Describer, extractor reader.Extractor, pool tasks.Pool, unapplied []string, err error) {
+func build(doc *document) (rd reader.Reader, describer reader.Describer, extractor reader.Extractor, pool tasks.Pool, unapplied []string, err error) {
 	name := doc.Metadata.Name
 	if name == "" {
 		return nil, nil, nil, pool, nil, errors.New("metadata.name is empty")
@@ -612,6 +688,7 @@ func build(doc document) (rd reader.Reader, describer reader.Describer, extracto
 	if err := strict(doc.Spec, &spec); err != nil {
 		return nil, nil, nil, pool, nil, err
 	}
+	doc.adapter, doc.model = spec.Adapter, spec.Model
 	var timeout time.Duration
 	if spec.Timeout != "" {
 		if timeout, err = time.ParseDuration(spec.Timeout); err != nil || timeout <= 0 {
