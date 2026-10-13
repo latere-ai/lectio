@@ -260,6 +260,20 @@ func TestEachMemberOfAnAllowChangesTheOutcome(t *testing.T) {
 				t.Errorf("with no readers named the parse pinned %v", p["reader"])
 			}
 		},
+		"Reader": func(t *testing.T) {
+			// A submit that names no reader is pinned to the default, as if
+			// it named it; one the server does not have is refused.
+			h.with(`{"reader": "stub"}`)
+			if p := ok("named", scan, ""); p["reader"] != "stub" {
+				t.Errorf("under a default reader the parse pinned %v", p["reader"])
+			}
+			h.with(`{"reader": "gone"}`)
+			refused("a default the server does not have", scan, "", http.StatusBadRequest, "reader_not_found", "reader")
+			h.with("")
+			if p := ok("absent", scan, ""); p["reader"] != nil {
+				t.Errorf("with no default the parse pinned %v", p["reader"])
+			}
+		},
 		"MaxFileBytes": func(t *testing.T) {
 			big := make([]byte, 2000)
 			copy(big, sheet(t))
