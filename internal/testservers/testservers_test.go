@@ -13,7 +13,6 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/network"
 	"latere.ai/x/ci-gate/reap"
 )
 
@@ -61,7 +60,12 @@ func engine(t *testing.T) *[]string {
 		calls = append(calls, "sweep")
 		return 0, nil
 	}
-	newNetwork = func(context.Context, ...network.NetworkCustomizer) (*testcontainers.DockerNetwork, error) {
+	newNetwork = func(_ context.Context, labels map[string]string) (*testcontainers.DockerNetwork, error) {
+		for k, v := range reap.Labels() {
+			if labels[k] != v {
+				t.Errorf("the network's label %s = %q, want %q", k, labels[k], v)
+			}
+		}
 		calls = append(calls, "network")
 		return &testcontainers.DockerNetwork{Name: "testservers-network"}, nil
 	}

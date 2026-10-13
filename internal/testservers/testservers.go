@@ -104,8 +104,10 @@ var (
 // sweep, newNetwork and the runs reach the container engine; variables so a
 // test can stand in for it.
 var (
-	sweep        = reap.Sweep
-	newNetwork   = network.New
+	sweep      = reap.Sweep
+	newNetwork = func(ctx context.Context, labels map[string]string) (*testcontainers.DockerNetwork, error) {
+		return network.New(ctx, network.WithLabels(labels))
+	}
 	runPostgres  = tcpostgres.Run
 	runContainer = testcontainers.Run
 )
@@ -142,7 +144,9 @@ func StartPostgres() (Postgres, error) {
 func startPostgres(ctx context.Context) (Postgres, error) {
 	runtime(ctx)
 	_, _ = sweep(ctx)
-	nw, err := newNetwork(ctx)
+	// The network is labelled like the containers, so a killed binary's
+	// network goes with them at the next sweep.
+	nw, err := newNetwork(ctx, reap.Labels())
 	if err != nil {
 		return Postgres{}, err
 	}
