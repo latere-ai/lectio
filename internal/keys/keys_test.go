@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -239,7 +241,7 @@ func TestAGroupsKeyIsAskedOnceAndHeldUntilShortlyBeforeItExpires(t *testing.T) {
 	}
 	want := asked{Method: http.MethodPost, Authorization: "Bearer " + bearer, ContentType: "application/json",
 		Body: question{Group: "acme", Owner: "org:acme", Parse: "prs_1"}}
-	if requests, _ := p.seen("acme"); len(requests) != 1 || requests[0] != want {
+	if requests, _ := p.seen("acme"); len(requests) != 1 || !reflect.DeepEqual(requests[0], want) {
 		t.Fatalf("the endpoint was asked %+v, want %+v", requests, want)
 	}
 	for _, parse := range []string{"prs_1", "prs_2"} {
@@ -580,5 +582,42 @@ func TestAnEndpointSourcePrintsNothingItHolds(t *testing.T) {
 	}
 	if raw, err := json.Marshal(map[string]any{"source": source, "key": key}); err != nil || strings.Contains(string(raw), bearer) || strings.Contains(string(raw), "sk-issued") {
 		t.Fatalf("the source as JSON: %s, %v", raw, err)
+	}
+}
+
+// TestAKeyIsAskedForTheModelsOfTheReaders: a request names the models the
+// readers in force reach, and a key is held by its group and by them, so a
+// reader added after a key was issued is read with a key asked for its
+// model. A source that names no models asks as before.
+func TestAKeyIsAskedForTheModelsOfTheReaders(t *testing.T) {
+	p := newPlane(t)
+	var mu sync.Mutex
+	models := []string{"vendor/a"}
+	e := NewEndpoint(Options{
+		URL: p.URL, Token: reader.NewCredential(bearer), Now: p.clock.now,
+		Models: func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(models)
+		},
+	})
+	first, err := e.Key(ctx, "acme", "org:acme", "prs_1")
+	if err != nil || first.Reveal() != keyOf("acme", 1) {
+		t.Fatalf("the first key: %q, %v", first.Reveal(), err)
+	}
+	if again, err := e.Key(ctx, "acme", "org:acme", "prs_2"); err != nil || again.Reveal() != first.Reveal() {
+		t.Fatalf("the key for the same models: %q, %v", again.Reveal(), err)
+	}
+	mu.Lock()
+	models = []string{"vendor/a", "vendor/b"}
+	mu.Unlock()
+	second, err := e.Key(ctx, "acme", "org:acme", "prs_3")
+	if err != nil || second.Reveal() != keyOf("acme", 2) {
+		t.Fatalf("the key once a reader of another model was added: %q, %v", second.Reveal(), err)
+	}
+	requests, _ := p.seen("acme")
+	if len(requests) != 2 || !slices.Equal(requests[0].Body.Models, []string{"vendor/a"}) ||
+		!slices.Equal(requests[1].Body.Models, []string{"vendor/a", "vendor/b"}) {
+		t.Fatalf("the endpoint was asked %+v", requests)
 	}
 }

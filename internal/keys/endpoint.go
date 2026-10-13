@@ -70,6 +70,13 @@ type Options struct {
 	// Log takes one line per answer that issued no key. Nil takes
 	// slog.Default.
 	Log *slog.Logger
+
+	// Models are the models the readers in force reach, in name order,
+	// which a request names so the endpoint may scope the key to them
+	// (specs/019-readers-at-runtime.md). A key is held by its group and by
+	// this list, so readers that reach another model are read with a key
+	// asked for it. Nil names none.
+	Models func() []string
 }
 
 // Endpoint is the source that asks an operator's endpoint for the key of
@@ -87,6 +94,7 @@ type Endpoint struct {
 	http    *http.Client
 	now     func() time.Time
 	log     *slog.Logger
+	models  func() []string
 	timeout time.Duration
 
 	mu     sync.Mutex
@@ -114,7 +122,7 @@ type entry struct {
 // when its first page is read.
 func NewEndpoint(o Options) *Endpoint {
 	e := &Endpoint{
-		url: o.URL, token: o.Token, http: o.HTTP, now: o.Now, log: o.Log,
+		url: o.URL, token: o.Token, http: o.HTTP, now: o.Now, log: o.Log, models: o.Models,
 		timeout: Timeout, groups: map[string]*entry{},
 	}
 	if e.http == nil {
@@ -144,12 +152,23 @@ func (e *Endpoint) GoString() string { return e.String() }
 // arrives while it is in flight shares. A call whose context ends while it
 // waits returns at once and leaves the request to the others.
 func (e *Endpoint) Key(ctx context.Context, group, owner, parse string) (reader.Credential, error) {
+	var models []string
+	if e.models != nil {
+		models = e.models()
+	}
+	// A group's key is held under the models it was asked for, when it was
+	// asked for any: a NUL cannot be in a group or a model, so 2 lists
+	// never share a key.
+	held := group
+	if len(models) > 0 {
+		held += "\x00" + strings.Join(models, "\x00")
+	}
 	for {
 		e.mu.Lock()
-		g := e.groups[group]
+		g := e.groups[held]
 		if g == nil {
 			g = &entry{}
-			e.groups[group] = g
+			e.groups[held] = g
 		}
 		if now := e.now(); now.Before(g.until) {
 			key, err := g.answer(now)
@@ -160,7 +179,7 @@ func (e *Endpoint) Key(ctx context.Context, group, owner, parse string) (reader.
 			g.flight = make(chan struct{})
 			// The request outlives the call that started it: the others
 			// that wait for its answer are not ended by that call's end.
-			go e.ask(context.WithoutCancel(ctx), g, group, owner, parse)
+			go e.ask(context.WithoutCancel(ctx), g, question{Group: group, Owner: owner, Parse: parse, Models: models})
 		}
 		flight := g.flight
 		e.mu.Unlock()
@@ -183,8 +202,9 @@ func (g *entry) answer(now time.Time) (reader.Credential, error) {
 }
 
 // ask makes the one request in flight for a group and records its answer.
-func (e *Endpoint) ask(ctx context.Context, g *entry, group, owner, parse string) {
-	r := e.request(ctx, group, owner, parse)
+func (e *Endpoint) ask(ctx context.Context, g *entry, q question) {
+	r := e.request(ctx, q)
+	group := q.Group
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -230,11 +250,13 @@ func (e *Endpoint) forget(now time.Time) {
 	}
 }
 
-// question is the body of a request: whose key is asked for.
+// question is the body of a request: whose key is asked for, and for which
+// models.
 type question struct {
-	Group string `json:"group"`
-	Owner string `json:"owner"`
-	Parse string `json:"parse"`
+	Group  string   `json:"group"`
+	Owner  string   `json:"owner"`
+	Parse  string   `json:"parse"`
+	Models []string `json:"models,omitempty"`
 }
 
 // issued is the body of a 200.
@@ -257,9 +279,9 @@ type reply struct {
 // request asks the endpoint once. No error it reports holds a byte of the
 // answer: an answer that is not the one the contract names may still hold a
 // key.
-func (e *Endpoint) request(ctx context.Context, group, owner, parse string) reply {
+func (e *Endpoint) request(ctx context.Context, q question) reply {
 	down := func(reason string, err error) reply { return reply{down: &Unavailable{Reason: reason, Err: err}} }
-	body, err := json.Marshal(question{Group: group, Owner: owner, Parse: parse})
+	body, err := json.Marshal(q)
 	if err != nil {
 		return down("the request to the key endpoint could not be encoded", err)
 	}
