@@ -112,8 +112,15 @@ var (
 
 // keep records a container for Stop. A container that failed to start is
 // still kept when the library returned one: it may hold a name or a port.
-func keep(c testcontainers.Container) {
-	if c == nil {
+// It takes the type the library returns rather than the interface, because
+// a nil one converted to the interface is not nil, and Stop would call into
+// it and panic before it removed the network.
+func keep[C interface {
+	comparable
+	testcontainers.Container
+}](c C) {
+	var none C
+	if c == none {
 		return
 	}
 	mu.Lock()

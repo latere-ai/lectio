@@ -162,3 +162,19 @@ func TestAURLIsPointedAtAnotherDatabase(t *testing.T) {
 		t.Fatalf("the URL of another database is %q, named %q", at, NameOf(t, at))
 	}
 }
+
+// A start that made no container keeps nothing for Stop. A nil server kept
+// as a container made Stop panic before it removed the network.
+func TestAStartThatMadeNoContainerKeepsNothing(t *testing.T) {
+	engine(t)
+	ctx := context.Background()
+	_, _ = startPostgres(ctx)
+	_, _ = startPooler(ctx, &testcontainers.DockerNetwork{Name: "testservers-network"}, 1)
+	_, _ = startObjects(ctx)
+	mu.Lock()
+	n := len(containers)
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("kept %d containers from starts that made none", n)
+	}
+}
