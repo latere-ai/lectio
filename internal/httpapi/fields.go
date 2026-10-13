@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -100,7 +101,7 @@ func (s *Server) createField(w http.ResponseWriter, r *http.Request, c call) err
 	if _, err := decode(w, r, &req); err != nil {
 		return err
 	}
-	asked, err := s.checkField(req, d)
+	asked, err := s.checkField(r.Context(), req, d, true)
 	if err != nil {
 		return err
 	}
@@ -115,7 +116,7 @@ func (s *Server) createField(w http.ResponseWriter, r *http.Request, c call) err
 // checkField checks a request for an extraction, before anything is queued:
 // its name, its schema, its instructions, and the extractor it names against
 // what the caller may pin.
-func (s *Server) checkField(req fieldRequest, d access.Decision) (store.FieldRequest, error) {
+func (s *Server) checkField(ctx context.Context, req fieldRequest, d access.Decision, withDefault bool) (store.FieldRequest, error) {
 	switch {
 	case !fieldName.MatchString(req.Name):
 		return store.FieldRequest{}, invalid("name", "name is lower case letters, digits, underscores and hyphens, at most 63, beginning with a letter")
@@ -127,11 +128,14 @@ func (s *Server) checkField(req fieldRequest, d access.Decision) (store.FieldReq
 	if _, err := extract.Compile(req.Schema); err != nil {
 		return store.FieldRequest{}, fault.Wrap(fault.InvalidSchema, field("schema"), "%s", fault.DetailOf(err))
 	}
-	if req.Extractor == "" {
+	switch {
+	case req.Extractor != "":
+		s.fresh(ctx)
+	case withDefault:
 		// An extraction, and a set's definition, that names no extractor
 		// is held to the one the allow gives its caller, when it gives one.
 		var err error
-		if req.Extractor, err = s.fallback(d.Limits.Reader, roleFields, "extractor"); err != nil {
+		if req.Extractor, err = s.fallback(ctx, d.Limits.Reader, roleFields, "extractor"); err != nil {
 			return store.FieldRequest{}, err
 		}
 	}
@@ -167,7 +171,14 @@ func (s *Server) askField(w http.ResponseWriter, r *http.Request, c call) error 
 		return invalid("name", "name is the path's, %s, or left out", name)
 	}
 	req.Name = name
-	f, err := s.checkField(req, d)
+	// An extraction a set asked is asked again with the set's definition
+	// alone, extractor included, so the caller's default is not laid over
+	// a definition that names none.
+	held, found, err := s.Backend.Field(r.Context(), p, name)
+	if err != nil {
+		return err
+	}
+	f, err := s.checkField(r.Context(), req, d, !found || held.SetID == "")
 	if err != nil {
 		return err
 	}

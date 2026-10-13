@@ -95,7 +95,7 @@ func (s *Server) createSet(w http.ResponseWriter, r *http.Request, c call) error
 	if err != nil {
 		return err
 	}
-	asked, err := s.checkField(req, d)
+	asked, err := s.checkField(r.Context(), req, d, true)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func (s *Server) updateSet(w http.ResponseWriter, r *http.Request, c call) error
 		return invalid("name", "name is the set's, %s, or left out", set.Name)
 	}
 	req.Name = set.Name
-	asked, err := s.checkField(req, d)
+	asked, err := s.checkField(r.Context(), req, d, true)
 	if err != nil {
 		return err
 	}
@@ -240,6 +240,9 @@ func (s *Server) joinSet(w http.ResponseWriter, r *http.Request, c call) error {
 	set, d, err := s.set(r, c)
 	if err != nil {
 		return err
+	}
+	if set.Extractor != "" {
+		s.fresh(r.Context())
 	}
 	if l := d.Limits.Readers; set.Extractor != "" && len(l) > 0 && !slices.Contains(l, set.Extractor) {
 		return fault.New(fault.ReaderNotPermitted, "the set's extractor %s is not among the readers the caller may pin", set.Extractor)

@@ -32,6 +32,9 @@ type ReaderAdmin interface {
 	DeleteReader(ctx context.Context, name string) error
 	PutPolicy(ctx context.Context, spec []byte) error
 	DeletePolicy(ctx context.Context) error
+	// Check reads what is stored again when it changed since this process
+	// last read it.
+	Check(ctx context.Context) error
 }
 
 // readerView is a reader as the API describes it.
@@ -84,6 +87,20 @@ func (s *Server) readers() *config.Readers {
 		return s.Live.Current()
 	}
 	return &config.Readers{Readers: s.Readers, Chain: s.Chain}
+}
+
+// fresh is the set in force once what is stored was checked for a change:
+// a request that names a reader, or is given one, is held to the readers as
+// they are now, and not as this process read them up to a poll ago, so a
+// reader just removed is not named by new work. A check that fails is
+// logged, and the set this process holds answers.
+func (s *Server) fresh(ctx context.Context) *config.Readers {
+	if s.Manage != nil {
+		if err := s.Manage.Check(ctx); err != nil {
+			s.log().WarnContext(ctx, "the stored readers were not checked for a change; the set this process holds answers", "error", err)
+		}
+	}
+	return s.readers()
 }
 
 // viewReader is one reader of the set as the API describes it, and false
@@ -294,11 +311,11 @@ const (
 // (specs/019-readers-at-runtime.md). A default the set does not hold is
 // reader_not_found on the member the request would have named: the
 // authorizer holds a default the deployment no longer offers.
-func (s *Server) fallback(def, role, member string) (string, error) {
+func (s *Server) fallback(ctx context.Context, def, role, member string) (string, error) {
 	if def == "" {
 		return "", nil
 	}
-	set := s.readers()
+	set := s.fresh(ctx)
 	if set.Readers[def] == nil {
 		return "", fault.Wrap(fault.ReaderNotFound, field(member), "the default reader %q the caller is given is not configured", def)
 	}

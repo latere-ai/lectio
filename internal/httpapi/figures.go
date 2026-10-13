@@ -142,9 +142,11 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, c call) e
 		return err
 	}
 	if req.Describer == "" {
-		if req.Describer, err = s.fallback(d.Limits.Reader, roleFigures, "describer"); err != nil {
+		if req.Describer, err = s.fallback(r.Context(), d.Limits.Reader, roleFigures, "describer"); err != nil {
 			return err
 		}
+	} else {
+		s.fresh(r.Context())
 	}
 	// The run is model work on the parse, held to the readers its allow
 	// lets the caller pin.

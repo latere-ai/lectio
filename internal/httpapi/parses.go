@@ -290,6 +290,9 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, c call) err
 	if err != nil {
 		return err
 	}
+	if req.Reader != "" {
+		s.fresh(r.Context())
+	}
 	p, err := s.validate(req)
 	if err != nil {
 		return err
@@ -310,7 +313,7 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, c call) err
 	if p.Reader == "" {
 		// A submit that names no reader is read by the one the allow gives
 		// its caller, when it gives one, as if the submit named it.
-		if p.Reader, err = s.fallback(d.Limits.Reader, rolePages, "reader"); err != nil {
+		if p.Reader, err = s.fallback(r.Context(), d.Limits.Reader, rolePages, "reader"); err != nil {
 			return err
 		}
 	}
@@ -499,6 +502,11 @@ func (s *Server) retryParse(w http.ResponseWriter, r *http.Request, c call) erro
 	p, _, err := s.parse(r, c)
 	if err != nil {
 		return err
+	}
+	// Its pages are read again by the reader it pinned, which must still
+	// be there: removed, they would wait for a reader nobody runs.
+	if p.Reader != "" && s.fresh(r.Context()).Readers[p.Reader] == nil {
+		return fault.Wrap(fault.ReaderNotFound, field("reader"), "the reader %s parse %s is pinned to is no longer configured", p.Reader, p.ID)
 	}
 	if p, err = s.Backend.Retry(r.Context(), p.Owner, p.ID); err != nil {
 		return err

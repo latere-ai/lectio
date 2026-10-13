@@ -43,7 +43,7 @@ func TestAnAllowsDefaultReaderReadsWhatNamesNone(t *testing.T) {
 
 	// The memory server has no extractor, so the default leaves the
 	// extraction to the policy, which names none.
-	asked, err := e.server.checkField(fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)}, access.Decision{})
+	asked, err := e.server.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)}, access.Decision{}, true)
 	if err != nil || asked.Extractor != "" {
 		t.Fatalf("an extraction with no default: %+v, %v", asked, err)
 	}
@@ -69,17 +69,32 @@ func TestADefaultReaderIsHeldToTheRoleItDoes(t *testing.T) {
 		{"stub", roleFields, "stub"}, {"stub", roleFigures, "stub"}, {"stub", rolePages, "stub"},
 		{"own", roleFields, ""}, {"own", roleFigures, ""}, {"own", rolePages, "own"}, {"", roleFields, ""},
 	} {
-		if got, err := s.fallback(tc.def, tc.role, "member"); err != nil || got != tc.want {
+		if got, err := s.fallback(t.Context(), tc.def, tc.role, "member"); err != nil || got != tc.want {
 			t.Errorf("the default %q for %s: %q, %v", tc.def, tc.role, got, err)
 		}
 	}
-	asked, err := s.checkField(fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
-		access.Decision{Limits: authorizer.Limits{Reader: "stub", Readers: []string{"stub"}}})
+	asked, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
+		access.Decision{Limits: authorizer.Limits{Reader: "stub", Readers: []string{"stub"}}}, true)
 	if err != nil || asked.Extractor != "stub" {
 		t.Fatalf("an extraction under a default extractor: %+v, %v", asked, err)
 	}
-	if _, err := s.checkField(fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
-		access.Decision{Limits: authorizer.Limits{Reader: "gone"}}); err == nil {
+	if _, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
+		access.Decision{Limits: authorizer.Limits{Reader: "gone"}}, true); err == nil {
 		t.Fatal("an extraction under a default the server does not have was asked")
+	}
+}
+
+// TestASetsExtractionIsAskedAgainWithoutTheDefault: asking an extraction
+// again takes the caller's default extractor, except for one a set asked,
+// whose definition, extractor included, is the set's alone.
+func TestASetsExtractionIsAskedAgainWithoutTheDefault(t *testing.T) {
+	set, err := config.StubFile().Build(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Live: config.NewLive(set)}
+	d := access.Decision{Limits: authorizer.Limits{Reader: "stub"}}
+	if got, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)}, d, false); err != nil || got.Extractor != "" {
+		t.Fatalf("an ask of a set's extraction: %+v, %v", got, err)
 	}
 }

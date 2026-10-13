@@ -123,7 +123,7 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	}
 	api := &httpapi.Server{
 		Backend: &httpapi.Memory{Store: st, Runner: runner}, Auth: who.Authenticator, Authz: who.Authorizer,
-		Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
+		Readers: readers.Readers, Chain: readers.Chain, Live: config.NewLive(readers), Limits: limits,
 		Fetcher:  &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
 		BasePath: s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
 	}

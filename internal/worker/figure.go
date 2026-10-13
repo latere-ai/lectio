@@ -10,6 +10,7 @@ import (
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/objects"
@@ -44,7 +45,7 @@ func (w *Worker) figure(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	if ask.Reuse != "" && w.redescribed(ctx, c, ref, s) {
 		return
 	}
-	d := w.readers(ctx, c.Reader).Describers[c.Reader]
+	d := w.readers(ctx, c.Reader, func(r *config.Readers) bool { return r.Describers[c.Reader] != nil }).Describers[c.Reader]
 	if d == nil {
 		// This process has no such describer: another may take the figure.
 		s.Outcome = tasks.Next

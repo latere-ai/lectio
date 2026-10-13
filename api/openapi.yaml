@@ -962,7 +962,8 @@ paths:
         endpoint is one the deployment allows, `LECTIO_READER_ENDPOINTS`,
         or the first of them when the body names none; the `stub` adapter
         is refused. Every process reads with it within
-        `LECTIO_READERS_POLL`.
+        `LECTIO_READERS_POLL`. A name is 1 to 63 of `a-z`, `0-9`, `.`
+        and `-`, starting with a letter or a digit, and is not `policy`.
 
         A name the configuration declares is `conflict`: the API does not
         change a configured reader. Answers `201` for a new name and `200`
@@ -1013,8 +1014,7 @@ paths:
       description: |
         Set the routing policy in the place of the configured one. The
         body is the `spec` of a `Policy` document, in JSON, checked as the
-        configuration's is, and each of its 3 chains names at least one
-        reader. Work not yet claimed follows the new order; work already
+        configuration's is, and its read chain names at least one reader. Work not yet claimed follows the new order; work already
         claimed ends with its reader. A development server answers
         `501 not_implemented`.
       requestBody:
@@ -1031,9 +1031,10 @@ paths:
       tags: [operations]
       operationId: deletePolicy
       summary: Restore the configured policy
-      description: Remove the policy set through this API, so the configured one is in force again. A development server answers `501 not_implemented`.
+      description: Remove the policy set through this API, so the configured one is in force again; `invalid_request` when the configured policy does not order the readers stored beside it. A development server answers `501 not_implemented`.
       responses:
         "200": { description: The policy in force., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
+        "400": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "501": { $ref: "#/components/responses/Error" }
 

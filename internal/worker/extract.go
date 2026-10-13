@@ -10,6 +10,7 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/objects"
@@ -51,7 +52,7 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		permanent(s, fault.Internal, "the schema that was accepted does not compile")
 		return
 	}
-	ext := w.readers(ctx, c.Reader).Extractors[c.Reader]
+	ext := w.readers(ctx, c.Reader, func(r *config.Readers) bool { return r.Extractors[c.Reader] != nil }).Extractors[c.Reader]
 	if ext == nil {
 		// This process has no such extractor: another may take the field.
 		s.Outcome = tasks.Next
