@@ -871,9 +871,15 @@ func TestACallerIsKnownAndSeesOnlyItsOwn(t *testing.T) {
 		// Another caller's file, parse or set is not found, whatever is
 		// asked of it, by an operation that is built and by one that is
 		// planned. A server that keeps no set has none of anybody's.
-		if strings.Contains(rt.Path, "{") && !setless(rt.Method+" "+rt.Path) {
+		if strings.Contains(rt.Path, "{") && !strings.HasPrefix(rt.Path, "/readers/") && !setless(rt.Method+" "+rt.Path) {
 			if got := e.as("bob-token").do(rt.Method, path, nil); got.status != http.StatusNotFound {
 				t.Errorf("%s %s as another caller: %d %s", rt.Method, rt.Path, got.status, got.body)
+			}
+		}
+		// A reader is nobody's: the owner policy lets no caller change one.
+		if strings.HasPrefix(rt.Path, "/readers/") && rt.Method != http.MethodGet {
+			if got := e.as("bob-token").do(rt.Method, path, `{"adapter":"text"}`); got.status != http.StatusForbidden {
+				t.Errorf("%s %s as a caller who is no admin: %d %s", rt.Method, rt.Path, got.status, got.body)
 			}
 		}
 	}

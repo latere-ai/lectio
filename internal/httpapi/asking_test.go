@@ -117,6 +117,9 @@ func known(row access.Route) []string {
 		return slices.Sorted(slices.Values(row.Fields))
 	case row.Action == authorizer.ActionParseCreate || row.Action == authorizer.ActionFileCreate || row.Action == authorizer.ActionSetCreate:
 		return slices.Sorted(slices.Values(slices.DeleteFunc(row.Fields, func(f string) bool { return f == authorizer.FieldOwner })))
+	case row.Action == authorizer.ActionReaderUpdate || row.Action == authorizer.ActionReaderDelete:
+		// A reader is named by its path, and the policy by its name.
+		return slices.Sorted(slices.Values(row.Fields))
 	}
 	return nil
 }

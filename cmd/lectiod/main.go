@@ -74,9 +74,9 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 		return errors.New("LECTIO_DATABASE_URL is not set. The durable server keeps its work in a database; LECTIO_DEV=true runs without one and keeps nothing")
 	}
 
-	readers := config.Stub()
+	file := config.StubFile()
 	if s.ConfigPath != "" {
-		if readers, err = config.Load(s.ConfigPath); err != nil {
+		if file, err = config.ReadFile(s.ConfigPath); err != nil {
 			return err
 		}
 	} else {
@@ -96,8 +96,15 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	} else {
 		log.InfoContext(ctx, "LECTIO_CONVERTER_URL is not set: a format that needs conversion is refused")
 	}
+	file = file.WithEndpoints(s.ReaderEndpoints)
 	if !s.Dev {
-		return serveDurable(ctx, s, readers, pipeline, log, ready)
+		return serveDurable(ctx, s, file, pipeline, log, ready)
+	}
+	// A development server keeps nothing, so its readers are the
+	// configuration's alone.
+	readers, err := file.Build(nil, nil)
+	if err != nil {
+		return err
 	}
 	who, err := identity(ctx, s, log)
 	if err != nil {

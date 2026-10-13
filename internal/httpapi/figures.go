@@ -141,6 +141,11 @@ func (s *Server) createFigures(w http.ResponseWriter, r *http.Request, c call) e
 	if _, err := decodeBody(w, r, &req, true); err != nil {
 		return err
 	}
+	if req.Describer == "" {
+		if req.Describer, err = s.fallback(d.Limits.Reader, roleFigures, "describer"); err != nil {
+			return err
+		}
+	}
 	// The run is model work on the parse, held to the readers its allow
 	// lets the caller pin.
 	if l := d.Limits.Readers; req.Describer != "" && len(l) > 0 && !slices.Contains(l, req.Describer) {

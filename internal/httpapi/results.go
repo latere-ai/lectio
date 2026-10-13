@@ -6,7 +6,6 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
-	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -14,7 +13,6 @@ import (
 	"latere.ai/x/pkg/httpjson"
 
 	"latere.ai/x/lectio/document"
-	"latere.ai/x/lectio/internal/access"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/intake/pages"
@@ -298,58 +296,5 @@ func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, c call) erro
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	_, _ = w.Write(out.Bytes())
-	return nil
-}
-
-// readerView is a reader as the API describes it.
-type readerView struct {
-	Name    string          `json:"name"`
-	Accepts []string        `json:"accepts"`
-	Image   imageView       `json:"image"`
-	Boxes   bool            `json:"boxes"`
-	Kinds   []document.Kind `json:"kinds,omitempty"`
-	Version string          `json:"version,omitempty"`
-	Default bool            `json:"default,omitempty"`
-	// TextLayer says the reader reads a page from the text its file carries
-	// and calls no model, so a console keeps it out of a picker of models
-	// while the routing policy still tries it first.
-	TextLayer bool `json:"text_layer,omitempty"`
-}
-
-type imageView struct {
-	DPI      int    `json:"dpi,omitempty"`
-	LongEdge int    `json:"long_edge,omitempty"`
-	Format   string `json:"format,omitempty"`
-}
-
-// listReaders lists the configured readers under their configured names,
-// the one the routing policy tries first ahead of the others.
-func (s *Server) listReaders(w http.ResponseWriter, r *http.Request, c call) error {
-	if _, err := s.allowed(r, c, access.Readers()); err != nil {
-		return err
-	}
-	out := struct {
-		Readers []readerView `json:"readers"`
-	}{Readers: []readerView{}}
-	names := slices.Clone(s.Chain)
-	for _, name := range slices.Sorted(maps.Keys(s.Readers)) {
-		if !slices.Contains(names, name) {
-			names = append(names, name)
-		}
-	}
-	for i, name := range names {
-		rd, ok := s.Readers[name]
-		if !ok {
-			continue
-		}
-		d := rd.Describe()
-		out.Readers = append(out.Readers, readerView{
-			Name: name, Accepts: d.Accepts, Boxes: d.Boxes, Kinds: d.Kinds, Version: d.Version,
-			Image:     imageView{DPI: d.Image.DPI, LongEdge: d.Image.LongEdge, Format: d.Image.Format},
-			Default:   i == 0 && len(s.Chain) > 0,
-			TextLayer: d.Text && d.Local,
-		})
-	}
-	httpjson.Write(w, http.StatusOK, out)
 	return nil
 }

@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
+	"slices"
 	"time"
 
 	"latere.ai/x/pkg/health"
@@ -25,6 +27,7 @@ import (
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/parse"
+	"latere.ai/x/lectio/internal/readerset"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/version"
 	"latere.ai/x/lectio/internal/worker"
@@ -43,10 +46,10 @@ var wrapReaders func(config.Readers) config.Readers
 // which source is in force: one key from configuration for every group, or
 // the operator's endpoint, asked per group. Only a process that runs tasks
 // builds it, so the API never holds the endpoint's bearer.
-func keySource(ctx context.Context, s config.Settings, log *slog.Logger) keys.Source {
+func keySource(ctx context.Context, s config.Settings, live *config.Live, log *slog.Logger) keys.Source {
 	log.InfoContext(ctx, "keys", "source", s.Keys)
 	if s.Keys == config.KeysEndpoint {
-		return keys.NewEndpoint(keys.Options{URL: s.KeysURL, Token: s.KeysToken, Log: log})
+		return keys.NewEndpoint(keys.Options{URL: s.KeysURL, Token: s.KeysToken, Log: log, Models: func() []string { return modelsOf(live.Current()) }})
 	}
 	return keys.Static{Credential: s.ModelKey}
 }
@@ -58,19 +61,22 @@ func keySource(ctx context.Context, s config.Settings, log *slog.Logger) keys.So
 // route. Both serve their probes on the internal listener. ready, when it
 // is not nil, is sent the address of the API, or of the probes for a
 // process that serves no API.
-func serveDurable(ctx context.Context, s config.Settings, readers config.Readers, pipeline *parse.Pipeline, log *slog.Logger, ready chan<- string) error {
+func serveDurable(ctx context.Context, s config.Settings, file config.File, pipeline *parse.Pipeline, log *slog.Logger, ready chan<- string) error {
 	serves, works := s.Role != config.RoleWorker, s.Role != config.RoleAPI
-	if wrapReaders != nil {
-		readers = wrapReaders(readers)
+	configured, err := file.Build(nil, nil)
+	if err != nil {
+		return err
 	}
-	for _, what := range readers.Unapplied {
+	for _, what := range configured.Unapplied {
 		log.WarnContext(ctx, "the configuration sets what this build does not apply", "setting", what)
 	}
+	// The readers in force are the configured ones with those stored
+	// through the API, read when the store opens and followed after.
+	manager := &readerset.Manager{File: file, Queue: s.Queue, Wrap: wrapReaders, Poll: s.ReadersPoll, Log: log}
 	// Who is calling is the API's question. A worker acts on tasks and for
 	// no caller, verifies no token and asks nobody.
 	var who *access.Access
 	if serves {
-		var err error
 		if who, err = identity(ctx, s, log); err != nil {
 			return err
 		}
@@ -94,7 +100,7 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		}
 	}
 	open := func(ctx context.Context) (*postgres.Store, error) {
-		return postgres.Open(ctx, s.ServingURL(), postgres.Options{Settings: s.Queue(readers)})
+		return postgres.Open(ctx, s.ServingURL(), postgres.Options{Settings: s.Queue(configured), Readers: manager.Settle})
 	}
 	st, err := open(ctx)
 	if err != nil && !serves {
@@ -110,6 +116,9 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		return err
 	}
 	defer st.Close()
+	manager.Store = st
+	live := manager.Live()
+	go manager.Run(ctx)
 
 	// Readiness is the database and, for a worker, a recent exchange. The
 	// key endpoint is not part of it: while it is down the pages that need a
@@ -118,14 +127,9 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 	checks := []health.Check{{Name: "database", Run: st.Ping}}
 	var w *worker.Worker
 	if works {
-		costs := map[string]int{}
-		for _, p := range readers.Pools {
-			costs[p.Reader] = p.Cost
-		}
 		w = &worker.Worker{
-			Store: st, Objects: objects, Pipeline: pipeline, Readers: readers.Readers, Costs: costs,
-			Extractors: readers.Extractors, Describers: readers.Describers,
-			Keys:  keySource(ctx, s, log),
+			Store: st, Objects: objects, Pipeline: pipeline, Live: live, Refresh: manager.Check,
+			Keys:  keySource(ctx, s, live, log),
 			Slots: s.Workers, Lease: s.Lease, Flush: s.Flush, Poll: s.Poll, Grace: s.Grace,
 			CacheBytes: s.CacheBytes, Retention: st, Sweep: s.SweepInterval, Log: log,
 		}
@@ -152,13 +156,11 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 		limits := pages.Limits{MaxBytes: s.MaxFileBytes, MaxPages: s.MaxPages}
 		handlers := &httpapi.Server{
 			Backend: &durable.Backend{
-				Store: st, Objects: objects, Readers: readers.Readers, Chain: readers.Chain,
-				Describers: readers.Describers, DescribeChain: readers.DescribeChain,
-				Extractors: readers.Extractors, ExtractChain: readers.ExtractChain,
+				Store: st, Objects: objects, Live: live,
 				MaxDeadline: s.MaxDeadline, Log: log,
 			},
 			Auth: who.Authenticator, Authz: who.Authorizer,
-			Readers: readers.Readers, Chain: readers.Chain, Limits: limits,
+			Live: live, Manage: manager, Limits: limits,
 			Fetcher:       &fetch.Fetcher{MaxBytes: s.MaxFileBytes, Allow: s.FetchAllow},
 			FileRetention: s.FileRetention,
 			BasePath:      s.BasePath, MaxDeadline: s.MaxDeadline, Log: log,
@@ -183,7 +185,7 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 	}
 
 	log.InfoContext(ctx, "listening", "role", s.Role, "addr", addr, "internal", internal.Addr().String(),
-		"base_path", s.BasePath, "readers", readers.Chain, "version", version.Version)
+		"base_path", s.BasePath, "readers", live.Current().Chain, "version", version.Version)
 	if ready != nil {
 		ready <- addr
 	}
@@ -211,4 +213,12 @@ func serveDurable(ctx context.Context, s config.Settings, readers config.Readers
 	}
 	log.InfoContext(ctx, "stopped", "role", s.Role)
 	return err
+}
+
+// modelsOf is the models the readers of a set reach, by name and once each:
+// what a key is asked for.
+func modelsOf(set *config.Readers) []string {
+	models := slices.Collect(maps.Values(set.Models))
+	slices.Sort(models)
+	return slices.Compact(models)
 }

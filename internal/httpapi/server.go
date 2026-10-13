@@ -28,6 +28,7 @@ import (
 
 	"latere.ai/x/lectio/api"
 	"latere.ai/x/lectio/internal/access"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/fetch"
 	"latere.ai/x/lectio/internal/id"
@@ -53,6 +54,13 @@ type Server struct {
 	// routing policy tries them in, as whoever runs the pages has them.
 	Readers map[string]reader.Reader
 	Chain   []string
+
+	// Live, when set, is the set of readers in force, read in the place of
+	// Readers and Chain, and Manage stores readers and the routing policy
+	// through the API (specs/019-readers-at-runtime.md). With no Manage
+	// the routes that change readers answer not_implemented.
+	Live   *config.Live
+	Manage ReaderAdmin
 
 	// Limits bound one file for every caller. An allow lowers them for its
 	// caller and never raises them. Fetcher gets a file from a URL; nil
@@ -142,6 +150,12 @@ func (s *Server) Routes() []Route {
 		{"PUT", "/sets/{set}/parses/{parse}", false, s.joinSet},
 		{"DELETE", "/sets/{set}/parses/{parse}", false, s.leaveSet},
 		{"GET", "/readers", false, s.listReaders},
+		{"GET", "/readers/{name}", false, s.getReader},
+		{"PUT", "/readers/{name}", false, s.putReader},
+		{"DELETE", "/readers/{name}", false, s.deleteReader},
+		{"GET", "/policy", false, s.getPolicy},
+		{"PUT", "/policy", false, s.putPolicy},
+		{"DELETE", "/policy", false, s.deletePolicy},
 		{"GET", "/usage", false, s.getUsage},
 		{"GET", "/queue", false, s.getQueue},
 	}

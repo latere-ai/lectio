@@ -159,7 +159,7 @@ func (s *Server) validate(req parseRequest) (store.Parse, error) {
 	if err := pages.Check(p.Pages); err != nil {
 		return p, err
 	}
-	if p.Reader != "" && s.Readers[p.Reader] == nil {
+	if p.Reader != "" && s.readers().Readers[p.Reader] == nil {
 		return p, fault.New(fault.ReaderNotFound, "no reader is named %q", p.Reader)
 	}
 	if len(p.Languages) > maxLanguages || slices.ContainsFunc(p.Languages, func(l string) bool { return l == "" || len(l) > maxLanguage }) {
@@ -306,6 +306,13 @@ func (s *Server) createParse(w http.ResponseWriter, r *http.Request, c call) err
 	d, err := s.allowed(r, c, res.Resource())
 	if err != nil {
 		return err
+	}
+	if p.Reader == "" {
+		// A submit that names no reader is read by the one the allow gives
+		// its caller, when it gives one, as if the submit named it.
+		if p.Reader, err = s.fallback(d.Limits.Reader, rolePages, "reader"); err != nil {
+			return err
+		}
 	}
 	if err := within(p, d.Limits); err != nil {
 		return err

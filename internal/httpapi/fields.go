@@ -127,6 +127,14 @@ func (s *Server) checkField(req fieldRequest, d access.Decision) (store.FieldReq
 	if _, err := extract.Compile(req.Schema); err != nil {
 		return store.FieldRequest{}, fault.Wrap(fault.InvalidSchema, field("schema"), "%s", fault.DetailOf(err))
 	}
+	if req.Extractor == "" {
+		// An extraction, and a set's definition, that names no extractor
+		// is held to the one the allow gives its caller, when it gives one.
+		var err error
+		if req.Extractor, err = s.fallback(d.Limits.Reader, roleFields, "extractor"); err != nil {
+			return store.FieldRequest{}, err
+		}
+	}
 	if l := d.Limits.Readers; req.Extractor != "" && len(l) > 0 && !slices.Contains(l, req.Extractor) {
 		return store.FieldRequest{}, fault.Wrap(fault.ReaderNotPermitted, field("extractor"), "the extractor %s is not among the readers the caller may pin", req.Extractor)
 	}

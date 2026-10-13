@@ -626,7 +626,7 @@ func TestTheKeySourceIsBuiltFromTheSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs := &buffer{}
-	source := keySource(context.Background(), static, slog.New(slog.NewJSONHandler(logs, nil)))
+	source := keySource(context.Background(), static, config.NewLive(config.Stub()), slog.New(slog.NewJSONHandler(logs, nil)))
 	if one, ok := source.(keys.Static); !ok || one.Credential.Reveal() != "sk-operator-do-not-print" {
 		t.Fatalf("the static source is %T", source)
 	}
@@ -638,7 +638,7 @@ func TestTheKeySourceIsBuiltFromTheSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source = keySource(context.Background(), issued, slog.New(slog.NewJSONHandler(logs, nil)))
+	source = keySource(context.Background(), issued, config.NewLive(config.Stub()), slog.New(slog.NewJSONHandler(logs, nil)))
 	if _, ok := source.(*keys.Endpoint); !ok || len(asked) != 0 {
 		t.Fatalf("the endpoint source is %T, and the endpoint was asked %d times at start", source, len(asked))
 	}

@@ -44,7 +44,7 @@ func (w *Worker) figure(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	if ask.Reuse != "" && w.redescribed(ctx, c, ref, s) {
 		return
 	}
-	d := w.Describers[c.Reader]
+	d := w.readers(ctx, c.Reader).Describers[c.Reader]
 	if d == nil {
 		// This process has no such describer: another may take the figure.
 		s.Outcome = tasks.Next

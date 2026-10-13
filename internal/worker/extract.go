@@ -51,7 +51,7 @@ func (w *Worker) extract(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 		permanent(s, fault.Internal, "the schema that was accepted does not compile")
 		return
 	}
-	ext := w.Extractors[c.Reader]
+	ext := w.readers(ctx, c.Reader).Extractors[c.Reader]
 	if ext == nil {
 		// This process has no such extractor: another may take the field.
 		s.Outcome = tasks.Next

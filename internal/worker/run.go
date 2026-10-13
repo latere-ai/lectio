@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/intake/detect"
 	"latere.ai/x/lectio/internal/keys"
@@ -151,7 +153,7 @@ func (w *Worker) page(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	if c.Context.Reuse != "" && w.reuse(ctx, c, n, s) {
 		return
 	}
-	rd := w.Readers[c.Reader]
+	rd := w.readers(ctx, c.Reader).Readers[c.Reader]
 	if rd == nil {
 		// This process has no such reader: another reader may take the page.
 		s.Outcome = tasks.Next
@@ -289,7 +291,32 @@ func keyless(s *tasks.Settle, err error) {
 
 // cost is what one call to a reader is charged.
 func (w *Worker) cost(name string) int {
+	if w.Live != nil {
+		for _, p := range w.Live.Current().Pools {
+			if p.Reader == name {
+				return max(1, p.Cost)
+			}
+		}
+		return 1
+	}
 	return max(1, w.Costs[name])
+}
+
+// readers is the set in force for a claim of the reader name: Live's when
+// it is set, read again once when it does not hold the reader, and
+// otherwise the one the members name.
+func (w *Worker) readers(ctx context.Context, name string) *config.Readers {
+	if w.Live == nil {
+		return &config.Readers{Readers: w.Readers, Extractors: w.Extractors, Describers: w.Describers}
+	}
+	set := w.Live.Current()
+	if set.Pools != nil && !slices.ContainsFunc(set.Pools, func(p tasks.Pool) bool { return p.Reader == name }) && w.Refresh != nil {
+		if err := w.Refresh(ctx); err != nil {
+			w.Log.WarnContext(ctx, "the stored readers were not read again for a claim of a reader this process does not hold", "reader", name, "error", err)
+		}
+		set = w.Live.Current()
+	}
+	return set
 }
 
 // unit names what a call is made for and what makes it, in the reasons a

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/keys"
 	"latere.ai/x/lectio/internal/parse"
@@ -89,6 +90,15 @@ type Worker struct {
 	// with: a task is claimed for a name, and its pool is that reader's.
 	Extractors map[string]reader.Extractor
 	Describers map[string]reader.Describer
+
+	// Live, when set, is the set of readers in force, read in the place of
+	// the 4 members above as the stored readers and policy change
+	// (specs/019-readers-at-runtime.md). Refresh, when set, reads what is
+	// stored again; a claim for a reader the set does not hold asks it
+	// once, since the claim was made against settings another process
+	// wrote after a change this one has not read yet.
+	Live    *config.Live
+	Refresh func(context.Context) error
 
 	// Keys resolves the key a group's pages are read with. Nil means every
 	// call is made without one.

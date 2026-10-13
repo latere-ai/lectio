@@ -36,6 +36,7 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
 	"latere.ai/x/lectio/internal/blob"
+	"latere.ai/x/lectio/internal/config"
 	"latere.ai/x/lectio/internal/extract"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/figures"
@@ -71,6 +72,11 @@ type Backend struct {
 	DescribeChain []string
 	Extractors    map[string]reader.Extractor
 	ExtractChain  []string
+
+	// Live, when set, is the set of readers in force, read in the place of
+	// the 6 members above as the stored readers and policy change
+	// (specs/019-readers-at-runtime.md).
+	Live *config.Live
 
 	// MaxDeadline is the deadline of a parse submitted with none, and how
 	// long an extraction and a figure run have, so nothing waits without
@@ -204,6 +210,18 @@ func (b *Backend) deadline() time.Duration {
 	return b.MaxDeadline
 }
 
+// readers is the set in force: Live's when it is set, and otherwise the
+// one the members name. A request takes it once, so it sees one set.
+func (b *Backend) readers() *config.Readers {
+	if b.Live != nil {
+		return b.Live.Current()
+	}
+	return &config.Readers{
+		Readers: b.Readers, Chain: b.Chain, Describers: b.Describers, DescribeChain: b.DescribeChain,
+		Extractors: b.Extractors, ExtractChain: b.ExtractChain,
+	}
+}
+
 // readBase names what reading a page of the parse means, less the page: the
 // file's bytes, the languages hinted, and every reader that may come to read
 // a page, each by the version it describes itself with. Two parses with the
@@ -214,13 +232,14 @@ func (b *Backend) readBase(p store.Parse) string {
 	if p.ContentSHA == "" {
 		return ""
 	}
-	chain := b.Chain
+	set := b.readers()
+	chain := set.Chain
 	if p.Reader != "" {
 		chain = []string{p.Reader}
 	}
 	parts := []string{p.ContentSHA, strings.Join(p.Languages, ",")}
 	for _, name := range chain {
-		rd := b.Readers[name]
+		rd := set.Readers[name]
 		if rd == nil {
 			continue
 		}
@@ -729,11 +748,12 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 	if !p.Terminal() {
 		return fault.New(fault.NotTerminal, "parse %s has not ended", p.ID)
 	}
-	chain := b.DescribeChain
+	set := b.readers()
+	chain := set.DescribeChain
 	if opt.Describer != "" {
 		chain = []string{opt.Describer}
 	}
-	chain = slices.DeleteFunc(slices.Clone(chain), func(name string) bool { return b.Describers[name] == nil })
+	chain = slices.DeleteFunc(slices.Clone(chain), func(name string) bool { return set.Describers[name] == nil })
 	if len(chain) == 0 {
 		if opt.Describer != "" {
 			return fault.New(fault.ReaderNotFound, "no describer is named %q", opt.Describer)
@@ -795,7 +815,7 @@ func (b *Backend) Figures(ctx context.Context, p store.Parse, opt run.FigureOpti
 					continue
 				}
 				start.Figures = append(start.Figures, postgres.FigureAsk{
-					Ref: f.Ref, Page: f.Page, PageKey: batch[i].key, FigureKey: figures.Key(sha, f, p.Languages, chain, b.Describers),
+					Ref: f.Ref, Page: f.Page, PageKey: batch[i].key, FigureKey: figures.Key(sha, f, p.Languages, chain, set.Describers),
 				})
 			}
 		}
@@ -888,10 +908,11 @@ func (b *Backend) CreateField(ctx context.Context, p store.Parse, f store.FieldR
 // extractorFor refuses a request that names an extractor that is not
 // configured, or names none when the policy's extract chain holds none.
 func (b *Backend) extractorFor(f store.FieldRequest) error {
+	set := b.readers()
 	switch {
-	case f.Extractor != "" && b.Extractors[f.Extractor] == nil:
+	case f.Extractor != "" && set.Extractors[f.Extractor] == nil:
 		return fault.New(fault.ReaderNotFound, "no extractor is named %q", f.Extractor)
-	case f.Extractor == "" && !slices.ContainsFunc(b.ExtractChain, func(name string) bool { return b.Extractors[name] != nil }):
+	case f.Extractor == "" && !slices.ContainsFunc(set.ExtractChain, func(name string) bool { return set.Extractors[name] != nil }):
 		return fault.New(fault.ReaderNotFound, "no extractor is configured")
 	}
 	return nil

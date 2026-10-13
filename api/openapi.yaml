@@ -928,9 +928,114 @@ paths:
       tags: [operations]
       operationId: listReaders
       summary: List the configured readers
-      description: List the configured readers and what each accepts.
+      description: |
+        List the readers and what each accepts: the ones the deployment's
+        configuration declares and the ones stored through this API, the
+        routing policy's first marked `default`.
       responses:
         "200": { description: The readers., content: { application/json: { schema: { $ref: "#/components/schemas/ReaderList" } } } }
+
+  /readers/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The reader's name.
+        schema: { type: string }
+    get:
+      tags: [operations]
+      operationId: getReader
+      summary: Read a reader
+      description: One reader as the list answers it, with its `spec` when it was stored through this API.
+      responses:
+        "200": { description: The reader., content: { application/json: { schema: { $ref: "#/components/schemas/Reader" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [operations]
+      operationId: putReader
+      summary: Store a reader
+      description: |
+        Store a reader under the name, or replace the one stored under it.
+        The body is the `spec` of a `Reader` document, as the deployment's
+        configuration declares one, in JSON. It is built as a configured
+        reader is, and one that would not load is `invalid_request`. Its
+        endpoint is one the deployment allows, `LECTIO_READER_ENDPOINTS`,
+        or the first of them when the body names none; the `stub` adapter
+        is refused. Every process reads with it within
+        `LECTIO_READERS_POLL`.
+
+        A name the configuration declares is `conflict`: the API does not
+        change a configured reader. Answers `201` for a new name and `200`
+        for one it replaced. A development server answers
+        `501 not_implemented`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReaderSpec" }
+      responses:
+        "200": { description: The reader was replaced., content: { application/json: { schema: { $ref: "#/components/schemas/Reader" } } } }
+        "201": { description: The reader was stored., content: { application/json: { schema: { $ref: "#/components/schemas/Reader" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [operations]
+      operationId: deleteReader
+      summary: Remove a reader
+      description: |
+        Remove a reader stored through this API. A reader the routing
+        policy names, one a set's definition names, and one that a parse,
+        a task or an extraction that has not ended names are `conflict`:
+        that work would wait for a reader nobody runs. A configured reader
+        is `conflict`, and a name nothing stored has is `not_found`.
+        A development server answers `501 not_implemented`.
+      responses:
+        "204": { description: The reader was removed. }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+
+  /policy:
+    get:
+      tags: [operations]
+      operationId: getPolicy
+      summary: Read the routing policy
+      description: The order the readers are tried in for a page, a figure and an extraction that name none, and whether it is the configuration's or was set through this API.
+      responses:
+        "200": { description: The policy in force., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
+    put:
+      tags: [operations]
+      operationId: putPolicy
+      summary: Set the routing policy
+      description: |
+        Set the routing policy in the place of the configured one. The
+        body is the `spec` of a `Policy` document, in JSON, checked as the
+        configuration's is, and each of its 3 chains names at least one
+        reader. Work not yet claimed follows the new order; work already
+        claimed ends with its reader. A development server answers
+        `501 not_implemented`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicySpec" }
+      responses:
+        "200": { description: The policy in force., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [operations]
+      operationId: deletePolicy
+      summary: Restore the configured policy
+      description: Remove the policy set through this API, so the configured one is in force again. A development server answers `501 not_implemented`.
+      responses:
+        "200": { description: The policy in force., content: { application/json: { schema: { $ref: "#/components/schemas/Policy" } } } }
+        "403": { $ref: "#/components/responses/Error" }
+        "501": { $ref: "#/components/responses/Error" }
 
   /usage:
     get:
@@ -1630,6 +1735,69 @@ components:
         version: { type: string, description: Names everything in the reader's configuration that changes what it returns for the same page. Pages are reused only between readers of the same version. }
         default: { type: boolean, description: Whether the routing policy tries this reader first. }
         text_layer: { type: boolean, description: "True for a reader that reads a page from the text its file carries and calls no model; absent or false otherwise." }
+        source:
+          type: string
+          enum: [configured, added]
+          description: "`configured` for a reader the deployment's configuration declares, which this API does not change, and `added` for one stored through it."
+        adapter: { type: string, description: "What the reader sits behind: `chat`, a model that takes an instruction; `layout`, a layout engine; `text`, the text a file carries; `stub`." }
+        model: { type: string, description: The model the reader calls. Absent for one that calls no model. }
+        describes: { type: boolean, description: Whether the reader can also say what a figure shows. }
+        extracts: { type: boolean, description: Whether the reader can also fill a schema from a document's text. }
+        spec: { $ref: "#/components/schemas/ReaderSpec" }
+
+    ReaderSpec:
+      type: object
+      description: "The `spec` of a `Reader` document, as the deployment's configuration declares one. Present on a reader stored through this API, as it was stored."
+      required: [adapter]
+      properties:
+        adapter: { type: string, enum: [chat, layout, text] }
+        endpoint: { type: string, description: "One of the endpoints the deployment allows. Absent, the first of them." }
+        model: { type: string }
+        timeout: { type: string, description: "A duration, such as `3m`." }
+        image:
+          type: object
+          properties:
+            dpi: { type: integer }
+            longEdge: { type: integer }
+            format: { type: string, enum: [png, jpeg] }
+        boxes:
+          type: object
+          properties:
+            order: { type: string, enum: [xyxy, yxyx] }
+            space: { type: string, enum: [grid, pixels] }
+        constrained: { type: boolean }
+        maxOutputTokens: { type: integer }
+        maxInput: { type: integer }
+        temperature: { type: number }
+        outputLimitParam: { type: string }
+        maxInFlight: { type: integer }
+        cost: { type: integer }
+
+    PolicySpec:
+      type: object
+      description: "The `spec` of a `Policy` document: the readers tried, in order, for a page, a figure and an extraction that name none."
+      properties:
+        read: { $ref: "#/components/schemas/Chain" }
+        describe: { $ref: "#/components/schemas/Chain" }
+        extract: { $ref: "#/components/schemas/Chain" }
+
+    Chain:
+      type: object
+      required: [chain]
+      properties:
+        chain: { type: array, items: { type: string } }
+
+    Policy:
+      type: object
+      required: [read, describe, extract, source]
+      properties:
+        read: { $ref: "#/components/schemas/Chain" }
+        describe: { $ref: "#/components/schemas/Chain" }
+        extract: { $ref: "#/components/schemas/Chain" }
+        source:
+          type: string
+          enum: [configured, set]
+          description: "`configured` for the configuration's policy, and `set` for one set through this API."
 
     ReaderList:
       type: object
