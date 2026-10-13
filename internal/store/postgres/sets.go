@@ -32,6 +32,8 @@ const (
 	setUpdateSQL   = `SELECT lectio_set_update($1)`
 	setUpdateAtSQL = `SELECT lectio_set_update($1, $2)`
 	setDeleteSQL   = `SELECT lectio_set_delete($1)`
+	setLeaveSQL    = `SELECT lectio_set_leave($1, $2)`
+	setLeaveAtSQL  = `SELECT lectio_set_leave($1, $2, $3)`
 )
 
 // SetRequest is a set to write, or the new definition of one.
@@ -266,6 +268,34 @@ func (s *Store) UpdateSet(ctx context.Context, r SetRequest, deadline time.Durat
 		return answer.Set, answer.Outputs, nil
 	}
 	return Set{}, nil, fmt.Errorf("store: changing the set %s answered %q", r.ID, answer.Answer)
+}
+
+// LeaveSet takes a parse out of a set. Its extraction under the set's name
+// stays on the parse, with its values, as an extraction of no set. A set
+// that is not there is refused with set_not_found; a parse that is not
+// there, is another owner's or holds no extraction of the set with
+// parse_not_found; and a parse whose extraction of the set has not ended
+// with conflict.
+func (s *Store) LeaveSet(ctx context.Context, set, parse string) error {
+	answer, err := s.text(ctx, setLeaveSQL, setLeaveAtSQL, set, parse)
+	if err != nil {
+		return fmt.Errorf("store: taking %s out of the set %s: %w", parse, set, err)
+	}
+	switch answer {
+	case "no_set":
+		return fault.New(fault.SetNotFound, "no set %s", set)
+	case "missing":
+		// As JoinSet answers it: a parse of another owner is not told apart
+		// from one that is not there.
+		return fault.New(fault.ParseNotFound, "no parse %s", parse)
+	case "not_member":
+		return fault.New(fault.ParseNotFound, "parse %s is not in the set %s", parse, set)
+	case "busy":
+		return fault.New(fault.Conflict, "the extraction of parse %s under the set's name has not ended", parse)
+	case "left":
+		return nil
+	}
+	return fmt.Errorf("store: taking %s out of the set %s answered %q", parse, set, answer)
 }
 
 // DeleteSet removes a set. Its extractions stay on their parses as

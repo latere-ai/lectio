@@ -380,6 +380,83 @@ func TestADeletedSetLeavesItsParsesAndAParseThatGoesLeavesItsSets(t *testing.T) 
 	})
 }
 
+// TestAParseLeavesASetAndKeepsItsExtraction: a parse taken out of a set
+// keeps its extraction under the set's name, with its values, as an
+// extraction of no set. The set no longer counts or lists it, and a change
+// of the set no longer asks it. A join takes it in again as it stands. A
+// parse whose extraction of the set has not ended, one that holds no
+// extraction of the set, another owner's and a set that is not there are
+// refused, and change nothing.
+func TestAParseLeavesASetAndKeepsItsExtraction(t *testing.T) {
+	everywhere(t, defaults(), func(t *testing.T, h *harness) {
+		ctx := context.Background()
+		w := h.worker()
+		for _, id := range []string{"prs_a", "prs_b", "prs_own", "prs_out"} {
+			h.readThrough(w, postgres.Submission{Parse: id, Group: "acme", Owner: "alice"}, 1)
+		}
+		h.readThrough(w, postgres.Submission{Parse: "prs_bob", Group: "acme", Owner: "bob"}, 1)
+		h.makeSet("set_1", "alice", "harbor")
+		for _, id := range []string{"prs_a", "prs_b"} {
+			h.join("set_1", id)
+			h.fill(w, id)
+		}
+		filled := h.read("prs_a", "harbor")
+
+		if err := h.store.LeaveSet(ctx, "set_1", "prs_a"); err != nil {
+			t.Fatal(err)
+		}
+		if f := h.read("prs_a", "harbor"); f.State != postgres.FieldSucceeded || f.Output != filled.Output || f.SetID != "" || f.SetVersion != 0 {
+			t.Fatalf("the extraction of a parse that left its set is %+v", f)
+		}
+		if s, err := h.store.Set(ctx, "set_1"); err != nil || s.Parses != (postgres.SetCounts{Total: 1, Succeeded: 1}) {
+			t.Fatalf("after a parse left, the set counts %+v, %v", s.Parses, err)
+		}
+		if members, _, err := h.store.SetParses(ctx, "set_1", "", 10); err != nil || len(members) != 1 || members[0].Parse.ID != "prs_b" {
+			t.Fatalf("after a parse left, the set lists %+v, %v", members, err)
+		}
+		refused(t, "leaving a set twice", h.store.LeaveSet(ctx, "set_1", "prs_a"), fault.ParseNotFound)
+
+		// A change of the set asks the parse that stayed and not the one
+		// that left.
+		if _, _, err := h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: other}, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		if f := h.read("prs_a", "harbor"); f.State != postgres.FieldSucceeded || f.Request != asked {
+			t.Fatalf("a change of the set asked the parse that left: %+v", f)
+		}
+		if f := h.read("prs_b", "harbor"); f.State != postgres.FieldPending || f.Request != other {
+			t.Fatalf("a change of the set left the parse that stayed: %+v", f)
+		}
+		refused(t, "leaving while the extraction of the set has not ended", h.store.LeaveSet(ctx, "set_1", "prs_b"), fault.Conflict)
+		if f := h.read("prs_b", "harbor"); f.SetID != "set_1" {
+			t.Fatalf("a refused leave changed the extraction: %+v", f)
+		}
+		h.fill(w, "prs_b")
+
+		refused(t, "a parse that holds no extraction of the set", h.store.LeaveSet(ctx, "set_1", "prs_out"), fault.ParseNotFound)
+		h.field("prs_own", "harbor", "")
+		h.fill(w, "prs_own")
+		refused(t, "an extraction of the name that the set did not ask", h.store.LeaveSet(ctx, "set_1", "prs_own"), fault.ParseNotFound)
+		refused(t, "a parse of another owner", h.store.LeaveSet(ctx, "set_1", "prs_bob"), fault.ParseNotFound)
+		refused(t, "a parse that is not there", h.store.LeaveSet(ctx, "set_1", "prs_gone"), fault.ParseNotFound)
+		refused(t, "a set that is not there", h.store.LeaveSet(ctx, "set_gone", "prs_b"), fault.SetNotFound)
+
+		// A join takes back in what the parse holds once its request is the
+		// set's again.
+		if _, _, err := h.store.UpdateSet(ctx, postgres.SetRequest{ID: "set_1", Request: asked}, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		h.fill(w, "prs_b")
+		if asked, _ := h.join("set_1", "prs_a"); asked {
+			t.Fatal("a parse that left and joined again was asked again")
+		}
+		if f := h.read("prs_a", "harbor"); f.SetID != "set_1" || f.SetVersion != 3 || f.Output != filled.Output {
+			t.Fatalf("the extraction a join took back in is %+v", f)
+		}
+		h.consistent()
+	})
+}
+
 // reordered is the suite's request with its members in another order: equal
 // to it as a JSON value, and other bytes.
 const reordered = `{"citations":true,"schema":{"properties":{"a":{"const":null},"total":{"type":"number"}},"type":"object"}}`

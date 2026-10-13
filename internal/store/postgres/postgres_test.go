@@ -446,6 +446,7 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 			return err
 		},
 		"DeleteSet": func() error { return h.store.DeleteSet(ctx, "set_1") },
+		"LeaveSet":  func() error { return h.store.LeaveSet(ctx, "set_1", "prs_a") },
 	} {
 		if err := call(); err == nil || fault.CodeOf(err) != fault.Internal {
 			t.Errorf("%s on a closed store = %v", name, err)

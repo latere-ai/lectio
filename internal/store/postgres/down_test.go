@@ -158,10 +158,9 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 			}
 		}
 	}
-	// The counters of queued tasks stay a count of the rows. The work the
-	// newest migration leaves runnable stays queued: 000008 adds sets, and
-	// the extraction a set asked stays, an extraction of no set, with the
-	// extraction and the figure of 000006.
+	// The counters of queued tasks stay a count of the rows, and the work
+	// queued before the down file stays queued: the extraction a set asked,
+	// with the extraction and the figure of 000006.
 	h.consistent()
 	if n := value[int](h, `SELECT count(*) FROM tasks WHERE kind IN ('extract', 'figure')`); n != 3 {
 		t.Fatalf("%d extractions and figures are left, want 3", n)
@@ -171,14 +170,41 @@ func TestTheLastMigrationIsUndoneByItsDownFile(t *testing.T) {
 	}
 }
 
+// lockingMigration is the number of the newest migration that locks a
+// table, which a migration does when it changes a table in use.
+func lockingMigration(t *testing.T) uint {
+	t.Helper()
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newest uint
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".up.sql") || !strings.Contains(migration(t, e.Name()), "LOCK TABLE") {
+			continue
+		}
+		number, _, _ := strings.Cut(e.Name(), "_")
+		n, err := strconv.ParseUint(number, 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newest = max(newest, uint(n))
+	}
+	if newest == 0 {
+		t.Fatal("no migration locks a table")
+	}
+	return newest
+}
+
 // TestAMigrationThatCannotHaveALockFailsAndAppliesNothing: the newest
-// migration changes tables that are in use while it runs. It takes the 3
-// of them at once and without waiting, so it never waits for one while it
-// holds another, and tries for 5 seconds. With a transaction that holds one
-// of them for longer the migrator fails, nothing of the migration is
-// applied, no table was held while it tried, and the lock timeout it set is
-// gone with its transaction. The schema is then marked as left halfway, which an
-// operator clears, and the migration applies once the table is free.
+// migration that changes tables in use while it runs, 000008, takes them at
+// once and without waiting, so it never waits for one while it holds
+// another, and tries for 5 seconds. With a transaction that holds one of
+// them for longer the migrator fails, nothing of the migration is applied,
+// no table was held while it tried, and the lock timeout it set is gone
+// with its transaction. The schema is then marked as left halfway, which an
+// operator clears, and the migrations from there apply once the table is
+// free.
 func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	srv := server(t)
 	t.Parallel()
@@ -204,12 +230,13 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 			t.Errorf("closing the migrator: %v, %v", srcErr, dbErr)
 		}
 	}()
-	if err := m.Steps(-1); err != nil {
-		t.Fatalf("the newest migration did not go down: %v", err)
-	}
 	highest, err := migrations.Highest()
 	if err != nil {
 		t.Fatal(err)
+	}
+	locking := lockingMigration(t)
+	if err := m.Steps(-int(highest - locking + 1)); err != nil {
+		t.Fatalf("the migrations from %d did not go down: %v", locking, err)
 	}
 
 	// A transaction that has read the parses and the extractions holds both
@@ -262,12 +289,12 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	if columns != "0" {
 		t.Fatalf("the migration that failed left %s of its columns", columns)
 	}
-	if version, dirty, err := m.Version(); err != nil || version != highest || !dirty {
+	if version, dirty, err := m.Version(); err != nil || version != locking || !dirty {
 		t.Fatalf("after the failure the schema is at version %d, dirty %t, %v", version, dirty, err)
 	}
 
-	// The operator's repair, and the migration with the table free.
-	if err := m.Force(int(highest) - 1); err != nil {
+	// The operator's repair, and the migrations with the table free.
+	if err := m.Force(int(locking) - 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Up(); err != nil {
