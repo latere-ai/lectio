@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.7.0 - 2026-10-14
+
 - Added: `DELETE /sets/{set}/parses/{parse}` takes a parse out of a set
   and leaves the parse. Its extraction under the set's name stays on the
   parse with its values, as an extraction of no set; the set no longer
