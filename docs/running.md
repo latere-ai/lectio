@@ -144,6 +144,34 @@ unless set: the pages it reads at once across every worker. A document
 that names an `endpoint` or a `model` for it is refused.
 [Quality](quality.md#without-a-model) has what it scores alone.
 
+## Changing readers while the server runs
+
+The readers of `LECTIO_CONFIG` are the deployment's. A subject of
+`LECTIO_ADMIN_SUBJECTS`, or one your authorizer allows `reader.update`,
+adds more through the API, and every process of the durable server
+reads with them within `LECTIO_READERS_POLL` (10 seconds unless set),
+with no restart:
+
+```sh
+curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"adapter":"chat","model":"vendor/another-model","timeout":"3m","boxes":{"order":"yxyx","space":"grid"}}' \
+  "http://127.0.0.1:8080/v1/readers/another"
+```
+
+The body is the `spec` of a Reader document, in JSON. A reader added
+this way reaches one of `LECTIO_READER_ENDPOINTS`, the first when it
+names none; with the variable unset, the endpoints of the configured
+readers are the list, so an operator whose readers all reach one
+gateway lets an admin add a model of that gateway and nothing else.
+`PUT /v1/policy` sets the order the readers are tried in, in the place
+of the configured Policy, and `DELETE /v1/policy` puts that back. A
+configured reader is never changed through the API, and a reader the
+order names, or one with work that has not ended, is not removed.
+
+An authorizer may also give a caller a default reader: `reader` on the
+allow of a submit, an extraction or a set reads a request that names
+none with it, as if the request named it.
+
 ## Following a parse, and reading its failed pages again
 
 The durable server streams a parse as server-sent events until it ends:

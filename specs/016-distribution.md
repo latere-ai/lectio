@@ -175,6 +175,7 @@ whether the binary reads the variable today.
 | `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
 | `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
 | `LECTIO_FETCH_ALLOW` | none | [[014-sources-and-retention]] | yes |
+| `LECTIO_READER_ENDPOINTS`, `LECTIO_READERS_POLL` | the configured readers' endpoints, 10s | [[019-readers-at-runtime]] | yes: the durable server; a development server stores no reader |
 | `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | 24h, 720h | [[014-sources-and-retention]] | yes: the durable server; a development server keeps nothing |
 | `LECTIO_KEEP_PAGE_IMAGES` | true | [[014-sources-and-retention]] | no |
 | `LECTIO_DEV` | false | this spec | yes |

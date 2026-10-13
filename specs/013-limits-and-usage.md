@@ -216,8 +216,14 @@ POST <LECTIO_KEYS_URL>
 Authorization: Bearer <LECTIO_KEYS_TOKEN>
 Content-Type: application/json
 
-{"group": "<the task's group>", "owner": "<the parse's owner>", "parse": "<the parse id>"}
+{"group": "<the task's group>", "owner": "<the parse's owner>", "parse": "<the parse id>", "models": ["<a model the readers reach>"]}
 ```
+
+`models` lists the models the readers in force reach, by name and once
+each, so the endpoint may scope the key to them; an endpoint that does
+not read the member answers as before. A worker holds a key under its
+group and that list, so a reader added through the API
+([[019-readers-at-runtime]]) is read with a key asked for its model.
 
 | Answer | Meaning | What the page does |
 |---|---|---|

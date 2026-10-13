@@ -20,6 +20,36 @@ refused before it is pushed.
 - Added: the answer of `PUT /sets/{set}/parses/{parse}` carries `asked`,
   `true` when the join asked the extraction, as its status `202` says.
 - Migration 000009 adds one function and changes no table.
+- Added: readers changed while the server runs. `PUT /readers/{name}`
+  stores a reader, its body the `spec` of a Reader document in JSON;
+  `DELETE /readers/{name}` removes one; `PUT /policy` sets the order the
+  readers are tried in, in the place of the configured Policy, and
+  `DELETE /policy` puts that back; `GET /readers/{name}` and
+  `GET /policy` read them. Every process of the durable server reads
+  with the change within `LECTIO_READERS_POLL` (10 seconds), with no
+  restart, and the process that made it at once. A stored reader reaches
+  one of `LECTIO_READER_ENDPOINTS`, by default the endpoints the
+  configured readers reach; the stub adapter is refused, and a
+  configured reader is never changed. A reader the order names, one a
+  set's definition names, and one with work that has not ended are not
+  removed.
+- Added: the actions `reader.update` and `reader.delete`. The owner
+  policy allows them to `LECTIO_ADMIN_SUBJECTS` alone. An authorizer
+  that does not know them refuses these routes and nothing else.
+- Added: `GET /readers` says of each reader where it came from
+  (`source`), its `adapter`, its `model`, and whether it `describes`
+  and `extracts`.
+- Added: `reader` on an allow, the default reader of a caller. A
+  submit, a figure run, an extraction and a set's definition that name
+  none are read with it, as if they named it, where it does what is
+  asked; one the server does not have is `reader_not_found`.
+- Added: a key ask names `models`, the models the readers in force
+  reach, and a worker holds a key per group and per that list.
+- Changed: a task that waits at a place of a chain that a new
+  configuration makes shorter waits at the chain's last place, where it
+  waited for a place nobody reads.
+- Migration 000010 adds the tables `readers` and `reader_policy` and
+  replaces `lectio_configure`; it touches no table in use.
 
 ## v0.6.1 - 2026-10-11
 

@@ -637,9 +637,11 @@ directory whose `.yaml`, `.yml` and `.json` files are read in name
 order, each holding one or more documents. They are read at start and
 re-read on `SIGHUP`; a document that does not validate keeps the
 previous one in force and logs why. The policy's content hash is its
-version. They are in the shape of declared objects so that a later
-administrative API can apply the same documents; the first version has
-no such API.
+version. They are in the shape of declared objects so that an
+administrative API can apply the same documents, which
+[[019-readers-at-runtime]] is: readers and a policy stored through
+`PUT /readers/{name}` and `PUT /policy` are built beside these, and a
+configured document is never changed by it.
 
 A configuration is taken whole or not at all. A document of another
 kind or version, a member a spec does not have, a reader that cannot

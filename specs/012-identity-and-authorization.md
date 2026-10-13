@@ -81,6 +81,8 @@ the members each action sends.
 | `File` | `file.read` | `id`, `owner`, `size`, `media_type` |
 | `File` | `file.delete` | `id`, `owner`, `size`, `media_type` |
 | `Reader` | `reader.list` | none |
+| `Reader` | `reader.update` | `name` |
+| `Reader` | `reader.delete` | `name` |
 | `Usage` | `usage.read` | `owner`, `group` |
 | `Queue` | `queue.read` | `group` |
 | `Set` | `set.create` | `owner`, `name` |
@@ -196,6 +198,7 @@ these keys:
 | `max_priority` | `MaxPriority` | integer |
 | `classes` | `Classes` | list of strings |
 | `readers` | `Readers` | list of strings |
+| `reader` | `Reader` | string |
 | `max_file_bytes` | `MaxFileBytes` | integer |
 | `max_pages` | `MaxPages` | integer |
 | `pages_per_day` | `PagesPerDay` | integer |
@@ -204,9 +207,10 @@ these keys:
 The allow of `parse.create` is read for any of them. The allow of
 `file.create` is read for `owner`, `group`, `max_file_bytes` and
 `retention_seconds`. The allows of `set.create` and `set.update` are
-read for `owner` and `readers`: the owner a new set is recorded under,
-and the readers an extractor the set names is held to. The limits of
-any other allow are not read.
+read for `owner`, `readers` and `reader`: the owner a new set is
+recorded under, the readers an extractor the set names is held to, and
+the extractor a definition that names none takes. The limits of any
+other allow are not read.
 
 `DecodeLimits(authz.Decision)` reads the object into a `WireLimits`,
 and `WireLimits.Over(defaults)` lays what it names over the server's
@@ -214,8 +218,8 @@ configured defaults and returns the `Limits` in force. A member the
 answer does not name leaves the configured default in force. Of the
 members it names:
 
-- `owner`, `group`, `project`, `classes` and `readers` replace the
-  default when they are not empty;
+- `owner`, `group`, `project`, `classes`, `readers` and `reader`
+  replace the default when they are not empty;
 - `weight` and `project_weight` replace it when above zero;
 - `max_running`, `max_queued`, `max_priority` and `pages_per_day`
   replace it whatever they are, so an answer of zero lifts a default
@@ -246,6 +250,7 @@ Where each member holds:
 | `max_priority` | at the submit: a priority outside it is `400 invalid_request` on `priority` |
 | `classes` | at the submit: a class outside them is `403 forbidden` on `class` |
 | `readers` | at the submit, and at a figure run that names a describer: `403 reader_not_permitted` |
+| `reader` | at a submit, a figure run, an extraction and a set's definition that name no reader: the request is held to it as if it named it, where it does what is asked; one the server does not have is `400 reader_not_found` ([[019-readers-at-runtime]]) |
 | `max_file_bytes` | while an upload is read, and at a submit against the file it names or fetched: `413 file_too_large` |
 | `max_pages` | in `prepare`, on the pages the parse selects: the parse fails with `too_many_pages` |
 | `pages_per_day` | reserved in `prepare`, and a group with nothing left is `402 budget_exhausted` at the submit ([[013-limits-and-usage]]) |
@@ -275,7 +280,9 @@ With no `LECTIO_AUTHORIZER_URL`, `lectiod` logs `owner policy` at start
 and decides itself: a subject may perform every action on a resource
 whose `owner` is that subject, lists are filtered to its own, the group
 is the owner, and limits are the configured defaults. Subjects in
-`LECTIO_ADMIN_SUBJECTS` may read any owner's resources and the queue.
+`LECTIO_ADMIN_SUBJECTS` may read any owner's resources and the queue,
+and they alone may store and remove readers and set the routing policy
+([[019-readers-at-runtime]]).
 
 The rows, in the order they are tried:
 
@@ -285,6 +292,7 @@ The rows, in the order they are tried:
 | no subject | deny, `anonymous` |
 | an action outside the vocabulary, or asked about another kind | deny, `unknown_action` |
 | `reader.list` | allow: the readers are the server's configuration and nobody's |
+| `reader.update` or `reader.delete` | allow for an admin; otherwise deny, `not_owner` |
 | `parse.read` or `file.read`, as an admin | allow |
 | `parse.list` | allow, with a filter that narrows the list to the subject's own; no filter for an admin |
 | `usage.read` or `queue.read` that names no owner and no group | as `parse.list` |

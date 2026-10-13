@@ -35,7 +35,8 @@ beside the specs, and each spec says under `Implementation status`
 what of it is built and what remains. Spec 017 is `vague`: a problem
 statement with a proposed shape and the questions that have to be
 answered before it is a design. Spec 018, sets, is `in-progress`: built in
-the durable server, with the development server answering `501`.
+the durable server, with the development server answering `501`. Spec
+019, readers at runtime, is `in-progress` on the same terms.
 
 ## Index
 
@@ -59,6 +60,7 @@ the durable server, with the development server answering `501`.
 | [016](016-distribution.md) | Distribution: the repository scaffold, the binary and its images, configuration, the stubs, test tiers, and release | large | validated | 001 |
 | [017](017-agent-driven-parsing.md) | Agent-driven parsing: reader tiers, the text layer, reading a page again, and what an agent needs from the core | xlarge | vague | 002, 003, 008, 009 |
 | [018](018-sets.md) | Sets: a stored definition of fields, made before its files and asked of each parse that joins it | medium | in-progress | 003, 011, 012 |
+| [019](019-readers-at-runtime.md) | Readers at runtime: readers and the routing policy changed through the API, and an owner's default reader | large | in-progress | 003, 008, 012, 013 |
 
 ## Build order
 
