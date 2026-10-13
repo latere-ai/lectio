@@ -69,6 +69,13 @@ type Options struct {
 	// database when the store opens, so the last store to open decides, and
 	// replicas of one deployment carry the same settings.
 	Settings tasks.Settings
+
+	// Readers, when set, says what the queue is run with from the readers
+	// and the policy stored through the API, which the store reads first
+	// (specs/019-readers-at-runtime.md): the settings it answers are the
+	// ones written in the place of Settings, so a process that opens never
+	// writes chains without the readers stored beside its configuration.
+	Readers func(ctx context.Context, stored ReaderState) (tasks.Settings, error)
 }
 
 // Store is the task store over one connection pool.
@@ -283,7 +290,7 @@ func Open(ctx context.Context, poolURL string, o Options) (*Store, error) {
 		return nil, fmt.Errorf("store: opening the pool: %w", err)
 	}
 	s := &Store{pool: pool}
-	if err := s.prepare(ctx, settings); err != nil {
+	if err := s.prepare(ctx, settings, o.Readers); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -302,8 +309,9 @@ func bound(maxConns int32) int32 {
 }
 
 // prepare refuses a schema at another version than this binary's and writes
-// the settings.
-func (s *Store) prepare(ctx context.Context, settings tasks.Settings) error {
+// the settings: the ones readers answers for what is stored, when it is
+// set.
+func (s *Store) prepare(ctx context.Context, settings tasks.Settings, readers func(context.Context, ReaderState) (tasks.Settings, error)) error {
 	highest, err := migrations.Highest()
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
@@ -314,6 +322,19 @@ func (s *Store) prepare(ctx context.Context, settings tasks.Settings) error {
 		return err
 	case dirty || version != highest:
 		return fmt.Errorf("store: the schema is at version %d (dirty: %t) and this binary needs %d: migrate over the direct connection first", version, dirty, highest)
+	}
+	if readers != nil {
+		stored, err := s.ReaderState(ctx)
+		if err != nil {
+			return err
+		}
+		if settings, err = readers(ctx, stored); err != nil {
+			return fmt.Errorf("store: %w", err)
+		}
+		settings = settings.WithDefaults()
+		if err := settings.Validate(); err != nil {
+			return fmt.Errorf("store: %w", err)
+		}
 	}
 	doc, err := json.Marshal(configOf(settings))
 	if err != nil {
