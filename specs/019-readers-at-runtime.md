@@ -78,7 +78,8 @@ caller's:
   add a model of that gateway and nothing else.
 - The `stub` adapter is refused: it reads nothing.
 - A name is 1 to 63 of `a-z`, `0-9`, `.` and `-`, starting with a
-  letter or a digit.
+  letter or a digit, and is not `policy`, the name an authorizer is asked
+  about the routing policy under.
 
 A name a configured reader holds is `409 conflict`. Removing an added
 reader with `DELETE /readers/{name}` is `409 conflict` while a chain in
@@ -90,7 +91,9 @@ reader nobody runs. A configured reader is `409 conflict` too.
 
 `PUT /policy` stores the routing policy: its body is the `spec` of a
 `Policy` document, in JSON, checked as the file's is (every chain names
-a reader that is there and can do what the chain asks of it). `GET
+a reader that is there and can do what the chain asks of it), and its
+read chain names a reader; a describe or an extract chain may be empty,
+as the file's may. `GET
 /policy` reads the policy in force, with `source`, `configured` or
 `set`, and `DELETE /policy` removes a set policy and answers the
 configured one. A change of the chains moves the work that has not
@@ -111,8 +114,25 @@ changes ends with the reader it was claimed for.
 
 A stored reader that every process cannot build, because this build
 does not know an adapter or a member, is the case of a binary older
-than the one that stored it; the older process keeps the set it had
-and logs the reader it skipped. The change is not refused for it.
+than the one that stored it; the older process keeps the set it had,
+and one that starts reads with the configured documents alone and
+writes no settings, so the processes that can build it keep the queue
+dispatching to it. The change is not refused for it.
+
+A change is checked against what is stored and written only if nothing
+was stored in between: each write names the version it was checked
+against, and one another process overtook is checked again. A process
+that is about to hold new work to a reader, by a pin, a default, a
+retry or a set's extractor, first checks whether what is stored
+changed, so a reader just removed is not named by new work; a retry of
+a parse pinned to a reader that is gone is `reader_not_found`. A worker
+claimed for a reader it does not hold in the role claimed reads what is
+stored again before it gives the work up.
+
+Work claimed while a chain got shorter can come back at a place the
+chain no longer has; the process that wrote the change writes the
+settings once more after a lease and a sweep, which moves it to the
+chain's last place.
 
 ### Keys follow the readers
 
@@ -134,9 +154,13 @@ held to, for the role each request asks of a reader.
 | an extraction, and asking one again | it names no `extractor` and `reader` extracts |
 | a set's create and change | the definition names no `extractor` and `reader` extracts: the set records it |
 
-A `reader` that is no reader, or that `readers` on the same allow
-leaves out, makes the answer no decision (`503
-authorizer_unavailable`), as a limit that cannot be held does. A
+A `reader` that `readers` on the same allow leaves out makes the answer
+no decision (`503 authorizer_unavailable`), as a limit that cannot be
+held does. One the server does not have is `400 reader_not_found` on
+the member the request would have named: the authorizer holds a default
+the deployment no longer offers, and asking again changes nothing. An
+extraction a set asked is asked again with the set's definition alone,
+so no default is laid over a definition that names none. A
 default reader is a pin: a parse read by it is read by it alone, a page
 that carries its own text included, as one that names it is. The
 allows of `parse.create`, `set.create` and `set.update` are read for
@@ -159,18 +183,20 @@ alone. The owner policy allows them to `LECTIO_ADMIN_SUBJECTS`.
 Migration 000010 adds `readers`, one row per added reader: the name,
 the spec as one JSON document, and the 2 times; and `reader_policy`,
 one row holding the set chains, or none, and the version every change
-of either table adds 1 to. It touches no table in use.
+of either table adds 1 to and every write is checked against. It
+replaces `lectio_configure`, which moves work past the end of a chain
+that is now shorter, and touches no table in use.
 
 ## API
 
 | Method | Path | Answer |
 |---|---|---|
-| `GET` | `/readers/{name}` | `200` the reader, with `source` and, for an added one, its `spec`; `reader_not_found` |
+| `GET` | `/readers/{name}` | `200` the reader, with `source` and, for an added one, its `spec`; `not_found` |
 | `PUT` | `/readers/{name}` | `201` or `200` the reader; `400` for a spec that does not load; `409` for a configured name |
-| `DELETE` | `/readers/{name}` | `204`; `409` for a configured reader, one a chain names, or one with work that has not ended |
+| `DELETE` | `/readers/{name}` | `204`; `409` for a configured reader, one a chain names, one a set names, or one with work that has not ended; `not_found` |
 | `GET` | `/policy` | `200` the chains in force and `source` |
 | `PUT` | `/policy` | `200` the policy; `400` for chains that do not load |
-| `DELETE` | `/policy` | `200` the configured policy |
+| `DELETE` | `/policy` | `200` the configured policy; `400` when it does not order the readers stored beside it |
 
 `GET /readers` gains, on each reader, `source`, `adapter`, `model` for
 one that reaches a model, and `describes` and `extracts`. A development
