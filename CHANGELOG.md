@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.7.1 - 2026-10-17
+
 ### Fixed
 
 - **Thirteen descriptions in the API contract read in full.** Inside a flow mapping an unquoted description ended at its first comma, and the rest of the sentence became a stray key: the width of a page read "Points for paged formats", and fields and sets named a key for the tail of their extractor's sentence. They are quoted, and a test holds the contract to having no such remainder.
