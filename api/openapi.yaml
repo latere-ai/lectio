@@ -211,7 +211,7 @@ paths:
         was already read stays readable. Canceling a parse that has ended
         is `already_terminal`.
       responses:
-        "200": { description: The parse, canceled or on its way., content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
+        "200": { description: "The parse, canceled or on its way.", content: { application/json: { schema: { $ref: "#/components/schemas/Parse" } } } }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
 
@@ -1225,7 +1225,7 @@ components:
           maxProperties: 1
           properties:
             file: { type: string, description: The id of an uploaded file. }
-            url: { type: string, format: uri, description: Fetched once, before any page is read. Only a publicly routable address is fetched. }
+            url: { type: string, format: uri, description: "Fetched once, before any page is read. Only a publicly routable address is fetched." }
         origin:
           description: Where the file lives for the caller. Stored, returned, and filterable; never interpreted.
           type: object
@@ -1404,7 +1404,7 @@ components:
       required: [reader, max_in_flight, in_flight, breaker, scopes]
       properties:
         reader: { type: string }
-        max_in_flight: { type: integer, description: The most calls to the reader at once, across every group. }
+        max_in_flight: { type: integer, description: "The most calls to the reader at once, across every group." }
         in_flight: { type: integer, description: "Calls in flight: of every group, or of the groups the answer holds when it is narrowed to some." }
         breaker:
           type: string
@@ -1444,8 +1444,8 @@ components:
         kind: { $ref: "#/components/schemas/Kind" }
         order: { type: integer, minimum: 1, description: Reading order within the page. }
         box: { $ref: "#/components/schemas/Box" }
-        text: { type: string, description: What is printed in the region, as plain text. A table's cells joined row by row; the words printed inside a figure. Transcription and nothing else. }
-        description: { type: string, description: What a reader says a figure shows. The reader's own prose, kept apart from `text` because it is not what the document says. }
+        text: { type: string, description: "What is printed in the region, as plain text. A table's cells joined row by row; the words printed inside a figure. Transcription and nothing else." }
+        description: { type: string, description: "What a reader says a figure shows. The reader's own prose, kept apart from `text` because it is not what the document says." }
         figure: { $ref: "#/components/schemas/Figure" }
         level: { type: integer, minimum: 1, maximum: 6, description: The depth of a title or heading. }
         table: { $ref: "#/components/schemas/Table" }
@@ -1517,7 +1517,7 @@ components:
         rows: { type: integer }
         cols: { type: integer }
         cells: { type: array, items: { $ref: "#/components/schemas/Cell" } }
-        html: { type: string, description: The table's markup as it was produced, kept because it carries merged cells without loss. }
+        html: { type: string, description: "The table's markup as it was produced, kept because it carries merged cells without loss." }
 
     Cell:
       type: object
@@ -1536,7 +1536,7 @@ components:
       required: [number, width, height, state, blocks]
       properties:
         number: { type: integer, minimum: 1 }
-        width: { type: number, description: Points for paged formats, pixels for images. Boxes do not depend on it. }
+        width: { type: number, description: "Points for paged formats, pixels for images. Boxes do not depend on it." }
         height: { type: number }
         rotation: { type: integer }
         state: { type: string, enum: [pending, succeeded, failed, skipped], description: "`skipped`: the parse ended, canceled or out of time, before the page was read." }
@@ -1545,7 +1545,7 @@ components:
         model: { type: string }
         attempts: { type: integer }
         reused: { type: boolean, description: The result was taken from an earlier read of the same page by the same reader. No model was called for it in this parse. }
-        truncated: { type: boolean, description: The reader's reply ended at its output limit. The blocks are what it finished, and the page may hold more. }
+        truncated: { type: boolean, description: "The reader's reply ended at its output limit. The blocks are what it finished, and the page may hold more." }
         blocks: { type: array, items: { $ref: "#/components/schemas/Block" } }
         usage: { $ref: "#/components/schemas/Usage" }
         error: { $ref: "#/components/schemas/Problem" }
@@ -1612,10 +1612,10 @@ components:
       required: [name, schema]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        schema: { type: object, description: A JSON Schema, draft 2020-12, whose root is an object. }
+        schema: { type: object, description: "A JSON Schema, draft 2020-12, whose root is an object." }
         instructions: { type: string, maxLength: 4000 }
         citations: { type: boolean, default: true }
-        extractor: { type: string, description: The name of a configured extractor. Absent, the routing policy decides. }
+        extractor: { type: string, description: "The name of a configured extractor. Absent, the routing policy decides." }
 
     FieldAgain:
       type: object
@@ -1623,10 +1623,10 @@ components:
       required: [schema]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: The path's name. May be left out. }
-        schema: { type: object, description: A JSON Schema, draft 2020-12, whose root is an object. }
+        schema: { type: object, description: "A JSON Schema, draft 2020-12, whose root is an object." }
         instructions: { type: string, maxLength: 4000 }
         citations: { type: boolean, default: true }
-        extractor: { type: string, description: The name of a configured extractor. Absent, the routing policy decides. }
+        extractor: { type: string, description: "The name of a configured extractor. Absent, the routing policy decides." }
 
     Field:
       type: object
@@ -1684,7 +1684,7 @@ components:
         schema: { type: object, description: "The schema each parse is asked with, as it was sent, its members in the order the caller wrote them." }
         instructions: { type: string, description: The guidance each parse is asked with. Absent when there is none. }
         citations: { type: boolean }
-        extractor: { type: string, description: The extractor the set names. Absent, the routing policy decides. }
+        extractor: { type: string, description: "The extractor the set names. Absent, the routing policy decides." }
         version: { type: integer, description: "1 when the set is made, and 1 more at each change of its definition." }
         parses:
           type: object

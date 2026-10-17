@@ -6,6 +6,10 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Fixed
+
+- **Thirteen descriptions in the API contract read in full.** Inside a flow mapping an unquoted description ended at its first comma, and the rest of the sentence became a stray key: the width of a page read "Points for paged formats", and fields and sets named a key for the tail of their extractor's sentence. They are quoted, and a test holds the contract to having no such remainder.
+
 ## v0.7.0 - 2026-10-14
 
 - Added: `DELETE /sets/{set}/parses/{parse}` takes a parse out of a set
