@@ -34,8 +34,16 @@ import (
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/version"
 	"latere.ai/x/lectio/reader"
 )
+
+// HeaderVersion names the response header every answer of the API carries:
+// the release of the process that wrote it (specs/020-release-version-header.md).
+// A caller comparing results across releases reads it from the answer
+// itself, because during a rolling update two releases answer behind one
+// address.
+const HeaderVersion = "Lectio-Version"
 
 // Server holds what the handlers depend on.
 type Server struct {
@@ -90,6 +98,11 @@ type Server struct {
 	IDs *id.Generator
 	Now func() time.Time
 	Log *slog.Logger
+
+	// Version is the release every answer names in HeaderVersion. Empty
+	// takes version.Version, the value the linker stamps and the internal
+	// /version reports, so the two cannot disagree.
+	Version string
 }
 
 // call is one request being answered: who is calling, and the action its
@@ -232,7 +245,7 @@ func (s *Server) file(r *http.Request, c call) (store.File, error) {
 
 // Handler returns the API. Below the base path every operation needs a
 // caller and asks its action; the contract itself and the health check do
-// neither.
+// neither. Every answer it writes names the release in HeaderVersion.
 func (s *Server) Handler() http.Handler {
 	if s.IDs == nil {
 		s.IDs = &id.Generator{}
@@ -265,7 +278,15 @@ func (s *Server) Handler() http.Handler {
 		httpjson.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	release := s.Version
+	if release == "" {
+		release = version.Version
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set before anything is dispatched, so every answer written below,
+		// a route's, the error envelope's, or the 404 and 405 of this
+		// handler, names the release that wrote it.
+		w.Header().Set(HeaderVersion, release)
 		if _, pattern := mux.Handler(r); pattern != "" {
 			mux.ServeHTTP(w, r)
 			return

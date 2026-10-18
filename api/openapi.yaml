@@ -38,6 +38,12 @@ info:
 
     The server also answers `GET /healthz`, outside the base path and
     without a token.
+
+    Every answer, an error included, carries the response header
+    `Lectio-Version`: the release of the server that wrote it, such as
+    `v0.8.0`, or `dev` for a build that was not stamped. During a rolling
+    update two releases answer behind one address, and the header says
+    which one answered.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
