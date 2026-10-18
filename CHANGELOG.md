@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.8.0 - 2026-10-18
+
 ### Added
 
 - **Every answer names the release that wrote it.** The API sets the
