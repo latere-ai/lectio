@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"latere.ai/x/lectio/internal/httpapi"
 	"latere.ai/x/lectio/internal/testfixtures"
+	"latere.ai/x/lectio/internal/version"
 )
 
 func env(pairs ...string) func(string) string {
@@ -73,6 +75,19 @@ func started(t *testing.T, getenv func(string) string) (base string, logs *buffe
 	}
 	t.Cleanup(func() { _ = stop() })
 	return base, logs, stop
+}
+
+// released reads the release an answer names, asking with no token.
+func released(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.Header.Get(httpapi.HeaderVersion)
 }
 
 // call makes a request with the dev token and decodes a JSON answer.
@@ -149,6 +164,13 @@ func TestTheDevServerParsesAFile(t *testing.T) {
 	}
 	if status, _, _ := call(t, "GET", base+"/v1/readers", "other", nil); status != http.StatusUnauthorized {
 		t.Fatalf("another token: %d", status)
+	}
+	// Every answer names the release that wrote it
+	// (specs/020-release-version-header.md), a refusal included.
+	for _, path := range []string{"/v1/readers", "/v1/openapi.yaml", "/healthz"} {
+		if got := released(t, base+path); got != version.Version {
+			t.Errorf("GET %s answered %s %q, want %q", path, httpapi.HeaderVersion, got, version.Version)
+		}
 	}
 
 	if err := stop(); err != nil {

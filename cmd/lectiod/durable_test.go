@@ -19,6 +19,7 @@ import (
 	"latere.ai/x/pkg/s3/s3test"
 
 	"latere.ai/x/lectio/internal/config"
+	"latere.ai/x/lectio/internal/httpapi"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/testfixtures"
 	"latere.ai/x/lectio/internal/testservers"
@@ -216,6 +217,21 @@ func TestTheDurableServerRunsBothRolesInOneProcess(t *testing.T) {
 			t.Fatalf("%s: %d %q", path, status, body)
 		}
 	}
+	// The public listener names, on every answer, the release the internal
+	// /version reports (specs/020-release-version-header.md).
+	_, reported := get(t, internal+"/version")
+	var probe struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(reported), &probe); err != nil || probe.Version == "" {
+		t.Fatalf("/version answered %q: %v", reported, err)
+	}
+	for _, path := range []string{"/v1/openapi.yaml", "/v1/readers", "/healthz"} {
+		if got := released(t, base+path); got != probe.Version {
+			t.Errorf("GET %s answered %s %q, and /version reports %q", path, httpapi.HeaderVersion, got, probe.Version)
+		}
+	}
+
 	// The probes are on the internal listener and the contract on the
 	// public one, and neither serves the other's.
 	if status, _ := get(t, base+"/readyz"); status != http.StatusNotFound {
