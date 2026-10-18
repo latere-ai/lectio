@@ -16,6 +16,11 @@ The image holds `lectiod` and nothing else: no shell, no package
 manager, no office suite. It runs as user 65532 and writes no file, so
 it runs with a read-only root file system and no capability.
 
+The version it prints is also on every answer of the API, in the
+response header `Lectio-Version`, so a caller can tell which release
+answered a request while a rolling update runs two at once. A proxy in
+front of the API that should not reveal it removes the header there.
+
 ## The development server
 
 One process that keeps everything in memory, takes the token `dev`

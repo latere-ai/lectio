@@ -7,7 +7,7 @@ depends_on:
 affects: [cmd/, internal/config/, deploy/, test/, tools/, Makefile, Dockerfile, .github/, .githooks/]
 effort: large
 created: 2026-10-03
-updated: 2026-10-04
+updated: 2026-10-18
 author: changkun
 ---
 
@@ -271,7 +271,10 @@ process. Every role serves `/livez`, `/readyz` and `/version` on
 worker, the task store answered an exchange of it within a third of
 its lease. Neither a reader's endpoint nor the key endpoint is part of
 readiness: a worker whose key endpoint is down is ready, and the pages
-that need a key wait in the queue ([[013-limits-and-usage]]).
+that need a key wait in the queue ([[013-limits-and-usage]]). The API
+names the version `/version` reports on every answer of `LECTIO_ADDR`,
+in the header `Lectio-Version` ([[020-release-version-header]], amended
+2026-10-18).
 
 `LECTIO_S3_PATH_STYLE=true` addresses the bucket as the first segment
 of the path and not as a label of the host, which a server reached by

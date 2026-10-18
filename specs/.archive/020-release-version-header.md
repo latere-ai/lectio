@@ -1,6 +1,6 @@
 ---
 title: "The release on every answer: a Lectio-Version response header on everything the public listener answers"
-status: drafted
+status: complete
 track: core
 depends_on:
   - specs/003-api.md
@@ -104,6 +104,39 @@ the edge in front of the API. There is no setting to turn it off.
   development server with `version.Version`.
 - The contract's description names the header.
 
-## Implementation status
+## Outcome
 
-Not built.
+Complete on 2026-10-18. `httpapi.HeaderVersion` names the header, and
+`(*Server).Handler` sets it in its outermost handler before the request
+is dispatched. `Server.Version` is the value, and empty takes
+`version.Version`; neither `cmd/lectiod` server sets it, so both answer
+what the linker stamped, the value `/version` reports. The contract's
+description names the header, and `docs/running.md` tells an operator
+how to hide it at a proxy.
+
+Where each criterion is proved:
+
+- A routed answer, a refusal of each kind, the contract and the health
+  check: `internal/httpapi` `TestEveryAnswerNamesTheRelease`, over
+  `GET /readers` (`200`), the same with no token (`401`), a submit with
+  no source (`400`), a parse that does not exist (`404`), an address
+  not routed (`404`), `DELETE /readers` (`405`), `GET /openapi.yaml`
+  and `GET /healthz`.
+- An empty `Version`: `TestAServerWithNoVersionNamesTheStampedOne`.
+- The two servers as processes: `cmd/lectiod`
+  `TestTheDurableServerRunsBothRolesInOneProcess`, which reads `/version`
+  on the internal listener and holds three public answers to it, and
+  `TestTheDevServerParsesAFile`, which holds three answers, a `401`
+  among them, to `version.Version`.
+- The contract's description: `api/openapi.yaml`, `info.description`.
+  The contract test reads no response header, so the header is described
+  in prose rather than declared on each response.
+
+Built where the design was silent:
+
+- **The header is not set by `cmd/lectiod`.** The fallback to
+  `version.Version` makes the stamped value the default for any caller
+  of the package, so the two servers need no line of their own and
+  cannot drift from `/version`.
+- **No header on the internal listener.** Its `/version` answers the
+  same value in its body, and its probes are an operator's.
