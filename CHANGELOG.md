@@ -6,6 +6,17 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Added
+
+- **Every answer names the release that wrote it.** The API sets the
+  response header `Lectio-Version` on everything it answers on
+  `LECTIO_ADDR`, errors, `/v1/openapi.yaml` and `/healthz` included: the
+  version `lectiod version` prints and the internal `/version` reports,
+  such as `v0.8.0`, or `dev` for a build that was not stamped. A caller
+  comparing results across releases reads which one answered from the
+  answer itself, which during a rolling update is the only place that
+  says. A proxy that should not reveal the release removes the header.
+
 ## v0.7.1 - 2026-10-17
 
 ### Fixed
