@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.8.1 - 2026-10-20
+
 ### Fixed
 
 - **`lectiod` exports its telemetry.** With `OTEL_EXPORTER_OTLP_ENDPOINT`
