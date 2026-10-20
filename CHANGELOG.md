@@ -6,6 +6,18 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Fixed
+
+- **`lectiod` exports its telemetry.** With `OTEL_EXPORTER_OTLP_ENDPOINT`
+  set, the API and the worker start the OpenTelemetry export: a span and
+  the request metrics (`http.server.request.duration` and the body sizes)
+  for every request of the API but `/healthz`, the spans of the outbound
+  calls to a model endpoint, a converter and a source URL, the log, and the
+  Go runtime's metrics. Before, those calls went through a tracing transport
+  with no exporter behind it, so a deployment that set the endpoint
+  exported nothing. The log keeps its JSON format, and each record now
+  carries `service`, `version` and `replica`.
+
 ## v0.8.0 - 2026-10-18
 
 ### Added

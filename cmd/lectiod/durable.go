@@ -172,7 +172,7 @@ func serveDurable(ctx context.Context, s config.Settings, file config.File, pipe
 		if err != nil {
 			return errors.Join(err, probes.Close())
 		}
-		api = &http.Server{Handler: handlers.Handler(), ReadHeaderTimeout: 10 * time.Second}
+		api = &http.Server{Handler: traced(handlers.Handler()), ReadHeaderTimeout: 10 * time.Second}
 		go func() { failed <- api.Serve(public) }()
 		addr = public.Addr().String()
 	}
@@ -185,7 +185,7 @@ func serveDurable(ctx context.Context, s config.Settings, file config.File, pipe
 	}
 
 	log.InfoContext(ctx, "listening", "role", s.Role, "addr", addr, "internal", internal.Addr().String(),
-		"base_path", s.BasePath, "readers", live.Current().Chain, "version", version.Version)
+		"base_path", s.BasePath, "readers", live.Current().Chain)
 	if ready != nil {
 		ready <- addr
 	}

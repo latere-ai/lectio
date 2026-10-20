@@ -330,7 +330,7 @@ func TestPagesOfTwoGroupsAreReadWithTwoKeys(t *testing.T) {
 	if !value[bool](t, conn, `SELECT scope_by_group FROM settings`) {
 		t.Fatal("the task store holds one key scope for every group")
 	}
-	if !strings.Contains(workerLogs.String(), `"msg":"keys","source":"endpoint"`) || strings.Contains(apiLogs.String(), `"msg":"keys"`) {
+	if !logged(workerLogs.String(), "keys", "source", "endpoint") || strings.Contains(apiLogs.String(), `"msg":"keys"`) {
 		t.Fatalf("the worker's log does not name the key source, or the API's does:\n%s", workerLogs.String())
 	}
 	if status, _ := get(t, probes+"/readyz"); status != http.StatusOK {
@@ -694,4 +694,19 @@ func TestAKeySourceThatCannotRunStopsAProcessThatRunsTasks(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "LECTIO_KEYS") || !strings.Contains(err.Error(), "LECTIO_OIDC_ISSUERS is not set") {
 		t.Errorf("the API with the endpoint as its source and neither of its 2 variables: %v", err)
 	}
+}
+
+// logged reports whether a JSON log holds a record with the message msg
+// whose attribute key is value, whatever else the record carries.
+func logged(log, msg, key, value string) bool {
+	for line := range strings.Lines(log) {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] == msg && rec[key] == value {
+			return true
+		}
+	}
+	return false
 }

@@ -69,7 +69,8 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewJSONHandler(logs, nil))
+	log, flush := telemetry(ctx, logs)
+	defer flush()
 	if !s.Dev && s.DatabaseURL == "" {
 		return errors.New("LECTIO_DATABASE_URL is not set. The durable server keeps its work in a database; LECTIO_DEV=true runs without one and keeps nothing")
 	}
@@ -139,11 +140,11 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	// may still be waiting on a parse.
 	work, stopWork := context.WithCancel(context.WithoutCancel(ctx))
 	runner.Start(work)
-	srv := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: traced(api.Handler()), ReadHeaderTimeout: 10 * time.Second}
 	failed := make(chan error, 1)
 	go func() { failed <- srv.Serve(ln) }()
 
-	log.InfoContext(ctx, "listening", "addr", ln.Addr().String(), "base_path", s.BasePath, "readers", readers.Chain, "version", version.Version)
+	log.InfoContext(ctx, "listening", "addr", ln.Addr().String(), "base_path", s.BasePath, "readers", readers.Chain)
 	if ready != nil {
 		ready <- ln.Addr().String()
 	}
@@ -162,6 +163,36 @@ func serve(ctx context.Context, args []string, getenv func(string) string, out, 
 	}
 	log.InfoContext(ctx, "stopped")
 	return err
+}
+
+// telemetry starts the export of traces, metrics and logs and returns the
+// process's logger, which writes JSON to logs and, with
+// OTEL_EXPORTER_OTLP_ENDPOINT set, to the exporter as well; without the
+// endpoint nothing is exported. flush sends what is buffered and stops the
+// export, on a context that outlives the stop signal.
+func telemetry(ctx context.Context, logs io.Writer) (*slog.Logger, func()) {
+	log, shutdown, err := otel.Bootstrap(ctx, otel.Config{
+		ServiceName: "lectiod",
+		Version:     version.Version,
+		Stdout:      slog.NewJSONHandler(logs, nil),
+	})
+	if err != nil {
+		// The logger writes to logs either way; the error is the export's
+		// alone.
+		log.WarnContext(ctx, "the log export is not set up", "error", err)
+	}
+	return log, func() {
+		if err := shutdown(context.WithoutCancel(ctx)); err != nil {
+			log.WarnContext(ctx, "the telemetry export did not flush", "error", err)
+		}
+	}
+}
+
+// traced records a span and the request metrics for every request of the
+// API but the liveness probe, which would outnumber them, named by the
+// route the API's mux matched.
+func traced(h http.Handler) http.Handler {
+	return otel.Handler(h, "lectiod", otel.WithSkip(func(r *http.Request) bool { return r.URL.Path == "/healthz" }))
 }
 
 // startCheck bounds what a server asks of its issuers and its authorizer
