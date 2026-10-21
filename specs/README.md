@@ -30,8 +30,8 @@ Specs 001 to 016 are `validated`: the set was reviewed as a whole, by
 three readers working apart, and the control plane, the reader
 interface, the prompts, assembly and intake were revised from what they
 found. Specs 004 to 007, the control plane, and specs 012 to 014,
-identity, limits and retention, are `in-progress`. A scaffold of the parsing path and the API exists
-beside the specs, and each spec says under `Implementation status`
+identity, limits and retention, are `in-progress`. The durable server
+is built and released, and each spec says under `Implementation status`
 what of it is built and what remains. Spec 017 is `vague`: a problem
 statement with a proposed shape and the questions that have to be
 answered before it is a design. Spec 018, sets, is `in-progress`: built in
@@ -77,13 +77,16 @@ The numbers are identifiers, not the order of work. The order is:
    the object model, the steps of a parse, the readers and uploads,
    with a parse of an image file running end to end in one process;
    and the task store over Postgres, with the exchange a worker makes
-   as one function in the database. Not built: the worker process and
-   the object store, so nothing a server runs is durable yet.
+   as one function in the database; and the durable server, `lectiod`
+   in the roles `api`, `worker` or `all` over Postgres and an object
+   store, whose end-to-end tests kill, suspend and restart its
+   processes.
 3. **The contract** (003, 012): the API over that, with identity and
    the owner policy. Built: the contract and every route of it that is
    not marked planned, with a static token and owner scoping; and, as
    libraries, the vocabulary, the verifier, the authorizer client and
-   the owner policy. Not built: the handlers asking them.
+   the owner policy, which every route authenticates through and asks
+   before it acts.
 4. **Many tenants** (006, 007, 013): fairness, pools, limits, meters,
    proven by the simulation and the soak. Built, in the task store:
    the fair queue and the pools, proven at the store by the dispatch
@@ -92,14 +95,18 @@ The numbers are identifiers, not the order of work. The order is:
    Not built: submits per minute and tokens per parse.
 5. **Real documents** (009, 010): intake, rendering, assembly. Built:
    detection, unwrapping, counting and selection, native text, Markdown
-   and CSV, image rendering, and assembly with its views. Not built:
-   PDF rendering, conversion, and native office formats.
+   and CSV, image and PDF rendering, conversion through the sidecar,
+   `.docx`, `.xlsx` and `.xlsm` read natively, and assembly with its
+   views. Not built: native HTML and XML, and streaming assembly.
 6. **Fields** (011), **telemetry** (015), and the first release. Built:
    extraction with a schema in the durable server, as a task that makes
    one call a claim, and the run that describes figures there; and for
    the release, the 2 images, the deploy tree and the workflow that
-   publishes them. Not built: extraction in a development server, and
-   telemetry.
+   publishes them; and, since v0.8.1, the export over OTLP of the log,
+   a span and the request metrics for every API request, and a span for
+   each outbound call. Not built: extraction in a development server,
+   and the telemetry of 015 itself: a trace per parse and task, the
+   processing record, and the queue and pool metrics.
 
 Steps 2 to 4 are where this system differs from a script that calls a
 model in a loop, and they come before breadth of formats on purpose.
