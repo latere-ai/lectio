@@ -68,3 +68,17 @@ identity:
 postgres:
   role: pooled
   prefix: LECTIO
+
+# The server image: it builds, names its version, stays under the size the
+# distribution spec holds it to, has no shell, and starts and answers with a
+# read-only root file system and no capability. It runs its default command.
+image:
+  images:
+    - name: lectiod
+      version_args: [version]
+      version_expect: "lectiod "
+      max_mib: 60
+      env:
+        LECTIO_DEV: "true"
+      port: 8080
+      probe: /v1/openapi.yaml

@@ -237,8 +237,8 @@ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gotest.tools/v3 v3.5.2 h1:7koQfIKdy+I8UTetycgUqXWSDwpgv193Ka+qRsmBY8Q=
 gotest.tools/v3 v3.5.2/go.mod h1:LtdLGcnqToBH83WByAAi/wiwSFCArdFIUV/xxN4pcjA=
-latere.ai/x/ci-gate v0.61.0 h1:Q8RKooa/rqilb0z9zClJ55ZDCDu/tBzg/Sxey3KYZV4=
-latere.ai/x/ci-gate v0.61.0/go.mod h1:TQkfVUIcu38wwH1HfNc+TX8HhUOJBnfXKgYQ65ajYIU=
+latere.ai/x/ci-gate v0.62.0 h1:TImHLgNkuJRWKFRSAT7Chdjq/8SKo5IPS8YR/C6tApo=
+latere.ai/x/ci-gate v0.62.0/go.mod h1:dm7VmS2ENiwUrFc6xNg6wTCNlgUO4hDiHXoKmIawUxU=
 latere.ai/x/pkg v0.110.2 h1:+KCH8EXEXkW/sAhKR2ExowMJBUYxfp8HRXWUKsHkG98=
 latere.ai/x/pkg v0.110.2/go.mod h1:neEq6JP/IEi6keAMCdlHzADcdgv1o5kJePrLKYjVb4M=
 pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
