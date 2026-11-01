@@ -20,7 +20,7 @@ require (
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.62.0
 	golang.org/x/text v0.43.0
-	latere.ai/x/ci-gate v0.60.0
+	latere.ai/x/ci-gate v0.61.0
 	latere.ai/x/pkg v0.110.2
 )
 
