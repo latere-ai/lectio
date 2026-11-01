@@ -7,6 +7,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -26,6 +27,10 @@ const (
 	sidecarDigest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 )
 
+// stageDir is where the shared release stages live; each job of the
+// release calls one of them.
+const stageDir = publisher + "-ai/ci/.github/workflows/"
+
 // needsOf reads a job's dependencies. YAML writes one as a scalar and
 // several as a sequence, and both are one list here.
 func needsOf(v any) []string {
@@ -39,53 +44,51 @@ func needsOf(v any) []string {
 	return out
 }
 
-// steps returns the steps of one job of a workflow.
-func steps(t *testing.T, w object, job string) []any {
-	t.Helper()
-	out := list(dig(w, "jobs", job, "steps"))
-	if len(out) == 0 {
-		t.Fatalf("the workflow has no job %s with steps", job)
-	}
-	return out
-}
-
-// scripts is every run script of one job, joined.
-func scripts(t *testing.T, w object, job string) string {
-	t.Helper()
-	var out strings.Builder
-	for _, s := range steps(t, w, job) {
-		out.WriteString(str(dig(s, "run")))
-		out.WriteString("\n")
-	}
-	return out.String()
-}
-
 // TestTheReleaseRunsItsJobsInOrder: the pipeline's shape is a rule of its
-// own. Nothing is built before the tag's commit passed verify, no digest is
-// tagged before both images were built, signed and attested, and the
-// release is created only for images that are tagged.
+// own. The build stage builds, signs and attests both images, the publish
+// stage tags the digests and creates the release only after it, and the
+// verify stage checks the release only once it is published. Every job is
+// a call of a shared stage at one version of them, and runs on a hosted
+// runner, as every job of a public repository does.
 func TestTheReleaseRunsItsJobsInOrder(t *testing.T) {
 	release, _ := workflow(t, "release.yml")
 	jobs, ok := release["jobs"].(map[string]any)
 	if !ok {
 		t.Fatal("release.yml declares no jobs")
 	}
-	want := map[string][]string{
-		"gate-green": nil,
-		"build":      {"gate-green"},
-		"publish":    {"build"},
-		"release":    {"publish"},
-		"assets":     {"build", "release"},
+	want := map[string]struct {
+		stage string
+		needs []string
+	}{
+		"build":   {"image-build.yml", nil},
+		"publish": {"image-publish.yml", []string{"build"}},
+		"verify":  {"release-verify.yml", []string{"publish"}},
 	}
-	for name, needs := range want {
+	versions := map[string]bool{}
+	for name, w := range want {
 		job, ok := jobs[name].(map[string]any)
 		if !ok {
 			t.Errorf("release.yml has no job %s", name)
 			continue
 		}
-		if got := needsOf(job["needs"]); !slices.Equal(got, needs) {
-			t.Errorf("%s needs %v, want %v", name, got, needs)
+		if got := needsOf(job["needs"]); !slices.Equal(got, w.needs) {
+			t.Errorf("%s needs %v, want %v", name, got, w.needs)
 		}
+		uses := str(job["uses"])
+		stage, version, found := strings.Cut(uses, "@")
+		if !found || stage != stageDir+w.stage || version == "" {
+			t.Errorf("%s uses %q, want the shared stage %s at a version", name, uses, w.stage)
+		}
+		versions[version] = true
+		if job["steps"] != nil {
+			t.Errorf("%s runs steps of its own; the release runs through the shared stages", name)
+		}
+		if got := str(dig(job, "with", "runs_on")); got != "ubuntu-latest" {
+			t.Errorf("%s runs on %q, want a hosted runner, ubuntu-latest", name, got)
+		}
+	}
+	if len(versions) != 1 {
+		t.Errorf("the stages are called at %v, want one version of them", slices.Sorted(maps.Keys(versions)))
 	}
 	for name := range jobs {
 		if _, ok := want[name]; !ok {
@@ -96,168 +99,113 @@ func TestTheReleaseRunsItsJobsInOrder(t *testing.T) {
 	if tags := list(dig(triggers, "push", "tags")); len(triggers) != 1 || len(tags) != 1 || str(tags[0]) != "v*" {
 		t.Errorf("release.yml runs on %v, want the push of a v* tag alone", release["on"])
 	}
-	if uses := str(dig(release, "jobs", "release", "uses")); uses != publisher+"-ai/ci/.github/workflows/notes-release.yml@v1" {
-		t.Errorf("the release job uses %q, want the shared notes pipeline", uses)
-	}
-	if !strings.Contains(scripts(t, release, "gate-green"), "actions/workflows/verify.yml/runs?head_sha=${GITHUB_SHA}") {
-		t.Error("the first job does not read the verify run of the tagged commit")
-	}
-	if !strings.Contains(scripts(t, release, "build"), `go tool lateregate release-notes "${GITHUB_REF_NAME}"`) {
-		t.Error("the build does not refuse a tag with no CHANGELOG section")
-	}
 }
 
 // TestTheReleaseHoldsEachJobToItsOwnPermissions: the workflow's token reads
-// the repository and nothing else, and each job is given what it does and
-// no more. No script carries an expression, so no value becomes part of
-// the text a runner executes, and every third-party action is pinned by
-// commit.
+// the repository and nothing else, and each job is given what its stage
+// does and no more. No secret is passed, since no stage reads one. No shell
+// command handed to a stage carries an expression, so no value becomes
+// part of the text a runner executes. Signing, attesting and tagging are
+// the stages' alone: the file calls none of those tools itself.
 func TestTheReleaseHoldsEachJobToItsOwnPermissions(t *testing.T) {
-	release, _ := workflow(t, "release.yml")
+	release, text := workflow(t, "release.yml")
 	if got := labels(release["permissions"]); !maps.Equal(got, map[string]string{"contents": "read"}) {
 		t.Errorf("the workflow's token holds %v, want to read the repository alone", got)
 	}
 	for job, want := range map[string]map[string]string{
-		"gate-green": {"contents": "read", "actions": "read"},
-		"build":      {"contents": "read", "packages": "write", "id-token": "write", "attestations": "write"},
-		"publish":    {"contents": "read", "packages": "write"},
-		"release":    {"contents": "write"},
-		"assets":     {"contents": "write", "id-token": "write"},
+		"build":   {"contents": "read", "actions": "read", "packages": "write", "id-token": "write", "attestations": "write"},
+		"publish": {"contents": "write", "packages": "write", "id-token": "write"},
+		"verify":  {"contents": "read", "packages": "read", "attestations": "read"},
 	} {
 		if got := labels(dig(release, "jobs", job, "permissions")); !maps.Equal(got, want) {
 			t.Errorf("%s holds %v, want %v", job, got, want)
 		}
 	}
-	pinned := regexp.MustCompile(`@[0-9a-f]{40}$`)
 	jobs, _ := release["jobs"].(map[string]any)
 	for name, job := range jobs {
-		for _, s := range list(dig(job, "steps")) {
-			if uses := str(dig(s, "uses")); uses != "" && !pinned.MatchString(uses) {
-				t.Errorf("%s uses %s, which is not pinned by commit", name, uses)
+		if dig(job, "secrets") != nil {
+			t.Errorf("%s passes secrets, and no stage reads one", name)
+		}
+		for key, value := range labels(dig(job, "with")) {
+			if strings.HasSuffix(key, "_command") && strings.Contains(value, "${{") {
+				t.Errorf("the %s of %s carries an expression; a value reaches a command through its environment", key, name)
 			}
-			if strings.Contains(str(dig(s, "run")), "${{") {
-				t.Errorf("a script of %s carries an expression; a value reaches a script through its environment", name)
-			}
+		}
+	}
+	for _, direct := range []string{"cosign", "anchore/sbom-action", "actions/attest-", "imagetools"} {
+		if strings.Contains(text, direct) {
+			t.Errorf("release.yml names %s; the shared stages sign, attest and tag", direct)
 		}
 	}
 }
 
-// TestTheReleasePublishesBothImages: each image is built for both
-// platforms from its own file with the tag's build identity, pushed by
-// digest and under no tag, asked for its version, signed, given an attested
-// bill of materials and provenance, and tagged only in publish. The
-// namespace is derived and overridable, never written down.
+// TestTheReleasePublishesBothImages: each image is built from its own file
+// for both platforms, the stage's default, and must report the version the
+// tag pins in the form its binary prints. The deploy archive is written
+// once both digests exist, from those digests, and the publish and verify
+// stages are given every image the build made. No job names a namespace,
+// so the images publish under the repository owner's, or the one the
+// repository variable sets.
 func TestTheReleasePublishesBothImages(t *testing.T) {
-	release, text := workflow(t, "release.yml")
-	for _, want := range []string{"GITHUB_REPOSITORY_OWNER", "tr '[:upper:]' '[:lower:]'", "RELEASE_IMAGE_NAMESPACE"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("release.yml does not read %s; the namespace is derived and overridable", want)
-		}
-	}
-	build, publish := scripts(t, release, "build"), scripts(t, release, "publish")
-	for _, image := range []struct{ name, variable, step, output, file, digest string }{
-		{serverImage, "IMAGE", "image", "digest", "Dockerfile", "LECTIOD_DIGEST"},
-		{converterImage, "CONVERT_IMAGE", "convert", "convert", "deploy/converter/Dockerfile", "CONVERT_DIGEST"},
-	} {
-		if got := str(dig(release, "env", image.variable)); got != image.name {
-			t.Errorf("the workflow's %s is %q, want %s", image.variable, got, image.name)
-		}
-		var run string
-		var attested []string
-		for _, s := range steps(t, release, "build") {
-			if str(dig(s, "id")) == image.step {
-				run = str(dig(s, "run"))
-			}
-			if strings.HasSuffix(str(dig(s, "with", "subject-name")), "/"+image.name) {
-				attested = append(attested, str(dig(s, "uses")))
-				if got := str(dig(s, "with", "subject-digest")); got != "${{ steps."+image.step+".outputs.digest }}" {
-					t.Errorf("an attestation of %s names the digest %q", image.name, got)
-				}
-			}
-		}
-		for _, want := range []string{
-			"-f " + image.file + " ", "--platform linux/amd64,linux/arm64", "push-by-digest=true",
-			`--build-arg "VERSION=${GITHUB_REF_NAME}"`, `--build-arg "COMMIT=${COMMIT}"`, `--build-arg "DATE=${DATE}"`,
-			"name=${REGISTRY}/${OWNER}/${" + image.variable + "}", `echo "digest=${digest}" >> "$GITHUB_OUTPUT"`,
-		} {
-			if !strings.Contains(run, want) {
-				t.Errorf("the build of %s does not carry %q", image.name, want)
-			}
-		}
-		if strings.Contains(run, ":${GITHUB_REF_NAME}") {
-			t.Errorf("the build of %s names the tag; a digest is tagged only in publish", image.name)
-		}
-		for _, action := range []string{"actions/attest-sbom@", "actions/attest-build-provenance@"} {
-			if !slices.ContainsFunc(attested, func(uses string) bool { return strings.HasPrefix(uses, action) }) {
-				t.Errorf("%s is not attested by %s", image.name, strings.TrimSuffix(action, "@"))
-			}
-		}
-		if got := str(dig(release, "jobs", "build", "outputs", image.output)); got != "${{ steps."+image.step+".outputs.digest }}" {
-			t.Errorf("the build job's output %s is %q", image.output, got)
-		}
-		reference := "${REGISTRY}/${OWNER}/${" + image.variable + "}"
-		for _, want := range []string{
-			`cosign sign --yes "` + reference + `@${` + image.digest + `}"`,
-			`reports "` + reference + `@${` + image.digest + `}" ` + image.name,
-		} {
-			if !strings.Contains(build, want) {
-				t.Errorf("the build job does not carry %q", want)
-			}
-		}
-		for _, want := range []string{`-t "` + reference + `:${GITHUB_REF_NAME}"`, `"` + reference + `@${` + image.digest + `}"`} {
-			if !strings.Contains(publish, want) {
-				t.Errorf("the publish job does not carry %q", want)
-			}
-		}
-		if !strings.Contains(text, "output-file: dist/sbom-"+image.name+".spdx.json") {
-			t.Errorf("the bill of materials of %s is not written into dist, so it is not attached to the release", image.name)
-		}
-	}
-	assets := scripts(t, release, "assets")
-	for _, want := range []string{
-		"deploy-${GITHUB_REF_NAME}.tar.gz", "sbom-lectiod.spdx.json", "sbom-lectio-convert.spdx.json",
-		"checksums.txt", "cosign sign-blob --yes --bundle checksums.txt.sigstore.json", "gh release upload",
-	} {
-		if !strings.Contains(assets, want) {
-			t.Errorf("the assets job does not carry %q", want)
-		}
-	}
-	if !strings.Contains(build, `tools/release/deploy-archive.sh "${GITHUB_REF_NAME}" dist`) {
-		t.Error("the build job does not write the deploy archive")
-	}
-}
-
-// made matches the directories a run script creates with mkdir -p.
-var made = regexp.MustCompile(`(?m)^\s*mkdir -p ([^\n]+)$`)
-
-// TestTheReleaseMakesADirectoryBeforeAnActionWritesIntoIt: a file an
-// action of the build job writes sits in a directory an earlier step of the
-// job made. An action that writes a bill of materials opens its output file
-// and does not make the directory, so a job that makes dist only when it
-// writes the deploy archive, its last step, fails at the first bill.
-func TestTheReleaseMakesADirectoryBeforeAnActionWritesIntoIt(t *testing.T) {
 	release, _ := workflow(t, "release.yml")
-	exists := map[string]bool{".": true}
-	written := 0
-	for _, s := range steps(t, release, "build") {
-		for _, key := range []string{"output-file", "sbom-path"} {
-			file := str(dig(s, "with", key))
-			if file == "" {
-				continue
-			}
-			written++
-			if dir := filepath.Dir(file); !exists[dir] {
-				t.Errorf("the step %q names %s, and no earlier step of the job makes %s", str(dig(s, "name")), file, dir)
-			}
+	build := dig(release, "jobs", "build", "with")
+	for _, image := range []struct{ slot, name, dockerfile string }{
+		{"image_1", serverImage, "Dockerfile"},
+		{"image_2", converterImage, "deploy/converter/Dockerfile"},
+	} {
+		var spec map[string]string
+		if err := json.Unmarshal([]byte(str(dig(build, image.slot))), &spec); err != nil {
+			t.Errorf("%s is not the JSON of an image: %v", image.slot, err)
+			continue
 		}
-		for _, m := range made.FindAllStringSubmatch(str(dig(s, "run")), -1) {
-			for dir := range strings.FieldsSeq(m[1]) {
-				exists[filepath.Clean(strings.Trim(dir, `"`))] = true
-			}
+		if spec["name"] != image.name {
+			t.Errorf("%s builds %q, want %s", image.slot, spec["name"], image.name)
+		}
+		dockerfile := spec["dockerfile"]
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if dockerfile != image.dockerfile {
+			t.Errorf("%s is built from %s, want %s", image.name, dockerfile, image.dockerfile)
+		}
+		if _, err := os.Stat(dockerfile); err != nil {
+			t.Errorf("%s is built from %s: %v", image.name, dockerfile, err)
+		}
+		if platforms, ok := spec["platforms"]; ok && platforms != "linux/amd64,linux/arm64" {
+			t.Errorf("%s is built for %s, want linux/amd64 and linux/arm64", image.name, platforms)
+		}
+		if spec["version_args"] != "version" || spec["version_expect"] != "{name} {tag} (" {
+			t.Errorf("%s is asked for its version with %q and expected to print %q, want `version` and \"{name} {tag} (\"",
+				image.name, spec["version_args"], spec["version_expect"])
 		}
 	}
-	if written == 0 {
-		t.Fatal("no step of the build job names a file an action writes or reads; the workflow moved")
+	if got := str(dig(build, "image_3")); got != "" {
+		t.Errorf("the build makes a third image, %s, which this test does not name", got)
+	}
+
+	if got := str(dig(build, "archives_command")); got != "" {
+		t.Errorf("the build runs %q before the images; the deploy archive pins their digests, so it is written after them", got)
+	}
+	after := str(dig(build, "after_images_command"))
+	for _, want := range []string{
+		`REGISTRY="${IMAGE_1%%/*}"`, `LECTIOD_DIGEST="${IMAGE_1#*@}"`, `CONVERT_DIGEST="${IMAGE_2#*@}"`,
+		`tools/release/deploy-archive.sh "$TAG" dist`,
+	} {
+		if !strings.Contains(after, want) {
+			t.Errorf("the command run after the images does not carry %q", want)
+		}
+	}
+
+	if got := str(dig(release, "jobs", "publish", "with", "images")); got != "${{ needs.build.outputs.images }}" {
+		t.Errorf("the publish stage is given the images %q, want every image the build made", got)
+	}
+	if got := strings.Fields(str(dig(release, "jobs", "verify", "with", "images"))); !slices.Equal(got, []string{serverImage, converterImage}) {
+		t.Errorf("the verify stage checks %v, want %s and %s", got, serverImage, converterImage)
+	}
+	for _, job := range []string{"build", "publish", "verify"} {
+		if dig(release, "jobs", job, "with", "namespace") != nil {
+			t.Errorf("%s names an image namespace; it is the repository owner's, or the repository variable's", job)
+		}
 	}
 }
 

@@ -1122,7 +1122,7 @@ var publisherForms = []string{
 	"lectio." + publisher + ".ai/v1",              // the version every Reader and Policy document declares
 	publisher + ".ai/x/lectio",                    // the module path, in a linker flag
 	"Latere AI",                                   // the holder of the license notice
-	publisher + "-ai/ci/.github/workflows/",       // the shared release-note workflow
+	publisher + "-ai/ci/.github/workflows/",       // the shared release stages
 	publisher + "gate",                            // the gate, a tool of go.mod
 	"ghcr.io/" + publisher + "-ai/minio:RELEASE.", // the object store of the compose file
 	"ghcr.io/" + publisher + "-ai/mc:RELEASE.",    // its client, which creates the bucket

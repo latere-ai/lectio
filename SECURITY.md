@@ -11,8 +11,8 @@ will hear back within three business days.
 
 ## State
 
-Lectio has no release yet. The design is in [`specs/`](specs/README.md),
-and the commitments below are the ones the code already holds, each with
+Lectio publishes signed releases (see Supply chain below). The design is in
+[`specs/`](specs/README.md), and the commitments below are the ones the code already holds, each with
 the test that holds it. The list grows with the code; a control without a
 test is a claim, and no claim is listed here.
 
@@ -63,6 +63,58 @@ test, so none is in the table above.
   is not protected by anything in the table above against a file that
   names an address. The memory limit on its suite bounds address space;
   the limit on the memory its container holds is the container's own.
+
+## Supply chain
+
+A release is built from a tagged commit whose verify run passed, through
+the shared release stages in
+[latere-ai/ci](https://github.com/latere-ai/ci): both images, `lectiod`
+and `lectio-convert`, are signed by the build stage's identity, run for
+this repository, and the release carries the deploy archive, a bill of
+materials for each image and `checksums.txt` over them, signed by the
+publish stage's identity. To check a release, with `TAG` its tag:
+
+```sh
+gh release download "$TAG" -R latere-ai/lectio -D lectio-release
+cd lectio-release
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/latere-ai/ci/\.github/workflows/image-publish\.yml@' \
+  --certificate-github-workflow-repository latere-ai/lectio checksums.txt
+sha256sum -c checksums.txt
+
+for image in lectiod lectio-convert; do
+  cosign verify "ghcr.io/latere-ai/$image:$TAG" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp '^https://github\.com/latere-ai/ci/\.github/workflows/image-build\.yml@' \
+    --certificate-github-workflow-repository latere-ai/lectio
+  gh attestation verify "oci://ghcr.io/latere-ai/$image:$TAG" -R latere-ai/lectio \
+    --signer-workflow latere-ai/ci/.github/workflows/image-build.yml
+done
+```
+
+The release workflow runs the same checks against every release it
+publishes.
+
+Releases up to v0.8.2 were signed by this repository's own release
+workflow. Check one of those with the same steps, the identity regexp
+naming that workflow in both `cosign` commands, and no
+`--signer-workflow`:
+
+```sh
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/latere-ai/lectio/\.github/workflows/release\.yml@' \
+  checksums.txt
+sha256sum -c checksums.txt
+
+for image in lectiod lectio-convert; do
+  cosign verify "ghcr.io/latere-ai/$image:$TAG" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    --certificate-identity-regexp '^https://github\.com/latere-ai/lectio/\.github/workflows/release\.yml@'
+  gh attestation verify "oci://ghcr.io/latere-ai/$image:$TAG" -R latere-ai/lectio
+done
+```
 
 ## What is out of scope
 

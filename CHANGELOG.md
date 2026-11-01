@@ -6,6 +6,15 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Changed
+
+- **Releases are built, signed and published by the shared release stages
+  in latere-ai/ci.** The signatures on both images and on the signed
+  `checksums.txt` now name those stages, run for this repository.
+  SECURITY.md gives the commands that check a release, and the ones for
+  releases up to v0.8.2; the release workflow runs the checks against
+  every release it publishes.
+
 ## v0.8.2 - 2026-10-21
 
 ### Fixed
