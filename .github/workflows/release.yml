@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   build:
-    uses: latere-ai/ci/.github/workflows/image-build.yml@c3fcc1bda62305ca978a5474dd29a898564baa42
+    uses: latere-ai/ci/.github/workflows/image-build.yml@v1
     permissions:
       contents: read
       actions: read
@@ -49,7 +49,7 @@ jobs:
 
   publish:
     needs: build
-    uses: latere-ai/ci/.github/workflows/image-publish.yml@c3fcc1bda62305ca978a5474dd29a898564baa42
+    uses: latere-ai/ci/.github/workflows/image-publish.yml@v1
     permissions:
       contents: write
       packages: write
@@ -60,7 +60,7 @@ jobs:
 
   verify:
     needs: publish
-    uses: latere-ai/ci/.github/workflows/release-verify.yml@c3fcc1bda62305ca978a5474dd29a898564baa42
+    uses: latere-ai/ci/.github/workflows/release-verify.yml@v1
     permissions:
       contents: read
       packages: read
