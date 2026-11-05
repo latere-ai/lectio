@@ -1,0 +1,24 @@
+# The base admits the API's public port from anywhere in the cluster and
+# leaves the narrowing to the installation. Here it admits 2 callers: the
+# ingress controller, which carries every caller of the origin's
+# /v1/parsing, and platformd's Pods, whose console proxy dials the lectiod
+# Service in the cluster under the same path. The listener is plain HTTP
+# behind the ingress, so this rule bounds who reaches it unencrypted. The
+# ingress list is replaced whole, since a list with no merge key is; the
+# base's egress rules stand.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod
+spec:
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: platformd
+      ports:
+        - port: 8080
+          protocol: TCP

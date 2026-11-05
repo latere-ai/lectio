@@ -1,0 +1,32 @@
+# platformd's side of the core's egress, a second object beside the policy
+# that already governs those Pods, so allow rules add across objects. It
+# selects platformd's Pods and not the core's, which a rollout identity may
+# not write, so it is not in deploy/prod: an operator applies it once, and
+# again only if it changes:
+#
+#   kubectl apply -f deploy/prod-bootstrap/networkpolicy-platformd-tls.yaml
+#
+# The peer is a pod selector with no namespace selector, which is this
+# namespace, where the core runs.
+#
+# platformd's internal TLS listener admits both roles on 8443: the API at
+# the decider, /internal/lectio/authorize, and the workers at the key
+# route, /internal/lectio/keys. Each presents a bearer of its own.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod-platformd-tls
+  namespace: latere
+spec:
+  podSelector:
+    matchLabels:
+      app: platformd
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lectiod
+      ports:
+        - port: 8443
+          protocol: TCP

@@ -9,6 +9,16 @@ cover:
       starts the containers the suites run against; the lines no run reaches
       are the ones for a container runtime that fails
 
+# The tag each production image runs is rewritten in the same commit as the
+# changelog section, so deploy/prod/kustomization.yaml never lags a release.
+# One entry for each image: a pattern must match its file exactly once.
+release:
+  stamp:
+    - file: deploy/prod/kustomization.yaml
+      pattern: 'newName: ghcr\.io/latere-ai/lectiod\n    newTag: v\d+\.\d+\.\d+'
+    - file: deploy/prod/kustomization.yaml
+      pattern: 'newName: ghcr\.io/latere-ai/lectio-convert\n    newTag: v\d+\.\d+\.\d+'
+
 license:
   spdx: Apache-2.0
   holder: Latere AI
@@ -60,6 +70,12 @@ identity:
   # held by deploy_test.go instead.
   skip:
     - deploy/components/converter/deployment.yaml
+    # deploy/prod is the maintainer's own overlay inside the core's tree; it
+    # names the installation it serves, so the no-installation-value rule
+    # reads the addresses it sets and does not refuse them.
+    - deploy/prod
+  overlays:
+    - deploy/prod
 
 # The store of spec 004 serves through LECTIO_DATABASE_POOL_URL where an
 # installation names a pooled endpoint and falls back to LECTIO_DATABASE_URL.

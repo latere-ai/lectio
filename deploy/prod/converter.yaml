@@ -1,0 +1,30 @@
+# What the conversion sidecar's Deployment gains at Latere.
+#
+# dash0.com/enable: the namespace's monitoring adds its instrumentation to
+# every workload it is not told to leave alone. The sidecar runs an office
+# suite on a caller's file under a policy with no egress, so it could
+# export nothing, and the instrumentation would add files and variables to
+# a container that is given none on purpose.
+#
+# resources: the request is small for the reason the worker's is, and the
+# sidecar holds about 10 MiB. The limit is what a node can give; a suite that
+# passes it is killed and its conversion fails, which the worker reports for
+# that one file.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectio-convert
+  labels:
+    dash0.com/enable: "false"
+spec:
+  template:
+    spec:
+      containers:
+        - name: lectio-convert
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi

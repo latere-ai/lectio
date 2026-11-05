@@ -1,0 +1,87 @@
+# The readers of Parsing and the order they are tried in. Both roles mount
+# this file at /etc/lectio and read it at start.
+#
+# Every reader is a Model of the Lux core, called at its Service in the
+# cluster on its OpenAI-compatible door, so no page leaves the cluster on
+# its way to the gateway. A reader's name is what a caller passes as
+# `reader` and what GET /v1/parsing/readers lists; its model is the name
+# the Lux catalog knows. The key of each call is the Lux key of the parse's
+# context, which is why no key is named here. A worker asks platformd for
+# that key naming the models its readers reach, and platformd scopes it to
+# them, so a reader added in the console's Admin needs no change here or
+# there (spec 202). PLATFORM_LECTIO_MODELS in platformd's configuration
+# lists the models below for a core that names none.
+#
+# These readers and the Policy are the deployment's: Admin shows them and
+# never changes them. A platform administrator adds more readers and sets
+# another order there, which every process reads within seconds; removing
+# that order puts this file's back.
+#
+# image is what a page is rendered to before it is sent: 160 dots per inch,
+# the long edge held to 2048 pixels. boxes is the convention the model
+# answers in: y before x for each corner, on a grid of 1000 by 1000.
+#
+# A reader is listed once the core's quality corpus is within its bars
+# with it. The first is the one a parse that names no reader is read with;
+# a caller names another with `reader`.
+# file-text reads a page from the text its file carries, as a PDF made from
+# a document does, and calls no model: such a page costs no call and no
+# token. It declines a page it cannot read without guessing, a scan among
+# them, and the page goes to the next reader of the chain. It is rendered
+# as the model readers are, since it checks the text it takes against the
+# page's image.
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: file-text }
+spec:
+  adapter: text
+  image: { dpi: 160, longEdge: 2048, format: png }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: gemini-3.6-flash }
+spec:
+  adapter: chat
+  endpoint: http://luxd-core.latere.svc.cluster.local:8080/v1/models/openai/v1
+  model: google/gemini-3.6-flash
+  timeout: 3m
+  image: { dpi: 160, longEdge: 2048, format: png }
+  boxes: { order: yxyx, space: grid }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: gemini-3.5-flash }
+spec:
+  adapter: chat
+  endpoint: http://luxd-core.latere.svc.cluster.local:8080/v1/models/openai/v1
+  model: google/gemini-3.5-flash
+  timeout: 3m
+  image: { dpi: 160, longEdge: 2048, format: png }
+  boxes: { order: yxyx, space: grid }
+---
+apiVersion: lectio.latere.ai/v1
+kind: Reader
+metadata: { name: gemini-3.1-flash-lite }
+spec:
+  adapter: chat
+  endpoint: http://luxd-core.latere.svc.cluster.local:8080/v1/models/openai/v1
+  model: google/gemini-3.1-flash-lite
+  timeout: 3m
+  image: { dpi: 160, longEdge: 2048, format: png }
+  boxes: { order: yxyx, space: grid }
+---
+# The chains a parse that names no reader is read with, its figures are
+# described with, and its fields are extracted with. A page is tried with
+# the file's own text first, at no cost, and read by the model when that
+# declines it. Otherwise each chain holds one model: work moves down a chain
+# when a reader is paused or failing, and a second model of another price is
+# not a substitute a caller agreed to. A chat
+# reader is also a describer and an extractor, so the 3 chains name the
+# same model.
+apiVersion: lectio.latere.ai/v1
+kind: Policy
+metadata: { name: default }
+spec:
+  read: { chain: [file-text, gemini-3.6-flash] }
+  describe: { chain: [gemini-3.6-flash] }
+  extract: { chain: [gemini-3.6-flash] }

@@ -13,7 +13,15 @@ examples/generic/         an installation without conversion
 examples/with-converter/  the same installation with the sidecar
 examples/compose.yaml     Postgres, an object store, lectiod and the sidecar on one machine
 converter/Dockerfile      the image of the conversion sidecar
+prod/                     the maintainer's own installation, applied by the release workflow
+prod-bootstrap/           what an operator applies beside it: its rollout identity and a policy
 ```
+
+`prod/` and `prod-bootstrap/` are one installation's, not an example: they
+name its hosts and secrets, and the release archive leaves them out.
+`prod/` is an overlay of the base and the converter component, applied by
+the `deploy` job of the release workflow once the repository variable
+`LECTIO_RELEASE_DEPLOY` is set; a fork sets none and deploys nothing.
 
 The compose file is described in [docs/running.md](../docs/running.md).
 

@@ -1,0 +1,58 @@
+# The Lectio core as Latere runs it, behind the capability Parsing. It is
+# the production target of the release workflow: the `deploy` job applies it
+# with `kubectl apply -k deploy/prod` on every release, after setting both
+# images to the digests the release built.
+#
+# ../base is the core's own deploy/base and ../components/converter its
+# conversion sidecar; this overlay adds what is Latere's. It is declared in
+# .lateregate.yaml under identity.skip and identity.overlays, and the tests
+# of the shipped tree (deploy_test.go) do not read it: it names the
+# installation it serves, which the tree an operator copies from must not.
+#
+# Everything here is safe to re-apply. What is not belongs in
+# deploy/prod-bootstrap/, which the pipeline never reads, and so do the
+# objects the rollout identity may not write: policies that select another
+# service's Pods and every Secret.
+#
+# The Secrets lectio-db, lectiod-s3, lectiod-authorizer, lectiod-keys,
+# platformd-internal-ca and ghcr-secret are created outside the tree and
+# keep their names. The 2 ConfigMaps are generated here, so a change of a
+# setting or of a reader renames the ConfigMap and rolls the Pods that read
+# it.
+#
+# The base and the component name their images with the placeholders
+# `lectiod` and `lectio-convert`. The images entries below point them at the
+# release this target runs, and the deploy job sets each to the digest the
+# build pushed. `lateregate release` rewrites both tags in the same commit
+# as the changelog section, under the release.stamp entries in
+# .lateregate.yaml, so these lines never lag a tag.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: latere
+resources:
+  - ../base
+  - ingress.yaml
+  - networkpolicy-egress.yaml
+components:
+  - ../components/converter
+images:
+  - name: lectiod
+    newName: ghcr.io/latere-ai/lectiod
+    newTag: v0.8.2
+  - name: lectio-convert
+    newName: ghcr.io/latere-ai/lectio-convert
+    newTag: v0.8.2
+configMapGenerator:
+  - name: lectiod
+    envs:
+      - lectiod.env
+  - name: lectiod-readers
+    files:
+      - readers.yaml
+patches:
+  - path: deployment.yaml
+  - path: worker.yaml
+  - path: converter.yaml
+  - path: serviceaccount.yaml
+  - path: serviceaccount-convert.yaml
+  - path: networkpolicy-ingress.yaml

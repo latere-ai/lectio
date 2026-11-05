@@ -1,0 +1,90 @@
+# What the base's API Deployment gains at Latere.
+#
+# replicas: one. The nodes that take this workload have little CPU left to
+# request, and one replica serves the origin's traffic today. A rollout
+# starts the new Pod before it stops the old one, as the base has it, so
+# the API is served throughout; the base's disruption budget, one Pod
+# unavailable, lets a node drain evict the one replica.
+#
+# LECTIO_OIDC_AUDIENCE: `lectio` is the core's own audience and
+# `api.latere.ai` the platform origin's, which a platform key's token
+# names. An env entry wins over the ConfigMap, and the base sets this one
+# on the container.
+#
+# The database: LECTIO_DATABASE_URL is the direct endpoint of the database
+# lectio, which the API opens for its migrations at start and closes; the
+# cluster's connection budget holds a reserve for a starting Pod's
+# migration. LECTIO_DATABASE_POOL_URL is its transaction-mode pool, whose
+# one server connection is the core's line in that budget and carries all
+# of its serving. The base reads both from a Secret of its own naming; here
+# they are the keys terraform writes into lectio-db, and the pool is
+# required, because a Pod that served over the direct endpoint would take
+# connections the budget does not hold.
+#
+# The authorizer: every request is decided by platformd's Lectio decider on
+# its internal TLS listener. The address is written here and not in the
+# Secret, so it can be read and tested; the bearer is the Secret
+# lectiod-authorizer, required where the base leaves it optional, because a
+# Pod without it would decide by the owner policy, with no context, no
+# limits and no organization.
+#
+# SSL_CERT_DIR appends platformd's internal CA to the system roots, so the
+# decider's certificate verifies; the volume carries ca.crt alone, never
+# the CA's key.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectiod
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: lectiod
+          env:
+            - name: LECTIO_OIDC_AUDIENCE
+              value: lectio,api.latere.ai
+            - name: SSL_CERT_DIR
+              value: "/etc/ssl/certs:/var/run/lectiod-trust"
+            - name: LECTIO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectio-db
+                  key: DATABASE_URL
+            - name: LECTIO_DATABASE_POOL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectio-db
+                  key: DATABASE_POOL_URL
+                  optional: false
+            - name: LECTIO_AUTHORIZER_URL
+              value: https://platformd-internal.latere.svc.cluster.local/internal/lectio/authorize
+              valueFrom: null
+            - name: LECTIO_AUTHORIZER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-authorizer
+                  key: LECTIO_AUTHORIZER_TOKEN
+                  optional: false
+          # The API holds no file and renders no page, so it asks for less
+          # than the base does. The request is what the Pod holds at rest:
+          # a larger one would take the room a neighbor's rollout starts
+          # its next Pod in, on nodes that have little left.
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /var/run/lectiod-trust
+              readOnly: true
+      volumes:
+        - name: internal-ca
+          secret:
+            secretName: platformd-internal-ca
+            items:
+              - key: ca.crt
+                path: platformd-internal-ca.crt

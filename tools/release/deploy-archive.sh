@@ -54,5 +54,8 @@ grep -qF "$sidecar" "$rendered" \
   || { echo "deploy/examples/with-converter does not render the published lectio-convert image" >&2; exit 1; }
 
 mkdir -p "$dist"
-tar -czf "$dist/deploy-$tag.tar.gz" deploy
+# deploy/prod and deploy/prod-bootstrap are the maintainer's own installation,
+# applied by the release's deploy job and by an operator, and no one else's
+# to copy.
+tar -czf "$dist/deploy-$tag.tar.gz" --exclude=deploy/prod --exclude=deploy/prod-bootstrap deploy
 echo "deploy-archive: $dist/deploy-$tag.tar.gz"

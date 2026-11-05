@@ -1,0 +1,90 @@
+# What the base's worker Deployment gains at Latere.
+#
+# replicas: one, with 4 task slots (LECTIO_WORKERS), for the reason the API
+# runs one. A rollout stops the old worker before it starts the new one,
+# where the base starts the new one first: nothing calls a worker, the
+# stopped worker returns its tasks to the queue, and a second worker beside
+# the first does not fit the nodes' CPU requests.
+#
+# The database: a worker serves over the pool alone and migrates nothing.
+# The keys are those terraform writes into lectio-db, and the pool is
+# required, as on the API.
+#
+# The key of a reader call: with LECTIO_KEYS=endpoint, in lectiod.env, a
+# worker asks platformd, on its internal TLS listener, for a Lux key of the
+# context a parse belongs to, and reads that context's pages with it, so the
+# spend is the tenant's. The address is written here; the bearer is the Secret
+# lectiod-keys, which only the workers hold: the API faces callers and holds
+# no credential that obtains a tenant's key. The base's LECTIO_MODEL_KEY,
+# one key for every tenant, stays unset, and its Secret is not created.
+#
+# SSL_CERT_DIR appends platformd's internal CA to the system roots, as on
+# the API.
+#
+# resources: a worker renders pages in process and holds working copies of
+# files, each a whole file, so its memory limit is what bounds LECTIO_WORKERS,
+# the tasks it runs at once, and LECTIO_CACHE_BYTES, the working copies it
+# keeps between the pages it reads from them. The request is what a worker
+# holds at rest, about 60 MiB, because the nodes have little left to request
+# and a larger one would take the room a neighbor's rollout starts its next
+# Pod in; the limit is what a node can give.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lectiod-worker
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    spec:
+      containers:
+        - name: lectiod
+          env:
+            - name: SSL_CERT_DIR
+              value: "/etc/ssl/certs:/var/run/lectiod-trust"
+            - name: LECTIO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectio-db
+                  key: DATABASE_URL
+            - name: LECTIO_DATABASE_POOL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lectio-db
+                  key: DATABASE_POOL_URL
+                  optional: false
+            - name: LECTIO_WORKERS
+              value: "4"
+            - name: LECTIO_CACHE_BYTES
+              value: "536870912"
+            - name: LECTIO_KEYS_URL
+              value: https://platformd-internal.latere.svc.cluster.local/internal/lectio/keys
+              valueFrom: null
+            - name: LECTIO_KEYS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: lectiod-keys
+                  key: LECTIO_KEYS_TOKEN
+                  optional: false
+          resources:
+            requests:
+              cpu: 25m
+              memory: 80Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /var/run/lectiod-trust
+              readOnly: true
+      volumes:
+        - name: internal-ca
+          secret:
+            secretName: platformd-internal-ca
+            items:
+              - key: ca.crt
+                path: platformd-internal-ca.crt

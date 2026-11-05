@@ -1,0 +1,79 @@
+# What both roles reach beside what the base's policies admit. Policies
+# that select the same Pods add up, so these rules join the base's, which
+# name cluster DNS and port 443: the object store, a source a caller
+# submits by address, and auth at https://auth.latere.ai, a public name
+# this cluster serves, whose address inside the cluster Cilium translates
+# to the ingress controller's Pods on their https port.
+#
+# The database is DigitalOcean's managed Postgres, which listens on 25060
+# for the direct connection, the API's migrations, and 25061 for the pool.
+# The base's 5432 names no listener here.
+#
+# platformd's internal TLS listener is pod port 8443 behind the Service's
+# 443: the decider the API asks, and the key route a worker asks.
+# platformd's side admits both in lectiod-platformd-tls, which
+# deploy/prod-bootstrap holds.
+#
+# The collector the namespace's monitoring injects is dialed at the node's
+# address on host port 40318, which Cilium translates to the collector's
+# Pod on container port 4318 before policy, so the Pods on 4318 are
+# admitted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod-egress
+  labels:
+    app.kubernetes.io/name: lectiod
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - port: 25060
+          protocol: TCP
+        - port: 25061
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: platformd
+      ports:
+        - port: 8443
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dash0-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opentelemetry-collector
+      ports:
+        - port: 4318
+          protocol: TCP
+---
+# The workers' way to the readers: the Lux core at its Service, pod port
+# 8080, which its own policy opens to the cluster. Only a worker calls a
+# model, so the API is not selected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lectiod-worker-models
+  labels:
+    app.kubernetes.io/name: lectiod
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lectiod
+      app.kubernetes.io/component: worker
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: luxd
+      ports:
+        - port: 8080
+          protocol: TCP

@@ -43,6 +43,13 @@ var components = map[string]string{
 	"deploy/components/converter": "deploy/examples/with-converter",
 }
 
+// installationDirs are the trees of Latere's own installation: the overlay
+// the release applies and the objects an operator applies beside it. They
+// name the installation, which the tree an operator copies from must not,
+// so the rules over that tree do not read them; prod_test.go holds them to
+// rules of their own.
+var installationDirs = []string{"deploy/prod", "deploy/prod-bootstrap"}
+
 // The names the tree is written under.
 const (
 	serverImage    = "lectiod"
@@ -110,6 +117,9 @@ func written(t *testing.T) map[string][]object {
 	t.Helper()
 	out := map[string][]object{}
 	err := filepath.WalkDir("deploy", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && slices.Contains(installationDirs, filepath.ToSlash(path)) {
+			return fs.SkipDir
+		}
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".yaml" {
 			return err
 		}
@@ -1097,6 +1107,9 @@ func shipped(t *testing.T) map[string]string {
 		out[filepath.ToSlash(path)] = string(data)
 	}
 	err := filepath.WalkDir("deploy", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && slices.Contains(installationDirs, filepath.ToSlash(path)) {
+			return fs.SkipDir
+		}
 		if err == nil && !d.IsDir() {
 			read(path)
 		}
