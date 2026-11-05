@@ -6,6 +6,19 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Fixed
+
+- **A replica that starts while another runs the migrations waits for
+  it,** up to 5 minutes, where it refused to start on the migration it
+  found in progress.
+
+- **A huge `Retry-After` from the key service is a long wait,** no longer
+  one that wrapped to negative, and a date in it is waited for.
+
+- **A request id is passed to the authorizer only when it is printable and
+  at most 128 bytes.** A request without one, or with another, gets a
+  fresh one.
+
 ## v0.9.0 - 2026-11-05
 
 ### Added
