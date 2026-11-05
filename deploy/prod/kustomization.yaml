@@ -38,10 +38,10 @@ components:
 images:
   - name: lectiod
     newName: ghcr.io/latere-ai/lectiod
-    newTag: v0.8.2
+    newTag: v0.9.0
   - name: lectio-convert
     newName: ghcr.io/latere-ai/lectio-convert
-    newTag: v0.8.2
+    newTag: v0.9.0
 configMapGenerator:
   - name: lectiod
     envs:
