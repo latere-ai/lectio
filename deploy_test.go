@@ -163,7 +163,7 @@ func manifests(t *testing.T) []object {
 // render runs `kubectl kustomize` over a directory and returns the
 // documents. The command reads files and reaches no cluster. Where kubectl
 // is absent the test skips by name and does not pass quietly; the deploy
-// job of verify.yml is the run that always has it and fails on a skip.
+// suite of .lateregate.yaml is the run that always has it and fails on a skip.
 func render(t *testing.T, dir string) []object {
 	t.Helper()
 	bin, err := exec.LookPath("kubectl")
@@ -1330,28 +1330,35 @@ func workflow(t *testing.T, name string) (object, string) {
 	return docs[0], string(data)
 }
 
-// TestVerifyRendersTheDeployTreeOnEveryPush: the tests that render skip
-// where kubectl is absent, which is every run of the gate. The deploy job
-// of verify.yml runs them on a runner that has kubectl and fails on a
-// skip, so they cannot be the tests nobody runs. A step that reads a
-// command through a pipe fails on the command and not on the reader.
-func TestVerifyRendersTheDeployTreeOnEveryPush(t *testing.T) {
-	verify, _ := workflow(t, "verify.yml")
-	job, ok := dig(verify, "jobs", "deploy").(map[string]any)
-	if !ok {
-		t.Fatal("verify.yml has no deploy job")
+// TestTheGateRendersTheDeployTreeWithKubectl: the tests that render skip
+// where kubectl is absent, which is every run of the plain suite. The deploy
+// e2e suite of .lateregate.yaml runs them with kubectl on PATH, and a
+// skipped test fails it, so they cannot be the tests nobody runs.
+func TestTheGateRendersTheDeployTreeWithKubectl(t *testing.T) {
+	data, err := os.ReadFile(".lateregate.yaml")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var steps string
-	for _, s := range list(job["steps"]) {
-		run := str(dig(s, "run"))
-		steps += run + "\n"
-		if strings.Contains(run, "| tee ") && (str(dig(s, "shell")) != "bash" || !strings.Contains(run, "set -o pipefail")) {
-			t.Error("a step pipes into tee without `shell: bash` and `set -o pipefail`, so a failing command would pass")
+	docs, err := decode(".lateregate.yaml", data)
+	if err != nil || len(docs) != 1 {
+		t.Fatalf(".lateregate.yaml is not one document: %v", err)
+	}
+	var suite object
+	for _, e := range list(dig(docs[0], "e2e")) {
+		if m, ok := e.(map[string]any); ok && str(m["name"]) == "deploy" {
+			suite = m
 		}
 	}
-	for _, want := range []string{"kubectl version --client", "go test -count=1 -v . ", "| tee ", "! grep -q -- '--- SKIP'"} {
-		if !strings.Contains(steps, want) {
-			t.Errorf("the deploy job does not run %q, so a skipped render would pass unnoticed", want)
-		}
+	if suite == nil {
+		t.Fatal(".lateregate.yaml declares no deploy e2e suite")
+	}
+	if got := list(dig(suite, "tools")); len(got) != 1 || str(got[0]) != "kubectl" {
+		t.Errorf("the deploy suite fetches %v, want kubectl, so the renders would skip", got)
+	}
+	if got := list(dig(suite, "test", "packages")); len(got) != 1 || str(got[0]) != "." {
+		t.Errorf("the deploy suite runs %v, want the root package, where the renders live", got)
+	}
+	if _, ok := suite["allow_skip"]; ok {
+		t.Error("the deploy suite allows a skip, so a render that did not happen would pass unnoticed")
 	}
 }

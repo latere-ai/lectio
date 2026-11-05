@@ -325,7 +325,7 @@ func extract(t *testing.T, archive, into string) {
 // a copy of the deploy tree, and reads the archive it writes as an operator
 // does: unpacked somewhere else, every overlay renders, and every container
 // names a published image by digest. The script needs kubectl, so the test
-// skips where it is absent and runs in the deploy job of verify.yml.
+// skips where it is absent and runs in the deploy suite of .lateregate.yaml.
 func TestTheDeployArchivePinsBothImages(t *testing.T) {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		t.Skipf("kubectl is not on PATH, so the archive is not written here: %v", err)

@@ -15,7 +15,7 @@ import (
 // not part of the tree an installation copies from, so deploy_test.go does
 // not read them. These tests hold them to what the release job and the
 // rollout identity assume of them. The ones that render skip where kubectl
-// is absent, and the deploy job of verify.yml fails on a skip.
+// is absent, and the deploy suite of .lateregate.yaml fails on a skip.
 
 // prodKinds is the Kubernetes resource each kind in the production render
 // is applied as.

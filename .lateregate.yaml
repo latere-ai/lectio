@@ -98,3 +98,13 @@ image:
         LECTIO_DEV: "true"
       port: 8080
       probe: /v1/openapi.yaml
+
+# The deploy tree: deploy_test.go renders the kustomize base and every
+# example with kubectl and skips where kubectl is absent, which the plain
+# suite's stripped PATH always is. This suite runs it with kubectl on PATH,
+# and a skipped test fails it, so a render that did not happen cannot pass.
+e2e:
+  - name: deploy
+    why: the kustomize base and every example render with kubectl
+    test: {packages: [.]}
+    tools: [kubectl]
