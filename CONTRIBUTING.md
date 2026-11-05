@@ -24,7 +24,8 @@ before CI does.
 
 Keep one logical change per commit, stage the files explicitly, and write
 the subject as `scope: what changed`, for whoever reads the log. The
-pipeline runs the gate on every push and pull request.
+pipeline runs the gate on every push and pull request. A maintainer cuts
+a release with `go tool lateregate release vX.Y.Z`.
 
 A change to a behavior a spec describes updates that spec in the same
 change: its status, and its Outcome once it is complete. If you are
