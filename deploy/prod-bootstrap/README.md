@@ -13,10 +13,9 @@ The Secrets the Deployments read (`lectio-db`, `lectiod-s3`,
 migrates its database at start, so there is no migration Job to run before
 a release.
 
-`networkpolicy-platformd-tls.yaml` admits the core's Pods to platformd's
-internal TLS listener. It selects platformd's Pods and not the core's,
-which a rollout identity may not write, so an operator applies it once with
-`kubectl apply -f deploy/prod-bootstrap/networkpolicy-platformd-tls.yaml`.
+The NetworkPolicy `lectiod-platformd-tls`, which admits the core's Pods to
+platformd's internal TLS listener, is applied by platform's release
+(latere-ai/platform, `deploy/prod`). No operator step remains for it.
 
 ## The rollout identity
 

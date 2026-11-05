@@ -12,7 +12,7 @@
 # platformd's internal TLS listener is pod port 8443 behind the Service's
 # 443: the decider the API asks, and the key route a worker asks.
 # platformd's side admits both in lectiod-platformd-tls, which
-# deploy/prod-bootstrap holds.
+# platform's deploy/prod holds.
 #
 # The collector the namespace's monitoring injects is dialed at the node's
 # address on host port 40318, which Cilium translates to the collector's

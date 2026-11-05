@@ -101,9 +101,6 @@ func TestProdRendersWhatTheRolloutIdentityMayApply(t *testing.T) {
 			t.Errorf("the rollout identity does not carry %q", want)
 		}
 	}
-	if !strings.Contains(readFile(t, "deploy/prod-bootstrap/networkpolicy-platformd-tls.yaml"), "      app: platformd\n") {
-		t.Error("deploy/prod-bootstrap does not hold the policy that admits the core to platformd")
-	}
 }
 
 // TestProdSetsOnlyListedVariablesAndHoldsNoCredential: the overlay sets
