@@ -447,6 +447,8 @@ to the release by digest, and publishes the images as
 
 ### Rolling a release
 
+After a rollout, `tools/smoke/release.sh` checks the live API from the outside; see its header for `BASE_URL` and `TAG`.
+
 The API applies the schema when it starts. A process refuses a schema
 at another version than its own, so from that moment a Pod of the
 release before that starts, or restarts, does not come up: it says
