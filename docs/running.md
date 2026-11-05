@@ -447,7 +447,7 @@ to the release by digest, and publishes the images as
 
 ### Rolling a release
 
-After a rollout, `tools/smoke/release.sh` checks the live API from the outside; see its header for `BASE_URL` and `TAG`.
+After a rollout, `tools/smoke/release.sh` checks the live API from the outside; see its header for `BASE_URL` and `TAG`. The release workflow runs it itself after rolling the maintainer's own installation, in a `deploy` job that is off until the repository variable `LECTIO_RELEASE_DEPLOY` is set; an installation of your own is rolled as above.
 
 The API applies the schema when it starts. A process refuses a schema
 at another version than its own, so from that moment a Pod of the

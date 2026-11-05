@@ -427,7 +427,16 @@ A version tag is cut with `lateregate release vX.Y.Z` from a green
 main: it moves the changelog's unreleased notes under the version,
 stamps the files that carry it, tags and pushes. The release workflow
 builds the binaries for four platforms, the three images with
-signatures and attestations, and an archive of `deploy/`. Every
+signatures and attestations, and an archive of `deploy/` without the
+maintainer's own installation (`deploy/prod` and `deploy/prod-bootstrap`).
+Where the repository variable `LECTIO_RELEASE_DEPLOY` is set, a `deploy`
+job between the build and the publish applies `deploy/prod` with both images
+pinned by digest through the shared stage of latere-ai/ci, waits for
+the three Deployments and repeats `tools/smoke/release.sh` against the live
+origin; the publish and verify stages run when it is skipped. The job
+reaches the cluster as the rollout identity of
+`deploy/prod-bootstrap/rollout-identity.yaml`, through the repository secret
+`LECTIO_KUBECONFIG`. Every
 release has a changelog section written for the person who runs the
 server.
 
@@ -530,7 +539,8 @@ Built:
   the changelog section through the shared notes workflow, and attaches
   the archive, the bills of materials and their signed checksums. The
   tests hold its jobs, their order and permissions, and run the archive
-  script over the tree. The workflow has not run: no tag has been cut
+  script over the tree. `prod_test.go` holds `deploy/prod`, its rollout
+  identity and the `deploy` job to each other. The workflow has not run: no tag has been cut
   with it.
 
 - The quality tier and the live quality run, as described under

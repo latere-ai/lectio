@@ -6,6 +6,18 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Added
+
+- **A release can deploy itself.** The release workflow has a `deploy` job
+  between the build and the publish, which applies `deploy/prod` with both
+  images pinned by digest, waits for the three Deployments and runs
+  `tools/smoke/release.sh` against the live origin. It runs only where the
+  repository variable `LECTIO_RELEASE_DEPLOY` is set, so a fork publishes
+  every artifact and deploys nothing. `deploy/prod` holds the maintainer's
+  production manifests and `deploy/prod-bootstrap` the identity the job
+  deploys with. Neither is part of the install path or of the
+  `deploy-<tag>.tar.gz` archive of a release.
+
 ### Changed
 
 - **Releases are built, signed and published by the shared release stages
