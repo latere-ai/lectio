@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.9.1 - 2026-11-05
+
 ### Fixed
 
 - **A replica that starts while another runs the migrations waits for
