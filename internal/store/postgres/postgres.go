@@ -24,8 +24,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -197,49 +195,22 @@ UPDATE files SET retention = CASE WHEN $2::bigint > 0 THEN $2::bigint * interval
 // of them apply the schema, and why the URL must not be a transaction-mode
 // pooler's.
 func Migrate(ctx context.Context, directURL string) error {
-	dsn, err := migrationURL(directURL)
-	if err != nil {
-		return err
-	}
-	highest, err := migrations.Highest()
+	dsn, err := pgxmigrate.DriverURL(directURL)
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
-	conn, err := pgx.Connect(ctx, directURL)
-	if err != nil {
-		return fmt.Errorf("store: connecting to migrate: %w", err)
-	}
-	version, dirty, err := schemaVersion(ctx, conn)
-	closeErr := conn.Close(ctx)
-	switch {
+	// Up reads the recorded version under the migrator's own lock, so a
+	// replica that finds another one midway through a migration waits for it
+	// and does not take it for a failed one.
+	switch err := pgxmigrate.Up(dsn, migrations.FS, "."); {
+	case errors.Is(err, pgxmigrate.ErrDirty):
+		return fmt.Errorf("store: a migration failed halfway and an operator repairs it before this process starts: %w", err)
+	case errors.Is(err, pgxmigrate.ErrNewer):
+		return fmt.Errorf("store: the schema is newer than the migrations this binary carries: run the version that wrote the schema: %w", err)
 	case err != nil:
-		return err
-	case closeErr != nil:
-		return fmt.Errorf("store: closing the migration check's connection: %w", closeErr)
-	case dirty:
-		return fmt.Errorf("store: the schema is dirty at version %d: a migration failed halfway and an operator repairs it before this process starts", version)
-	case version > highest:
-		return fmt.Errorf("store: the schema is at version %d and this binary carries %d: run the version that wrote the schema", version, highest)
-	}
-	if err := pgxmigrate.Up(dsn, migrations.FS, "."); err != nil {
 		return fmt.Errorf("store: applying the schema: %w", err)
 	}
 	return nil
-}
-
-// migrationURL is the direct URL under the scheme golang-migrate's pgx/v5
-// driver registers. pgxmigrate imports no driver, so the scheme is what
-// selects one. The errors name no part of the URL: it holds a password.
-func migrationURL(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", errors.New("store: the direct database URL is not a URL")
-	}
-	if !strings.HasPrefix(u.Scheme, "postgres") {
-		return "", errors.New("store: the direct database URL does not have the scheme postgres")
-	}
-	u.Scheme = "pgx5"
-	return u.String(), nil
 }
 
 // querier is what reads the schema version: a connection or a pool.

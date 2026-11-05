@@ -36,8 +36,5 @@ func (s *Store) Reserve(ctx context.Context, group string, day time.Time, pages,
 	return reserved, err
 }
 
-// MigrationURL and Bound are the unexported helpers, for their own tests.
-var (
-	MigrationURL = migrationURL
-	Bound        = bound
-)
+// Bound is the unexported helper, for its own test.
+var Bound = bound

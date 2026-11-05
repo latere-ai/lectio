@@ -54,6 +54,24 @@ func TestMigrateIsSafeToRepeat(t *testing.T) {
 	}
 }
 
+// TestReplicasMigratingTogetherAllSucceed: of several replicas that start at
+// once on an empty database one applies the schema while the others wait on
+// the migrator's lock. A replica that read the version before taking the lock
+// would see the first one's unfinished migration as a failed one and refuse
+// to start.
+func TestReplicasMigratingTogetherAllSucceed(t *testing.T) {
+	dsn := database(t, server(t))
+	errs := make(chan error, 6)
+	for range cap(errs) {
+		go func() { errs <- postgres.Migrate(t.Context(), dsn) }()
+	}
+	for range cap(errs) {
+		if err := <-errs; err != nil {
+			t.Errorf("a replica migrating alongside others: %v", err)
+		}
+	}
+}
+
 // TestASchemaThisBinaryDoesNotKnowIsRefused: a schema a failed migration
 // left halfway, or one a newer binary wrote, stops the migrator and the
 // store, which would otherwise call functions that mean something else.
@@ -99,7 +117,7 @@ func TestADatabaseTheMigratorCannotUseIsAnError(t *testing.T) {
 
 	foreign := database(t, srv)
 	run(foreign, `CREATE TABLE schema_migrations (version text, dirty boolean); INSERT INTO schema_migrations VALUES ('one', false)`)
-	if err := postgres.Migrate(t.Context(), foreign); err == nil || !strings.Contains(err.Error(), "reading the schema version") {
+	if err := postgres.Migrate(t.Context(), foreign); err == nil || !strings.Contains(err.Error(), "applying the schema") {
 		t.Fatalf("Migrate over a version table that is not the migrator's = %v", err)
 	}
 
@@ -451,14 +469,5 @@ func TestAStoreWithNoDatabaseReturnsErrors(t *testing.T) {
 		if err := call(); err == nil || fault.CodeOf(err) != fault.Internal {
 			t.Errorf("%s on a closed store = %v", name, err)
 		}
-	}
-}
-
-// TestMigrationURL: the migrator's URL is the direct one under the scheme its
-// driver registers, with everything else kept.
-func TestMigrationURL(t *testing.T) {
-	got, err := postgres.MigrationURL("postgresql://lectio:pw@db.example:5432/lectio?sslmode=require")
-	if err != nil || got != "pgx5://lectio:pw@db.example:5432/lectio?sslmode=require" {
-		t.Fatalf("MigrationURL = %q, %v", got, err)
 	}
 }

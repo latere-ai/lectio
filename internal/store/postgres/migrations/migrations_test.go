@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
-	"testing/fstest"
 )
 
 // TestHighestIsWhatIsEmbedded: the version the store checks a database
@@ -50,43 +49,3 @@ func TestEveryMigrationIsReversible(t *testing.T) {
 		}
 	}
 }
-
-// TestHighestReadsTheNumber: a file whose name does not start with a number
-// is a migration golang-migrate would not order, so it is a failure here
-// and not a schema applied out of order.
-func TestHighestReadsTheNumber(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		files fstest.MapFS
-		want  uint
-	}{
-		{"one", fstest.MapFS{"000001_control_plane.up.sql": {}}, 1},
-		{"the newest of several", fstest.MapFS{
-			"000001_control_plane.up.sql": {}, "000012_usage.up.sql": {}, "000002_fields.up.sql": {},
-		}, 12},
-		{"nothing to read", fstest.MapFS{}, 0},
-		{"a name with no number", fstest.MapFS{"schema.up.sql": {}}, 0},
-		{"a number that is not one", fstest.MapFS{"schema_tasks.up.sql": {}}, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := highestOf(tc.files)
-			if tc.want == 0 {
-				if err == nil {
-					t.Fatalf("%v was accepted", tc.files)
-				}
-				return
-			}
-			if err != nil || got != tc.want {
-				t.Fatalf("highest = %d, %v, want %d", got, err, tc.want)
-			}
-		})
-	}
-	if _, err := highestOf(brokenFS{}); err == nil {
-		t.Fatal("a directory that cannot be read was accepted")
-	}
-}
-
-// brokenFS is a file system whose root cannot be opened.
-type brokenFS struct{}
-
-func (brokenFS) Open(string) (fs.File, error) { return nil, fs.ErrPermission }

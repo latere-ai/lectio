@@ -16,6 +16,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
 
+	"latere.ai/x/pkg/pgxmigrate"
+
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/store/postgres/migrations"
 )
@@ -213,7 +215,7 @@ func TestAMigrationThatCannotHaveALockFailsAndAppliesNothing(t *testing.T) {
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
-	url, err := postgres.MigrationURL(dsn)
+	url, err := pgxmigrate.DriverURL(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

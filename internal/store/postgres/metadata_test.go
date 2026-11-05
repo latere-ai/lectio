@@ -17,6 +17,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
+	"latere.ai/x/pkg/pgxmigrate"
+
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/store/postgres/migrations"
@@ -535,7 +537,7 @@ func TestEveryMigrationGoesDownAndUpAgain(t *testing.T) {
 	if err := postgres.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
-	url, err := postgres.MigrationURL(dsn)
+	url, err := pgxmigrate.DriverURL(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
