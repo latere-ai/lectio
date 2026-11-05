@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"latere.ai/x/pkg/otel"
+	"latere.ai/x/pkg/retryafter"
 
 	"latere.ai/x/lectio/reader"
 )
@@ -315,7 +316,7 @@ func (e *Endpoint) request(ctx context.Context, q question) reply {
 		// A wrong bearer, a rate limit and a failure of the endpoint are the
 		// operator's to mend and say nothing about the group.
 		return reply{down: &Unavailable{
-			RetryAfter: retryAfter(resp.Header),
+			RetryAfter: waitOf(resp.Header, e.now()),
 			Reason:     "the key endpoint answered " + strconv.Itoa(resp.StatusCode),
 		}}
 	}
@@ -331,12 +332,13 @@ func (e *Endpoint) request(ctx context.Context, q question) reply {
 	return reply{key: reader.NewCredential(a.Key), expires: a.ExpiresAt}
 }
 
-// retryAfter reads a Retry-After header given in whole seconds. A date is
-// not read: it would compare this clock with the endpoint's.
-func retryAfter(header http.Header) time.Duration {
-	seconds, err := strconv.Atoi(strings.TrimSpace(header.Get("Retry-After")))
-	if err != nil || seconds <= 0 {
+// waitOf reads the Retry-After header the endpoint answered with, in seconds
+// or as a date, as a wait. A header that is absent, unreadable or not in the
+// future is no wait, and a count too large for a duration is the longest one.
+func waitOf(header http.Header, now time.Time) time.Duration {
+	wait, ok := retryafter.Parse(header.Get(retryafter.Header), now)
+	if !ok {
 		return 0
 	}
-	return time.Duration(seconds) * time.Second
+	return wait
 }

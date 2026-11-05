@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"reflect"
 	"strings"
@@ -126,7 +127,9 @@ func TestFromStatus(t *testing.T) {
 		{"a parameter it does not take", 422, "", "", Misconfigured, 0},
 		{"a page too large for it", 413, "", "", Permanent, 0},
 		{"an image form it does not take", 415, "", "", Permanent, 0},
-		{"a date is not read", 429, "Wed, 21 Oct 2026 07:28:00 GMT", "", RateLimited, 0},
+		{"a date in the past is none", 429, "Wed, 21 Oct 2015 07:28:00 GMT", "", RateLimited, 0},
+		{"a count too large for a duration is the longest wait", 429, "99999999999", "", RateLimited, math.MaxInt64},
+		{"a count just past a duration's seconds is the longest wait", 429, "9223372037", "", RateLimited, math.MaxInt64},
 		{"a negative wait is none", 429, "-3", "", RateLimited, 0},
 	} {
 		h := http.Header{}
@@ -417,5 +420,16 @@ func TestARectangleOfAPagesTextHasItsExtent(t *testing.T) {
 	page := Page{Number: 1, Text: &text}
 	if page.Text.Words[0].Box.Height() != 24 || page.Text.Partial {
 		t.Fatalf("a page carries its text: %+v", page.Text)
+	}
+}
+
+// TestARetryAfterDateIsTheTimeUntilIt: an endpoint that names the time to
+// come back as a date is waited for until then.
+func TestARetryAfterDateIsTheTimeUntilIt(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+	e := FromStatus(http.StatusTooManyRequests, h, nil)
+	if e.RetryAfter < 59*time.Minute || e.RetryAfter > time.Hour {
+		t.Fatalf("a date an hour away is a wait of %v", e.RetryAfter)
 	}
 }

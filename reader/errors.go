@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"latere.ai/x/pkg/retryafter"
 )
 
 // Class says what a caller should do about a failed call. Every error a
@@ -167,15 +169,15 @@ func FromStatus(status int, header http.Header, body []byte) *Error {
 	return e
 }
 
-// retryAfter reads a Retry-After header given in seconds. A date form is
-// not read: no model endpoint sends one, and a clock comparison across
-// machines is not something to act on.
+// retryAfter reads the Retry-After header in seconds or as a date. A header
+// that is absent, unreadable or not in the future is no wait, and a count too
+// large for a duration is the longest one.
 func retryAfter(header http.Header) time.Duration {
-	seconds, err := strconv.ParseFloat(strings.TrimSpace(header.Get("Retry-After")), 64)
-	if err != nil || seconds <= 0 {
+	wait, ok := retryafter.Parse(header.Get(retryafter.Header), time.Now())
+	if !ok {
 		return 0
 	}
-	return time.Duration(seconds * float64(time.Second))
+	return wait
 }
 
 // budgetWords are the codes gateways and providers put in the body of a

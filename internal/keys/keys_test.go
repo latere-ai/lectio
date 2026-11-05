@@ -495,7 +495,7 @@ func TestTheWaitGrowsWithEachAnswerInARowAndIsBounded(t *testing.T) {
 		t.Fatalf("the first wait after a key is %v, want RetryMin", RetryAfterOf(err))
 	}
 
-	for header, want := range map[string]time.Duration{"7": 7 * time.Second, " 12 ": 12 * time.Second, "3600": RetryMax, "0": RetryMin, "-4": RetryMin, "soon": RetryMin, "": RetryMin} {
+	for header, want := range map[string]time.Duration{"7": 7 * time.Second, " 12 ": 12 * time.Second, "3600": RetryMax, "99999999999": RetryMax, "9223372037": RetryMax, "0": RetryMin, "-4": RetryMin, "soon": RetryMin, "": RetryMin} {
 		p := newPlane(t)
 		e, _ := p.source()
 		p.answers(status(http.StatusTooManyRequests, "Retry-After", header))
