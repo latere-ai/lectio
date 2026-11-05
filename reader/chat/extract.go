@@ -5,7 +5,8 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"maps"
 	"slices"
 
@@ -50,7 +51,7 @@ func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (read
 	}
 
 	var caller any
-	if err := json.Unmarshal(in.Schema, &caller); err != nil {
+	if err := json.Unmarshal(in.Schema, &caller, foreignJSON); err != nil {
 		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the schema is not JSON")
 	}
 	constrain := in.Constrain && e.c.cfg.Constrain
@@ -59,12 +60,12 @@ func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (read
 		// A decoder that enforces a schema must be allowed to write null
 		// for what the document does not state. The caller's schema as it
 		// stands may forbid that, and would force a value to be invented.
-		wire, err := json.Marshal(strict(caller, false))
+		wire, err := json.Marshal(strict(caller, false), outboundJSON)
 		if err != nil {
 			return reader.ExtractResult{}, &reader.Error{Class: reader.Permanent, Detail: "the schema could not be encoded", Err: err}
 		}
 		wrapped := `{"type":"object","additionalProperties":false,"required":["data","citations"],"properties":{"data":` + string(wire) + `,"citations":` + citationsSchema + `}}`
-		req.ResponseFormat = &responseFormat{Type: "json_schema", JSONSchema: jsonSchema{Name: "extraction", Strict: true, Schema: json.RawMessage(wrapped)}}
+		req.ResponseFormat = &responseFormat{Type: "json_schema", JSONSchema: jsonSchema{Name: "extraction", Strict: true, Schema: jsontext.Value(wrapped)}}
 	}
 
 	done, err := e.c.complete(ctx, in.Credential, req)
@@ -75,7 +76,7 @@ func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (read
 		return reader.ExtractResult{}, reader.Errorf(reader.Invalid, "the reply ended at the model's output limit")
 	}
 	var reply struct {
-		Data      json.RawMessage `json:"data"`
+		Data      jsontext.Value `json:"data"`
 		Citations []struct {
 			Pointer string   `json:"pointer"`
 			Refs    []string `json:"refs"`
@@ -90,10 +91,10 @@ func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (read
 	// caller's validator sees a value that is missing and never one that
 	// was made up.
 	var data any
-	if err := json.Unmarshal(reply.Data, &data); err != nil {
+	if err := json.Unmarshal(reply.Data, &data, foreignJSON); err != nil {
 		return reader.ExtractResult{}, reader.Errorf(reader.Invalid, "the reply's data is not JSON")
 	}
-	stripped, err := json.Marshal(dropNulls(data, caller))
+	stripped, err := json.Marshal(dropNulls(data, caller), outboundJSON)
 	if err != nil {
 		return reader.ExtractResult{}, &reader.Error{Class: reader.Invalid, Detail: "the reply's data could not be encoded", Err: err}
 	}

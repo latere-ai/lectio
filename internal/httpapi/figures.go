@@ -71,7 +71,7 @@ type runView struct {
 	Total      int            `json:"total"`
 	Done       int            `json:"done"`
 	Failed     int            `json:"failed"`
-	Reused     int            `json:"reused,omitempty"`
+	Reused     int            `json:"reused,omitzero"`
 	Usage      document.Usage `json:"usage"`
 	StartedAt  time.Time      `json:"started_at"`
 	FinishedAt *time.Time     `json:"finished_at,omitempty"`
@@ -85,13 +85,13 @@ type figureView struct {
 	Box         *document.Box    `json:"box"`
 	Text        string           `json:"text"`
 	Description string           `json:"description,omitempty"`
-	Figure      *document.Figure `json:"figure,omitempty"`
-	Error       *document.Error  `json:"error,omitempty"`
+	Figure      *document.Figure `json:"figure,omitzero"`
+	Error       *document.Error  `json:"error,omitzero"`
 }
 
 // figuresView is a parse's figures and the run that describes them.
 type figuresView struct {
-	Run     *runView     `json:"run,omitempty"`
+	Run     *runView     `json:"run,omitzero"`
 	Figures []figureView `json:"figures"`
 }
 

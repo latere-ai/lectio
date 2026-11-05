@@ -6,7 +6,7 @@ package worker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sync"
@@ -117,7 +117,7 @@ func (w *Worker) prepare(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 			return
 		}
 	}
-	raw, err := json.Marshal(m)
+	raw, err := json.Marshal(m, storedJSON)
 	if err != nil {
 		permanent(s, fault.Internal, "the manifest does not encode")
 		return
@@ -217,7 +217,7 @@ func (w *Worker) wrote(ctx context.Context, c tasks.Claim, s *tasks.Settle, n in
 	}
 	summary, err := json.Marshal(objects.Summary{
 		Blocks: len(res.Page.Blocks), Source: res.Page.Source, Reused: res.Page.Reused, Truncated: res.Page.Truncated,
-	})
+	}, storedJSON)
 	if err != nil {
 		permanent(s, fault.Internal, "the page's summary does not encode")
 		return
@@ -408,7 +408,7 @@ func (w *Worker) assemble(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	read := make([]document.Page, len(pages))
 	for i, p := range pages {
 		read[i] = p.stored.Page
-		if before[i], err = json.Marshal(read[i]); err != nil {
+		if before[i], err = json.Marshal(read[i], storedJSON); err != nil {
 			permanent(s, fault.Internal, "a page does not encode")
 			return
 		}
@@ -418,7 +418,7 @@ func (w *Worker) assemble(ctx context.Context, c tasks.Claim, s *tasks.Settle) {
 	idx := objects.Index{Document: doc, Keys: make([]objects.Entry, len(pages))}
 	for i, p := range pages {
 		p.stored.Page = read[i]
-		after, err := json.Marshal(read[i])
+		after, err := json.Marshal(read[i], storedJSON)
 		if err != nil {
 			permanent(s, fault.Internal, "a page does not encode")
 			return

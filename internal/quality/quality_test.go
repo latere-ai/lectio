@@ -4,7 +4,7 @@
 package quality
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"math"
 	"strings"

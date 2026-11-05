@@ -206,3 +206,13 @@ func TestTransportFailuresAreRetryable(t *testing.T) {
 }
 
 var _ reader.Reader = (*Reader)(nil)
+
+// A reply that repeats a name or writes it in capitals is read.
+func TestReadPageOfAnotherWriter(t *testing.T) {
+	e := serve(t)
+	e.body = `{"Elements":[{"category":"Text","bbox":[0,0,1000,1000],"text":"a","reading_order":1,"text":"b"}],"model":"m"}`
+	got, err := e.reader(t).ReadPage(context.Background(), jpeg())
+	if err != nil || len(got.Blocks) != 1 || got.Blocks[0].Text != "b" {
+		t.Fatalf("%+v, %v", got, err)
+	}
+}

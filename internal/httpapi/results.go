@@ -5,7 +5,8 @@ package httpapi
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"slices"
 	"strconv"
@@ -251,13 +252,13 @@ func (s *Server) listBlocks(w http.ResponseWriter, r *http.Request, c call) erro
 		return err
 	}
 	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
+	enc := jsontext.NewEncoder(&out, bodyText)
 	for _, page := range read {
 		if only != nil && !slices.Contains(only, page.Number) {
 			continue
 		}
 		for _, block := range page.Blocks {
-			if err := enc.Encode(block); err != nil {
+			if err := json.MarshalEncode(enc, block, bodyText); err != nil {
 				return err
 			}
 		}
@@ -288,9 +289,9 @@ func (s *Server) listChunks(w http.ResponseWriter, r *http.Request, c call) erro
 	// Encoded before the first byte is sent, as a document is, so a
 	// failure is an error response and not half a list.
 	var out bytes.Buffer
-	enc := json.NewEncoder(&out)
+	enc := jsontext.NewEncoder(&out, bodyText)
 	for _, chunk := range assemble.Chunks(read, by, size) {
-		if err := enc.Encode(chunk); err != nil {
+		if err := json.MarshalEncode(enc, chunk, bodyText); err != nil {
 			return err
 		}
 	}

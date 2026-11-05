@@ -6,7 +6,8 @@ package chat
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -190,7 +191,7 @@ func BenchmarkJSONExtractRoundTrip(b *testing.B) {
 			}
 			x.c.http = &http.Client{Transport: rt}
 			in := reader.ExtractRequest{
-				Schema: json.RawMessage(benchExtractSchema), Instructions: "Amounts are in euros.", Citations: true, Constrain: true,
+				Schema: jsontext.Value(benchExtractSchema), Instructions: "Amounts are in euros.", Citations: true, Constrain: true,
 				Text: text.String(), Credential: reader.NewCredential("sk-bench"),
 			}
 			if _, err := x.Extract(context.Background(), in); err != nil {

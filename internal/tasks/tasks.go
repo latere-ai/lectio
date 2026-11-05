@@ -14,7 +14,8 @@
 package tasks
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"strings"
@@ -247,7 +248,7 @@ type Claim struct {
 	// Alone is set for a task whose worker died before: the worker runs it
 	// with nothing else, and claims nothing more until it settles it, so
 	// that a second death is the task's own.
-	Alone bool `json:"alone,omitempty"`
+	Alone bool `json:"alone,omitzero"`
 
 	// Context is what the task needs of its parse. It rides on the claim so
 	// that running a task costs a worker no statement of its own.
@@ -261,7 +262,7 @@ type Context struct {
 
 	// File is the source snapshot and Pages the caller's page selection,
 	// for a prepare task.
-	File  *Source `json:"file,omitempty"`
+	File  *Source `json:"file,omitzero"`
 	Pages string  `json:"pages,omitempty"`
 
 	// Languages are the hints a page is read with, for a page task.
@@ -270,7 +271,7 @@ type Context struct {
 	// Manifest is what prepare found out about the file, as its settle
 	// wrote it: without its list of pages for a page task, and whole for an
 	// assemble task.
-	Manifest json.RawMessage `json:"manifest,omitempty"`
+	Manifest jsontext.Value `json:"manifest,omitzero"`
 
 	// Reuse is the object key of a result an earlier parse of the same
 	// owner kept for the same read, for a page task of a parse that takes
@@ -293,7 +294,7 @@ type Context struct {
 	Progress string `json:"progress,omitempty"`
 
 	// Figure is the figure to describe, for a figure task.
-	Figure *FigureAsk `json:"figure,omitempty"`
+	Figure *FigureAsk `json:"figure,omitzero"`
 }
 
 // Field is the request of an extraction as it is kept and as its task is
@@ -301,7 +302,7 @@ type Context struct {
 // asked.
 type Field struct {
 	// Schema is the caller's JSON Schema, as it was sent.
-	Schema json.RawMessage `json:"schema"`
+	Schema jsontext.Value `json:"schema"`
 	// Instructions are the caller's guidance for the model. May be empty.
 	Instructions string `json:"instructions,omitempty"`
 	// Citations says whether each value names the blocks it was read from.
@@ -330,9 +331,9 @@ type Source struct {
 
 // Usage is what one attempt consumed.
 type Usage struct {
-	Calls        int   `json:"calls,omitempty"`
-	InputTokens  int64 `json:"input_tokens,omitempty"`
-	OutputTokens int64 `json:"output_tokens,omitempty"`
+	Calls        int   `json:"calls,omitzero"`
+	InputTokens  int64 `json:"input_tokens,omitzero"`
+	OutputTokens int64 `json:"output_tokens,omitzero"`
 }
 
 // Error is why a task failed: a code of internal/fault and a sentence for a
@@ -346,7 +347,7 @@ type Error struct {
 // the parse's next tasks from it in the transaction of the settle.
 type Prepared struct {
 	// Manifest is the parse's manifest, stored on the parse as it is.
-	Manifest json.RawMessage `json:"manifest,omitempty"`
+	Manifest jsontext.Value `json:"manifest,omitzero"`
 
 	// Pages are the selected pages, in the order of the selection. With
 	// Native false the store creates one page task per page; a selection of
@@ -356,7 +357,7 @@ type Prepared struct {
 	// Native says the format carried its own structure: prepare wrote the
 	// pages itself, so the store counts them done, creates no page task and
 	// creates the assemble task.
-	Native bool `json:"native,omitempty"`
+	Native bool `json:"native,omitzero"`
 }
 
 // Assembled is what the settle of an assemble task carries.
@@ -383,16 +384,16 @@ type Settle struct {
 
 	// Units are the fairness units the attempt used: the sum of the cost of
 	// every reader call it made. The store never corrects a charge below 1.
-	Units int `json:"units,omitempty"`
+	Units int `json:"units,omitzero"`
 
 	// Error is why the attempt failed, for a Retryable, a Permanent or a
 	// Next outcome. It is kept on the task when the task fails.
-	Error *Error `json:"error,omitempty"`
+	Error *Error `json:"error,omitzero"`
 
 	// Invalid says, on a Retryable outcome, that the reader answered and the
 	// answer was not usable. The second such reply from one reader sends a
 	// page to the next reader in the chain, once for the page.
-	Invalid bool `json:"invalid,omitempty"`
+	Invalid bool `json:"invalid,omitzero"`
 
 	// Result is what the task says of its output: a small document the
 	// store keeps as it is. A page writes the summary a list of pages is
@@ -400,7 +401,7 @@ type Settle struct {
 	// says of how it was filled, with the outcome that ends it, whichever
 	// that is. A figure says whether its description was taken from an
 	// earlier run.
-	Result json.RawMessage `json:"result,omitempty"`
+	Result jsontext.Value `json:"result,omitzero"`
 
 	// RetryAfter is how long the endpoint said to wait, for a Wait outcome.
 	// Zero takes the store's default pause.
@@ -410,36 +411,37 @@ type Settle struct {
 	Health Health `json:"health,omitempty"`
 
 	// Prepare and Assemble are set on a Done settle of that kind.
-	Prepare  *Prepared  `json:"prepare,omitempty"`
-	Assemble *Assembled `json:"assemble,omitempty"`
+	Prepare  *Prepared  `json:"prepare,omitzero"`
+	Assemble *Assembled `json:"assemble,omitzero"`
 }
 
 // settleWire is Settle with the wait in milliseconds, which is the unit the
 // store reads it in.
 type settleWire struct {
 	settleAlias
-	RetryAfterMS int64 `json:"retry_after_ms,omitempty"`
+	RetryAfterMS int64 `json:"retry_after_ms,omitzero"`
 }
 
 // settleAlias is Settle without its methods, so encoding one does not call
-// MarshalJSON again.
+// MarshalJSONTo again.
 type settleAlias Settle
 
-// MarshalJSON writes the wait as a number of milliseconds. A wait shorter
+// MarshalJSONTo writes the wait as a number of milliseconds. A wait shorter
 // than a millisecond is written as one, so a wait that was given is not read
-// as none.
-func (s Settle) MarshalJSON() ([]byte, error) {
+// as none. It writes with the options of the call that reached it.
+func (s Settle) MarshalJSONTo(enc *jsontext.Encoder) error {
 	w := settleWire{settleAlias: settleAlias(s)}
 	if s.RetryAfter > 0 {
 		w.RetryAfterMS = max(1, s.RetryAfter.Milliseconds())
 	}
-	return json.Marshal(w)
+	return json.MarshalEncode(enc, w)
 }
 
-// UnmarshalJSON reads the form MarshalJSON writes.
-func (s *Settle) UnmarshalJSON(data []byte) error {
+// UnmarshalJSONFrom reads the form MarshalJSONTo writes, with the options of
+// the call that reached it.
+func (s *Settle) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	var w settleWire
-	if err := json.Unmarshal(data, &w); err != nil {
+	if err := json.UnmarshalDecode(dec, &w); err != nil {
 		return err
 	}
 	*s = Settle(w.settleAlias)

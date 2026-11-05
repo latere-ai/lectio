@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/v2"
 	"math/rand/v2"
 	"os"
 	"path/filepath"

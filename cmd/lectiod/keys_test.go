@@ -5,7 +5,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,7 +62,7 @@ func newKeyPlane(t *testing.T) *keyPlane {
 	k := &keyPlane{groups: map[string]string{}}
 	k.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := keyAsked{Authorization: r.Header.Get("Authorization")}
-		if err := json.NewDecoder(r.Body).Decode(&q); err != nil || r.Method != http.MethodPost {
+		if err := json.UnmarshalRead(r.Body, &q); err != nil || r.Method != http.MethodPost {
 			t.Errorf("the key endpoint was sent a %s that does not decode: %v", r.Method, err)
 		}
 		k.mu.Lock()
@@ -74,7 +74,7 @@ func newKeyPlane(t *testing.T) *keyPlane {
 		key := "sk-issued-do-not-print-" + strconv.Itoa(len(k.groups)+1)
 		k.groups[key] = q.Group
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"key": key, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}); err != nil {
+		if err := json.MarshalWrite(w, map[string]string{"key": key, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}); err != nil {
 			t.Errorf("writing a key: %v", err)
 		}
 	}))
@@ -156,7 +156,7 @@ func newGateway(t *testing.T) *gateway {
 			return
 		}
 		g.read, g.kinds = append(g.read, bearer), append(g.kinds, kind)
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		if err := json.MarshalWrite(w, map[string]any{
 			"model":   "example-model",
 			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": content}}},
 			"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 20},

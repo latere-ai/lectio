@@ -5,7 +5,7 @@ package quality_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"maps"
@@ -215,7 +215,7 @@ func newCounting(t *testing.T) *counting {
 		}
 		c.calls.Add(1)
 		content := `{"blocks":[{"kind":"figure","text":"","description":"A picture of a page, read by the model.","box":[100,100,900,900],"level":null}]}`
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		if err := json.MarshalWrite(w, map[string]any{
 			"model":   "counted-model",
 			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": content}}},
 			"usage":   map[string]any{"prompt_tokens": 1100, "completion_tokens": 26},

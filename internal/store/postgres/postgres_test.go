@@ -5,7 +5,7 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 	"time"
@@ -363,7 +363,7 @@ func TestAnExchangeTheStoreCannotReadIsAnError(t *testing.T) {
 			t.Fatal("an exchange asking for a number of tasks below zero was sent")
 		}
 		broken := tasks.Settle{Parse: "prs_a", Task: tasks.PrepareID, Outcome: tasks.Done,
-			Prepare: &tasks.Prepared{Manifest: json.RawMessage(`{"pages_total":`)}}
+			Prepare: &tasks.Prepared{Manifest: jsontext.Value(`{"pages_total":`)}}
 		if _, err := h.store.Exchange(ctx, w.id, tasks.Request{Settles: []tasks.Settle{broken}}); err == nil {
 			t.Fatal("a manifest that is not JSON was sent")
 		}

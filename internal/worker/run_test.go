@@ -5,7 +5,8 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -353,7 +354,7 @@ func TestAPageFailsForItsOwnReasonsWithNoCall(t *testing.T) {
 	other := page("prs_a", 1, 1, "sources/o/aa/blank", "image/png")
 	other.Reader = "elsewhere"
 	bad := page("prs_a", 1, 1, "sources/o/aa/blank", "image/png")
-	bad.Context.Manifest = json.RawMessage(`{`)
+	bad.Context.Manifest = jsontext.Value(`{`)
 	notAPage := page("prs_a", 1, 1, "sources/o/aa/blank", "image/png")
 	notAPage.Task = "page-x"
 	for name, tc := range map[string]struct {
@@ -518,7 +519,7 @@ func TestAssembleAccountsForEveryPage(t *testing.T) {
 	if read.Outcome != tasks.Done {
 		t.Fatalf("the page settled %+v, %+v", read, read.Error)
 	}
-	manifest := json.RawMessage(`{"media_type":"image/tiff","pages_total":3,"selected":[1,2,3],"source":"reader","work":"sources/o/aa/fil_1","token":1}`)
+	manifest := jsontext.Value(`{"media_type":"image/tiff","pages_total":3,"selected":[1,2,3],"source":"reader","work":"sources/o/aa/fil_1","token":1}`)
 	claim := tasks.Claim{Parse: "prs_a", Task: tasks.AssembleID, Kind: tasks.Assemble, Token: 2, Context: tasks.Context{Manifest: manifest}}
 	b.store.rows["prs_a"] = []postgres.Task{
 		{ID: tasks.PrepareID, State: tasks.Succeeded},
@@ -553,7 +554,7 @@ func TestAssembleAccountsForEveryPage(t *testing.T) {
 		outcome tasks.Outcome
 		code    string
 	}{
-		"a manifest that is not one":      {func(_ *bench, c *tasks.Claim) { c.Context.Manifest = json.RawMessage(`[`) }, tasks.Permanent, "internal"},
+		"a manifest that is not one":      {func(_ *bench, c *tasks.Claim) { c.Context.Manifest = jsontext.Value(`[`) }, tasks.Permanent, "internal"},
 		"rows that cannot be read":        {func(b *bench, _ *tasks.Claim) { b.store.rowsErr = errDown }, tasks.Retryable, "internal"},
 		"a result that is gone":           {func(b *bench, _ *tasks.Claim) { b.store.rows["prs_a"][1].Output = "parses/prs_a/pages/1.9.json" }, tasks.Permanent, "file_not_found"},
 		"an index that cannot be written": {func(b *bench, _ *tasks.Claim) { b.w.Objects = readOnly{b.objects} }, tasks.Retryable, "internal"},

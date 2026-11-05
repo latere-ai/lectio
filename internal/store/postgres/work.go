@@ -5,7 +5,8 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -87,7 +88,7 @@ func (s *Store) CreateField(ctx context.Context, f FieldRequest) error {
 	case f.Deadline < time.Millisecond:
 		return fault.New(fault.InvalidRequest, "an extraction has a deadline")
 	}
-	doc, err := json.Marshal(fieldRequest{FieldRequest: f, DeadlineMS: f.Deadline.Milliseconds(), MaxFields: MaxFields})
+	doc, err := json.Marshal(fieldRequest{FieldRequest: f, DeadlineMS: f.Deadline.Milliseconds(), MaxFields: MaxFields}, sqlJSON)
 	if err != nil {
 		return fmt.Errorf("store: encoding the extraction %s of %s: %w", f.Name, f.Parse, err)
 	}
@@ -124,7 +125,7 @@ func (s *Store) AskFieldAgain(ctx context.Context, f FieldRequest) (replaced str
 	case f.Deadline < time.Millisecond:
 		return "", fault.New(fault.InvalidRequest, "an extraction has a deadline")
 	}
-	doc, err := json.Marshal(fieldRequest{FieldRequest: f, DeadlineMS: f.Deadline.Milliseconds(), MaxFields: MaxFields})
+	doc, err := json.Marshal(fieldRequest{FieldRequest: f, DeadlineMS: f.Deadline.Milliseconds(), MaxFields: MaxFields}, sqlJSON)
 	if err != nil {
 		return "", fmt.Errorf("store: encoding the extraction %s of %s: %w", f.Name, f.Parse, err)
 	}
@@ -177,9 +178,9 @@ type Field struct {
 	// Output is the object key of the result, for an extraction that
 	// succeeded. Result is what its task said of how it was filled, kept as
 	// it came, and Error why it failed.
-	Output string          `json:"output"`
-	Result json.RawMessage `json:"result"`
-	Error  *tasks.Error    `json:"error"`
+	Output string         `json:"output"`
+	Result jsontext.Value `json:"result"`
+	Error  *tasks.Error   `json:"error"`
 
 	// Calls and the tokens are what every claim of its task used, the calls
 	// that failed or were told to wait included.
@@ -285,7 +286,7 @@ func (s *Store) StartFigures(ctx context.Context, r FigureStart) error {
 	if err := figures.Bounded(len(r.Figures)); err != nil {
 		return err
 	}
-	doc, err := json.Marshal(figureStart{FigureStart: r, DeadlineMS: r.Deadline.Milliseconds()})
+	doc, err := json.Marshal(figureStart{FigureStart: r, DeadlineMS: r.Deadline.Milliseconds()}, sqlJSON)
 	if err != nil {
 		return fmt.Errorf("store: encoding the figure run of %s: %w", r.Parse, err)
 	}

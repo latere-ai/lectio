@@ -4,7 +4,8 @@
 package authorizer
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +15,13 @@ import (
 	"time"
 
 	"latere.ai/x/pkg/authz"
+)
+
+// foreignJSON reads the limits object of a decision, which the authorizer
+// writes: duplicate names and invalid UTF-8 are accepted.
+var foreignJSON = json.JoinOptions(
+	jsontext.AllowDuplicateNames(true),
+	jsontext.AllowInvalidUTF8(true),
 )
 
 // MaxWeight is the largest share a group or a project may be given. A
@@ -85,21 +93,21 @@ type Limits struct {
 // retention_seconds. The allow of parse.create is read for every member.
 // No other action's limits are read.
 type WireLimits struct {
-	Owner            *string  `json:"owner,omitempty"`
-	Group            *string  `json:"group,omitempty"`
-	Weight           *int     `json:"weight,omitempty"`
-	Project          *string  `json:"project,omitempty"`
-	ProjectWeight    *int     `json:"project_weight,omitempty"`
-	MaxRunning       *int     `json:"max_running,omitempty"`
-	MaxQueued        *int     `json:"max_queued,omitempty"`
-	MaxPriority      *int     `json:"max_priority,omitempty"`
+	Owner            *string  `json:"owner,omitzero"`
+	Group            *string  `json:"group,omitzero"`
+	Weight           *int     `json:"weight,omitzero"`
+	Project          *string  `json:"project,omitzero"`
+	ProjectWeight    *int     `json:"project_weight,omitzero"`
+	MaxRunning       *int     `json:"max_running,omitzero"`
+	MaxQueued        *int     `json:"max_queued,omitzero"`
+	MaxPriority      *int     `json:"max_priority,omitzero"`
 	Classes          []string `json:"classes,omitempty"`
 	Readers          []string `json:"readers,omitempty"`
-	Reader           *string  `json:"reader,omitempty"`
-	MaxFileBytes     *int64   `json:"max_file_bytes,omitempty"`
-	MaxPages         *int     `json:"max_pages,omitempty"`
-	PagesPerDay      *int     `json:"pages_per_day,omitempty"`
-	RetentionSeconds *int64   `json:"retention_seconds,omitempty"`
+	Reader           *string  `json:"reader,omitzero"`
+	MaxFileBytes     *int64   `json:"max_file_bytes,omitzero"`
+	MaxPages         *int     `json:"max_pages,omitzero"`
+	PagesPerDay      *int     `json:"pages_per_day,omitzero"`
+	RetentionSeconds *int64   `json:"retention_seconds,omitzero"`
 }
 
 // members are the wire names WireLimits declares, read off its tags so the
@@ -139,8 +147,8 @@ func DecodeLimits(d authz.Decision) (WireLimits, error) {
 	if len(d.Limits) == 0 {
 		return WireLimits{}, nil
 	}
-	var named map[string]json.RawMessage
-	if err := json.Unmarshal(d.Limits, &named); err != nil {
+	var named map[string]jsontext.Value
+	if err := json.Unmarshal(d.Limits, &named, foreignJSON); err != nil {
 		return WireLimits{}, fmt.Errorf("limits is not an object: %w", err)
 	}
 	var unknown []string
@@ -154,7 +162,7 @@ func DecodeLimits(d authz.Decision) (WireLimits, error) {
 		return WireLimits{}, &UnknownLimit{Members: unknown}
 	}
 	var w WireLimits
-	if err := json.Unmarshal(d.Limits, &w); err != nil {
+	if err := json.Unmarshal(d.Limits, &w, foreignJSON); err != nil {
 		return WireLimits{}, fmt.Errorf("limits: %w", err)
 	}
 	if err := w.validate(); err != nil {

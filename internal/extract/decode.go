@@ -5,11 +5,14 @@ package extract
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"strconv"
 	"strings"
+
+	"latere.ai/x/lectio/internal/jsontree"
 )
 
 // The bounds of a JSON value this package holds to a schema or reads a
@@ -47,18 +50,38 @@ type flaw struct {
 // and a value nested deeper than depth levels, are answered as flaws, and
 // the value is then not to be used. Not more than a few flaws are named.
 func decode(data []byte, depth int) (value any, flaws []flaw, err error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&value); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(data), foreignJSON)
+	value, err = jsontree.Read(dec)
+	if err != nil {
 		return nil, nil, err
 	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
 		return nil, nil, errors.New("extract: text after the JSON value")
 	}
 	n := narrowing{depth: depth}
 	value = n.narrow(value, nil)
 	return value, n.flaws, nil
 }
+
+// foreignJSON reads JSON this package does not produce, a model's reply and
+// a caller's schema: duplicate names, invalid UTF-8 and any letter case are
+// accepted.
+var foreignJSON = json.JoinOptions(
+	jsontext.AllowDuplicateNames(true),
+	jsontext.AllowInvalidUTF8(true),
+	json.MatchCaseInsensitiveNames(true),
+)
+
+// outboundJSON writes values that are stored, compared as bytes or shown
+// to a model: members in order of their names, a missing list or object
+// as null, and raw values from a model written as they are.
+var outboundJSON = json.JoinOptions(
+	json.Deterministic(true),
+	json.FormatNilSliceAsNull(true),
+	json.FormatNilMapAsNull(true),
+	jsontext.AllowDuplicateNames(true),
+	jsontext.AllowInvalidUTF8(true),
+)
 
 // shownFlaws is how many flaws of one value are named.
 const shownFlaws = 5
@@ -79,7 +102,7 @@ func (n *narrowing) flawed(path []string, what string) {
 // and arrays.
 func (n *narrowing) narrow(v any, path []string) any {
 	switch v := v.(type) {
-	case json.Number:
+	case jsontree.Number:
 		f, ok := number(string(v))
 		if !ok {
 			n.flawed(path, "the number is written in more than "+strconv.Itoa(MaxNumberLength)+" characters or is outside what a number holds")

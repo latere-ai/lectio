@@ -5,7 +5,8 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -152,7 +153,7 @@ func (s *simulation) queue(sub postgres.Submission, parses, n int) []string {
 // when the queue holds nothing more that can run.
 func (s *simulation) run(n int) []dispatch {
 	s.h.t.Helper()
-	pages, err := json.Marshal(s.pages)
+	pages, err := json.Marshal(s.pages, postgres.SQLJSON)
 	if err != nil {
 		s.h.t.Fatal(err)
 	}
@@ -166,8 +167,8 @@ func (s *simulation) run(n int) []dispatch {
 			s.h.t.Fatalf("the simulation: %v", err)
 		}
 		var chunk struct {
-			Seq  []dispatch      `json:"seq"`
-			Prev json.RawMessage `json:"prev"`
+			Seq  []dispatch     `json:"seq"`
+			Prev jsontext.Value `json:"prev"`
 		}
 		if err := json.Unmarshal([]byte(doc), &chunk); err != nil {
 			s.h.t.Fatalf("the simulation's answer: %v", err)

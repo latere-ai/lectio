@@ -12,7 +12,7 @@ package objects
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -69,15 +69,15 @@ type Page struct {
 type Summary struct {
 	Blocks    int                 `json:"blocks"`
 	Source    document.PageSource `json:"source,omitempty"`
-	Reused    bool                `json:"reused,omitempty"`
-	Truncated bool                `json:"truncated,omitempty"`
+	Reused    bool                `json:"reused,omitzero"`
+	Truncated bool                `json:"truncated,omitzero"`
 }
 
 // Entry is where one page of a document is stored.
 type Entry struct {
 	Number   int    `json:"number"`
 	Key      string `json:"key,omitempty"`
-	Revision int    `json:"revision,omitempty"`
+	Revision int    `json:"revision,omitzero"`
 }
 
 // Index is the document index as it is stored: the document the API serves,
@@ -94,7 +94,7 @@ type Index struct {
 // to add: an extraction's input, its progress and its result
 // (internal/extract), and a figure's description (internal/figures).
 func Put(ctx context.Context, store blob.Store, key string, v any) error {
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(v, storedJSON)
 	if err != nil {
 		return fmt.Errorf("objects: encoding %s: %w", key, err)
 	}
@@ -108,7 +108,7 @@ func Get(ctx context.Context, store blob.Store, key string, into any) error {
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(raw, into); err != nil {
+	if err := json.Unmarshal(raw, into, storedRead); err != nil {
 		return fmt.Errorf("objects: %s does not hold what was written there: %w", key, err)
 	}
 	return nil

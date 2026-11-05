@@ -5,7 +5,7 @@ package convert
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
@@ -217,7 +217,7 @@ func (s *Sidecar) refuse(w http.ResponseWriter, r *http.Request, status int, cod
 	p.Error.Code, p.Error.Detail = code, detail
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(p); err != nil {
+	if err := json.MarshalWrite(w, p); err != nil {
 		s.Log.WarnContext(r.Context(), "a refusal was not sent", "error", err)
 	}
 	s.Log.WarnContext(r.Context(), "refused", "status", status, "code", string(code), "detail", detail, "error", cause)

@@ -25,7 +25,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -947,7 +947,7 @@ func (b *Backend) AskField(ctx context.Context, p store.Parse, f store.FieldRequ
 
 // fieldRequest is an extraction's request as the store keeps it.
 func fieldRequest(p store.Parse, f store.FieldRequest, deadline time.Duration) (postgres.FieldRequest, error) {
-	request, err := json.Marshal(tasks.Field{Schema: f.Schema, Instructions: f.Instructions, Citations: f.Citations})
+	request, err := json.Marshal(tasks.Field{Schema: f.Schema, Instructions: f.Instructions, Citations: f.Citations}, json.Deterministic(true))
 	if err != nil {
 		return postgres.FieldRequest{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
 	}
@@ -1036,7 +1036,7 @@ func (b *Backend) setRequest(s store.Set) (postgres.SetRequest, error) {
 	if err := b.extractorFor(store.FieldRequest{Extractor: s.Extractor}); err != nil {
 		return postgres.SetRequest{}, err
 	}
-	request, err := json.Marshal(tasks.Field{Schema: s.Schema, Instructions: s.Instructions, Citations: s.Citations})
+	request, err := json.Marshal(tasks.Field{Schema: s.Schema, Instructions: s.Instructions, Citations: s.Citations}, json.Deterministic(true))
 	if err != nil {
 		return postgres.SetRequest{}, fault.New(fault.InvalidSchema, "the schema is not JSON")
 	}

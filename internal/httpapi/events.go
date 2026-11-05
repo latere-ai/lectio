@@ -5,7 +5,7 @@ package httpapi
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -61,12 +61,12 @@ type (
 	pageEvent struct {
 		Page  int             `json:"page"`
 		State string          `json:"state"`
-		Error *document.Error `json:"error,omitempty"`
+		Error *document.Error `json:"error,omitzero"`
 	}
 	// stateEvent is the parse's state, with why it failed when it did.
 	stateEvent struct {
 		State string          `json:"state"`
-		Error *document.Error `json:"error,omitempty"`
+		Error *document.Error `json:"error,omitzero"`
 	}
 )
 
@@ -109,7 +109,7 @@ func (e *eventStream) write(format string, args ...any) error {
 
 // event sends one event under its id.
 func (e *eventStream) event(id int64, name string, data any) error {
-	raw, err := json.Marshal(data)
+	raw, err := json.Marshal(data, bodyText)
 	if err != nil {
 		return err
 	}

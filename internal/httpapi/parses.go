@@ -7,7 +7,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"maps"
@@ -71,7 +72,7 @@ type progress struct {
 	PagesTotal  int    `json:"pages_total"`
 	PagesDone   int    `json:"pages_done"`
 	PagesFailed int    `json:"pages_failed"`
-	PagesReused int    `json:"pages_reused,omitempty"`
+	PagesReused int    `json:"pages_reused,omitzero"`
 }
 
 // parseView is a parse as the API returns it.
@@ -82,15 +83,15 @@ type parseView struct {
 	Class            string            `json:"class"`
 	Priority         int               `json:"priority"`
 	File             string            `json:"file"`
-	Origin           *store.Origin     `json:"origin,omitempty"`
+	Origin           *store.Origin     `json:"origin,omitzero"`
 	Pages            string            `json:"pages,omitempty"`
 	Reader           string            `json:"reader,omitempty"`
 	Languages        []string          `json:"languages,omitempty"`
-	AllowFailedPages int               `json:"allow_failed_pages,omitempty"`
+	AllowFailedPages int               `json:"allow_failed_pages,omitzero"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	Progress         progress          `json:"progress"`
 	Usage            document.Usage    `json:"usage"`
-	Error            *document.Error   `json:"error,omitempty"`
+	Error            *document.Error   `json:"error,omitzero"`
 	CreatedAt        time.Time         `json:"created_at"`
 	StartedAt        *time.Time        `json:"started_at,omitempty"`
 	FinishedAt       *time.Time        `json:"finished_at,omitempty"`
@@ -125,19 +126,21 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any, optional bool) ([
 	if optional && len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		if name, found := strings.CutPrefix(err.Error(), "json: unknown field "); found {
-			name = strings.Trim(name, `"`)
-			return nil, fault.Wrap(fault.UnknownField, field(name), "the body has a member %q the contract does not describe", name)
-		}
-		if at, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
-			return nil, invalid(at.Field, "%s is a %s", at.Field, at.Type)
+	dec := jsontext.NewDecoder(bytes.NewReader(raw))
+	if err := json.UnmarshalDecode(dec, v, json.RejectUnknownMembers(true)); err != nil {
+		if at, ok := errors.AsType[*json.SemanticError](err); ok {
+			if errors.Is(at.Err, json.ErrUnknownName) {
+				name := at.JSONPointer.LastToken()
+				return nil, fault.Wrap(fault.UnknownField, field(name), "the body has a member %q the contract does not describe", name)
+			}
+			if at.GoType != nil && at.JSONPointer != "" && (at.Err == nil || errors.Is(at.Err, strconv.ErrSyntax) || errors.Is(at.Err, strconv.ErrRange)) {
+				where := strings.Join(slices.Collect(at.JSONPointer.Tokens()), ".")
+				return nil, invalid(where, "%s is a %s", where, at.GoType)
+			}
 		}
 		return nil, fault.New(fault.InvalidRequest, "the body is not a JSON object")
 	}
-	if dec.More() {
+	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
 		return nil, fault.New(fault.InvalidRequest, "the body holds more than one JSON value")
 	}
 	return raw, nil

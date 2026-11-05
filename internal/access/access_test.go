@@ -5,7 +5,7 @@ package access_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +54,7 @@ func (a *answers) Authorize(_ context.Context, req authz.Request) (authz.Decisio
 func allowing(raw string) *answers {
 	d := authz.Decision{Allow: true}
 	if raw != "" {
-		d.Limits = json.RawMessage(raw)
+		d.Limits = jsontext.Value(raw)
 	}
 	return &answers{decision: d}
 }

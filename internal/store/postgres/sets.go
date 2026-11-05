@@ -5,7 +5,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"time"
 
@@ -88,7 +88,7 @@ func (s *Store) CreateSet(ctx context.Context, r SetRequest) (Set, error) {
 	if r.ID == "" || r.Owner == "" || r.Name == "" || r.Request == "" {
 		return Set{}, fault.New(fault.InvalidRequest, "a set has an id, an owner, a name and a request")
 	}
-	doc, err := json.Marshal(r)
+	doc, err := json.Marshal(r, sqlJSON)
 	if err != nil {
 		return Set{}, fmt.Errorf("store: encoding the set %s: %w", r.Name, err)
 	}
@@ -126,7 +126,7 @@ func (s *Store) Set(ctx context.Context, id string) (Set, error) {
 func (s *Store) Sets(ctx context.Context, owners []string, name, after string, limit int) (out []Set, more bool, err error) {
 	// A nil list encodes as the JSON null, which the statement reads as
 	// every owner's.
-	scope, err := json.Marshal(owners)
+	scope, err := json.Marshal(owners, sqlJSON)
 	if err != nil {
 		return nil, false, fmt.Errorf("store: encoding the owners of a list: %w", err)
 	}
@@ -187,7 +187,7 @@ func (s *Store) JoinSet(ctx context.Context, j SetJoin) (asked bool, replaced st
 	if j.Deadline < time.Millisecond {
 		return false, "", fault.New(fault.InvalidRequest, "a join has a deadline")
 	}
-	doc, err := json.Marshal(setJoin{SetJoin: j, DeadlineMS: j.Deadline.Milliseconds(), MaxFields: MaxFields, MaxParses: MaxSetParses})
+	doc, err := json.Marshal(setJoin{SetJoin: j, DeadlineMS: j.Deadline.Milliseconds(), MaxFields: MaxFields, MaxParses: MaxSetParses}, sqlJSON)
 	if err != nil {
 		return false, "", fmt.Errorf("store: encoding the join of %s to %s: %w", j.Parse, j.Set, err)
 	}
@@ -247,7 +247,7 @@ func (s *Store) UpdateSet(ctx context.Context, r SetRequest, deadline time.Durat
 	case deadline < time.Millisecond:
 		return Set{}, nil, fault.New(fault.InvalidRequest, "a change of a set has a deadline")
 	}
-	doc, err := json.Marshal(setUpdate{Set: r.ID, Request: r.Request, Pin: r.Pin, DeadlineMS: deadline.Milliseconds()})
+	doc, err := json.Marshal(setUpdate{Set: r.ID, Request: r.Request, Pin: r.Pin, DeadlineMS: deadline.Milliseconds()}, sqlJSON)
 	if err != nil {
 		return Set{}, nil, fmt.Errorf("store: encoding the change of the set %s: %w", r.ID, err)
 	}

@@ -5,24 +5,26 @@ package extract
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"maps"
 	"slices"
 	"strconv"
 	"strings"
+
+	"latere.ai/x/lectio/internal/jsontree"
 )
 
 // Part is the reply to one window that the validator accepted: the object
 // and the refs each of its values was read from, by JSON pointer.
 type Part struct {
-	Data      json.RawMessage     `json:"data"`
+	Data      jsontext.Value      `json:"data"`
 	Citations map[string][]string `json:"citations,omitempty"`
 }
 
 // Result is what an extraction produced: one object in the shape of the
 // caller's schema, and for each of its values the blocks it was read from.
 type Result struct {
-	Data      json.RawMessage     `json:"data"`
+	Data      jsontext.Value      `json:"data"`
 	Citations map[string][]string `json:"citations,omitempty"`
 }
 
@@ -40,10 +42,8 @@ func Merge(parts []Part) Result {
 	m := merger{citations: map[string][]string{}}
 	var data any
 	for _, part := range parts {
-		var value any
-		dec := json.NewDecoder(bytes.NewReader(part.Data))
-		dec.UseNumber()
-		if dec.Decode(&value) != nil {
+		value, err := jsontree.Read(jsontext.NewDecoder(bytes.NewReader(part.Data), foreignJSON))
+		if err != nil {
 			continue
 		}
 		m.from = part.Citations
@@ -174,10 +174,8 @@ func resolve(value any, pointer string) bool {
 // citation of a value that is not in the object, such as one that was left
 // out for being null.
 func Cited(data []byte, citations map[string][]string, refs []string) map[string][]string {
-	var value any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if dec.Decode(&value) != nil {
+	value, err := jsontree.Read(jsontext.NewDecoder(bytes.NewReader(data), foreignJSON))
+	if err != nil {
 		return nil
 	}
 	out := map[string][]string{}

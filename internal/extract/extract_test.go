@@ -4,7 +4,8 @@
 package extract
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
+	"latere.ai/x/lectio/internal/jsontree"
 	"latere.ai/x/lectio/reader"
 )
 
@@ -411,14 +413,14 @@ func TestAWindowIsNotHeldToWhatAnotherMayHold(t *testing.T) {
 // that was already there, and nowhere when its value did not stand.
 func TestWindowsAreMergedByAMechanicalRule(t *testing.T) {
 	parts := []Part{
-		{Data: json.RawMessage(`{"number":"INV-0042","total":null,"buyer":{"name":"Acme"},"items":[{"name":"a","price":1}],"tags":["x"]}`),
+		{Data: jsontext.Value(`{"number":"INV-0042","total":null,"buyer":{"name":"Acme"},"items":[{"name":"a","price":1}],"tags":["x"]}`),
 			Citations: map[string][]string{"/number": {"1.2"}, "/buyer/name": {"1.3"}, "/items/0": {"1.5"}, "/items/0/price": {"1.6"}, "/tags": {"1.7"}}},
-		{Data: json.RawMessage(`{"number":"INV-9999","total":1280.5,"buyer":{"name":"Acme","city":"Berlin"},
+		{Data: jsontext.Value(`{"number":"INV-9999","total":1280.5,"buyer":{"name":"Acme","city":"Berlin"},
 		  "items":[{"name":"a","price":1},{"name":"b","price":2}],"tags":["y","x"],"notes":"late"}`),
 			Citations: map[string][]string{"/number": {"4.1"}, "/total": {"4.2"}, "/buyer/name": {"4.3"}, "/buyer/city": {"4.4"},
 				"/items/0/price": {"4.5"}, "/items/1": {"4.6"}, "/items/1/name": {"4.7"}, "/tags": {"4.8"}, "/notes": {"4.9"}, "/buyer": {"4.0"}}},
-		{Data: json.RawMessage(`{"total":99,"items":"none","buyer":"unknown","tags":[]}`), Citations: map[string][]string{"/total": {"9.1"}}},
-		{Data: json.RawMessage(`not JSON`)},
+		{Data: jsontext.Value(`{"total":99,"items":"none","buyer":"unknown","tags":[]}`), Citations: map[string][]string{"/total": {"9.1"}}},
+		{Data: jsontext.Value(`not JSON`)},
 	}
 	got := Merge(parts)
 	want := `{"buyer":{"city":"Berlin","name":"Acme"},"items":[{"name":"a","price":1},{"name":"b","price":2}],"notes":"late","number":"INV-0042","tags":["x","y"],"total":1280.5}`
@@ -476,7 +478,7 @@ func TestACitedRefThatDoesNotExistIsAbsent(t *testing.T) {
 
 // answer is a reply of a model: an object and what it cites.
 func answer(data string, citations map[string][]string) reader.ExtractResult {
-	return reader.ExtractResult{Data: json.RawMessage(data), Citations: citations, Model: "m", Constrained: true}
+	return reader.ExtractResult{Data: jsontext.Value(data), Citations: citations, Model: "m", Constrained: true}
 }
 
 // TestAReplyThatFailsIsRepairedTwiceAndThenTheFieldFails: a reply that does
@@ -634,7 +636,7 @@ func TestAValueThatDoesNotEncodeIsWrittenAsNull(t *testing.T) {
 	if got := encode(func() {}); string(got) != `null` {
 		t.Fatalf("a value that does not encode is written as %q", got)
 	}
-	if got := encode(map[string]any{"a": json.Number("1.50")}); string(got) != `{"a":1.50}` {
+	if got := encode(map[string]any{"a": jsontree.Number("1.50")}); string(got) != `{"a":1.50}` {
 		t.Fatalf("a number is written as %s", got)
 	}
 }

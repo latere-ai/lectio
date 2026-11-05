@@ -15,7 +15,8 @@ package chat
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -179,11 +180,11 @@ func newClient(cfg Config) (*client, error) {
 // request is the body of a chat completions call.
 type request struct {
 	Model               string          `json:"model"`
-	Temperature         *float64        `json:"temperature,omitempty"`
-	MaxTokens           int             `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitzero"`
+	MaxTokens           int             `json:"max_tokens,omitzero"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitzero"`
 	Messages            []message       `json:"messages"`
-	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
+	ResponseFormat      *responseFormat `json:"response_format,omitzero"`
 }
 
 // request builds a request holding one user message. It sends what the
@@ -207,7 +208,7 @@ type message struct {
 type part struct {
 	Type     string    `json:"type"`
 	Text     string    `json:"text,omitempty"`
-	ImageURL *imageURL `json:"image_url,omitempty"`
+	ImageURL *imageURL `json:"image_url,omitzero"`
 }
 
 type imageURL struct {
@@ -220,9 +221,9 @@ type responseFormat struct {
 }
 
 type jsonSchema struct {
-	Name   string          `json:"name"`
-	Strict bool            `json:"strict"`
-	Schema json.RawMessage `json:"schema"`
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
+	Schema jsontext.Value `json:"schema"`
 }
 
 // response is what the adapter reads of a chat completions reply.
@@ -231,8 +232,8 @@ type response struct {
 	Choices []struct {
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Content json.RawMessage `json:"content"`
-			Refusal string          `json:"refusal"`
+			Content jsontext.Value `json:"content"`
+			Refusal string         `json:"refusal"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage struct {
@@ -255,7 +256,7 @@ type completion struct {
 // the endpoint rejects is the reader's misconfiguration, and content the
 // model declines is refused.
 func (c *client) complete(ctx context.Context, credential reader.Credential, req request) (completion, error) {
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(req, outboundJSON)
 	if err != nil {
 		return completion{}, &reader.Error{Class: reader.Permanent, Detail: "the request could not be encoded", Err: err}
 	}
@@ -285,7 +286,7 @@ func (c *client) complete(ctx context.Context, credential reader.Credential, req
 	}
 
 	var res response
-	if err := json.Unmarshal(raw, &res); err != nil || len(res.Choices) == 0 {
+	if err := json.Unmarshal(raw, &res, foreignJSON); err != nil || len(res.Choices) == 0 {
 		return completion{}, reader.Errorf(reader.Invalid, "the endpoint's reply is not a chat completion")
 	}
 	choice := res.Choices[0]
@@ -302,13 +303,13 @@ func (c *client) complete(ctx context.Context, credential reader.Credential, req
 
 // text reads a message's content, which an endpoint sends either as a
 // string or as a list of parts.
-func text(content json.RawMessage) string {
+func text(content jsontext.Value) string {
 	var s string
-	if json.Unmarshal(content, &s) == nil {
+	if json.Unmarshal(content, &s, foreignJSON) == nil {
 		return s
 	}
 	var parts []part
-	if json.Unmarshal(content, &parts) != nil {
+	if json.Unmarshal(content, &parts, foreignJSON) != nil {
 		return ""
 	}
 	var b strings.Builder
@@ -323,13 +324,13 @@ func text(content json.RawMessage) string {
 // and its control characters escaped, so a well-formed answer is never
 // rewritten.
 func decode(content string, v any) error {
-	if json.Unmarshal([]byte(content), v) == nil {
+	if json.Unmarshal([]byte(content), v, foreignJSON) == nil {
 		return nil
 	}
-	if json.Unmarshal([]byte(llmjson.Repair(content)), v) == nil {
+	if json.Unmarshal([]byte(llmjson.Repair(content)), v, foreignJSON) == nil {
 		return nil
 	}
-	return json.Unmarshal([]byte(llmjson.Repair(repairEscapes(content))), v)
+	return json.Unmarshal([]byte(llmjson.Repair(repairEscapes(content))), v, foreignJSON)
 }
 
 // latex are the commands whose first letter is also a JSON escape. A model

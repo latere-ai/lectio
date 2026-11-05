@@ -5,6 +5,7 @@ package objects_test
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"strings"
 	"testing"
@@ -132,5 +133,34 @@ func TestADescriptionIsReadOntoItsFigure(t *testing.T) {
 	}
 	if err := objects.Describe(ctx, store, pages, map[string]string{"2.1": "parses/p/figures/bad.json"}); err == nil || !strings.Contains(err.Error(), "bad.json") {
 		t.Fatalf("an object that is no description: %v", err)
+	}
+}
+
+// A value is stored with its members in order of their names, so the same
+// value is the same bytes, and text that is not UTF-8 is stored as U+FFFD.
+func TestAValueIsStoredAsTheSameBytes(t *testing.T) {
+	ctx := context.Background()
+	store := blob.NewMemory()
+	if err := objects.Put(ctx, store, "k", map[string]any{"b": 1, "a": "x\xffy", "c": []int(nil)}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := store.Get(ctx, "k")
+	if want := "{\"a\":\"x�y\",\"b\":1,\"c\":[]}"; err != nil || string(raw) != want {
+		t.Errorf("%s, %v, want %s", raw, err, want)
+	}
+}
+
+// A raw value a reader returned is stored and read as it came, a repeated
+// name included.
+func TestARawValueWithARepeatedNameIsStored(t *testing.T) {
+	ctx := context.Background()
+	store := blob.NewMemory()
+	in := map[string]jsontext.Value{"data": jsontext.Value(`{"a":1,"a":2}`)}
+	if err := objects.Put(ctx, store, "k", in); err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]jsontext.Value
+	if err := objects.Get(ctx, store, "k", &out); err != nil || string(out["data"]) != `{"a":1,"a":2}` {
+		t.Fatalf("%s, %v", out["data"], err)
 	}
 }

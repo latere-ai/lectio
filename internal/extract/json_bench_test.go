@@ -4,7 +4,7 @@
 package extract
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strconv"
 	"strings"
@@ -117,7 +117,7 @@ func BenchmarkJSONExtractionWindowsMerge(b *testing.B) {
 				for j := 0; j < size.lines/windows; j += 10 {
 					citations["/lines/"+strconv.Itoa(j)+"/description"] = []string{strconv.Itoa(i+1) + "." + strconv.Itoa(j+1)}
 				}
-				parts[i] = Part{Data: json.RawMessage(data), Citations: citations}
+				parts[i] = Part{Data: jsontext.Value(data), Citations: citations}
 				total += len(data)
 			}
 			if out := Merge(parts); len(out.Data) == 0 {

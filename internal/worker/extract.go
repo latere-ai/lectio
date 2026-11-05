@@ -5,7 +5,7 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/assemble"
@@ -130,7 +130,7 @@ func (w *Worker) unchecked(ctx context.Context, c tasks.Claim, name string, s *t
 // under this claim's token and the task goes on. Either end carries what
 // the field says of how it was filled.
 func (w *Worker) conclude(ctx context.Context, c tasks.Claim, s *tasks.Settle, name string, in extract.Input, progress extract.Progress, step extract.Step, result extract.Result, findings []extract.Finding) {
-	summary, err := json.Marshal(progress.Summary(in))
+	summary, err := json.Marshal(progress.Summary(in), storedJSON)
 	if err != nil {
 		permanent(s, fault.Internal, "the field's summary does not encode")
 		return

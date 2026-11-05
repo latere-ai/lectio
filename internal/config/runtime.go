@@ -5,7 +5,8 @@ package config
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"regexp"
@@ -14,7 +15,15 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"latere.ai/x/lectio/internal/jsontree"
 	"latere.ai/x/lectio/reader/stub"
+)
+
+// foreignJSON reads a stored spec the way it was written by hand: duplicate
+// names and invalid UTF-8 are accepted.
+var foreignJSON = json.JoinOptions(
+	jsontext.AllowDuplicateNames(true),
+	jsontext.AllowInvalidUTF8(true),
 )
 
 // Readers changed at runtime (specs/019-readers-at-runtime.md): the readers
@@ -199,10 +208,9 @@ func addedDocument(a Added, endpoints []string) (document, error) {
 	doc := document{APIVersion: APIVersion, Kind: "Reader", source: SourceAdded, raw: a.Spec,
 		where: fmt.Sprintf("the stored reader %q", a.Name)}
 	doc.Metadata.Name = a.Name
-	var members map[string]any
-	dec := json.NewDecoder(bytes.NewReader(a.Spec))
-	dec.UseNumber()
-	if err := dec.Decode(&members); err != nil || members == nil {
+	tree, err := jsontree.Read(jsontext.NewDecoder(bytes.NewReader(a.Spec), foreignJSON))
+	members, _ := tree.(map[string]any)
+	if err != nil || members == nil {
 		return document{}, fmt.Errorf("%s: the spec is not one JSON object", doc.where)
 	}
 	switch adapter, _ := members["adapter"].(string); adapter {
@@ -221,7 +229,7 @@ func addedDocument(a Added, endpoints []string) (document, error) {
 	}
 	// JSON is YAML, so the spec decodes as the file's does, with its
 	// numbers as the numbers they were written as.
-	raw, err := json.Marshal(members)
+	raw, err := json.Marshal(members, json.Deterministic(true))
 	if err != nil {
 		return document{}, fmt.Errorf("%s: %w", doc.where, err)
 	}
@@ -238,7 +246,7 @@ func addedDocument(a Added, endpoints []string) (document, error) {
 func policyDocument(spec []byte) (document, error) {
 	doc := document{APIVersion: APIVersion, Kind: "Policy", source: SourceSet, where: "the stored policy"}
 	doc.Metadata.Name = "stored"
-	if !json.Valid(spec) {
+	if !jsontext.Value(spec).IsValid(foreignJSON) {
 		return document{}, errors.New("config: the stored policy is not one JSON object")
 	}
 	if err := yaml.Unmarshal(spec, &doc.Spec); err != nil {

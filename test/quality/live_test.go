@@ -6,7 +6,7 @@ package quality_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -266,7 +266,10 @@ func launch(t *testing.T, bin, logPath, token string, env map[string]string) *se
 			t.Fatal(err)
 		}
 		for line := range strings.SplitSeq(string(logged), "\n") {
-			var entry struct{ Msg, Addr string }
+			var entry struct {
+				Msg  string `json:"msg"`
+				Addr string `json:"addr"`
+			}
 			if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "listening" && entry.Addr != "" {
 				srv.base = "http://" + entry.Addr + "/v1"
 				return srv

@@ -4,7 +4,7 @@
 package access_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -209,7 +209,7 @@ func bare(d *access.OwnerPolicy, token string) http.Handler {
 			return
 		}
 		var req authz.Request
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || !authorizer.Known(req.Action) {
+		if err := json.UnmarshalRead(io.LimitReader(r.Body, 1<<20), &req); err != nil || !authorizer.Known(req.Action) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -219,7 +219,7 @@ func bare(d *access.OwnerPolicy, token string) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"allow": decision.Allow, "reason": decision.Reason, "filter": decision.Filter,
 		})
 	})

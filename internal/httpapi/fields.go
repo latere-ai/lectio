@@ -5,7 +5,7 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"regexp"
 	"slices"
@@ -31,11 +31,11 @@ var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 // fieldRequest is the body of a request for an extraction.
 type fieldRequest struct {
-	Name         string          `json:"name"`
-	Schema       json.RawMessage `json:"schema"`
-	Instructions string          `json:"instructions"`
-	Citations    *bool           `json:"citations"`
-	Extractor    string          `json:"extractor"`
+	Name         string         `json:"name"`
+	Schema       jsontext.Value `json:"schema"`
+	Instructions string         `json:"instructions"`
+	Citations    *bool          `json:"citations"`
+	Extractor    string         `json:"extractor"`
 }
 
 // citationView is a citation with where its block is: the page, and the
@@ -52,18 +52,18 @@ type citationView struct {
 type fieldView struct {
 	Name         string           `json:"name"`
 	State        string           `json:"state"`
-	Schema       json.RawMessage  `json:"schema,omitempty"`
+	Schema       jsontext.Value   `json:"schema,omitzero"`
 	Instructions string           `json:"instructions,omitempty"`
-	Data         json.RawMessage  `json:"data,omitempty"`
+	Data         jsontext.Value   `json:"data,omitzero"`
 	Citations    map[string][]any `json:"citations,omitempty"`
 	Model        string           `json:"model,omitempty"`
 	Constrained  bool             `json:"constrained"`
-	Attempts     int              `json:"attempts,omitempty"`
-	Windows      int              `json:"windows,omitempty"`
-	Usage        *document.Usage  `json:"usage,omitempty"`
-	Error        *document.Error  `json:"error,omitempty"`
+	Attempts     int              `json:"attempts,omitzero"`
+	Windows      int              `json:"windows,omitzero"`
+	Usage        *document.Usage  `json:"usage,omitzero"`
+	Error        *document.Error  `json:"error,omitzero"`
 	Set          string           `json:"set,omitempty"`
-	SetVersion   int              `json:"set_version,omitempty"`
+	SetVersion   int              `json:"set_version,omitzero"`
 }
 
 // viewField is a field as the API returns it, each citation a ref.

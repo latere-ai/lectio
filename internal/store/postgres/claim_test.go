@@ -5,7 +5,7 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"slices"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
 )
 
@@ -111,7 +112,7 @@ func TestTheClaimReadsTheQueueThroughItsIndex(t *testing.T) {
 		if prev != nil {
 			req.Settles = []tasks.Settle{done(*prev)}
 		}
-		doc, err := json.Marshal(req)
+		doc, err := json.Marshal(req, postgres.SQLJSON)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -195,7 +196,7 @@ func TestTheClaimReadsTheQueueThroughItsIndex(t *testing.T) {
 	// group can run and a poll claims nothing. It must find that out without
 	// reading the queue row by row.
 	h.exec(`UPDATE pools SET max_in_flight = 1`)
-	poll, err := json.Marshal(tasks.Request{Free: 1, Held: []tasks.Held{{Parse: prev.Parse, Task: prev.Task, Token: prev.Token}}})
+	poll, err := json.Marshal(tasks.Request{Free: 1, Held: []tasks.Held{{Parse: prev.Parse, Task: prev.Task, Token: prev.Token}}}, postgres.SQLJSON)
 	if err != nil {
 		t.Fatal(err)
 	}

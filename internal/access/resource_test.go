@@ -4,7 +4,7 @@
 package access_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
 	"slices"
 	"testing"
@@ -54,8 +54,8 @@ func TestAStoredParseOnTheWire(t *testing.T) {
 }
 
 func jsonEqual(a, b any) bool {
-	x, errA := json.Marshal(a)
-	y, errB := json.Marshal(b)
+	x, errA := json.Marshal(a, json.Deterministic(true))
+	y, errB := json.Marshal(b, json.Deterministic(true))
 	return errA == nil && errB == nil && string(x) == string(y)
 }
 

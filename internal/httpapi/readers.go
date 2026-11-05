@@ -6,7 +6,9 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -45,25 +47,25 @@ type readerView struct {
 	Boxes   bool            `json:"boxes"`
 	Kinds   []document.Kind `json:"kinds,omitempty"`
 	Version string          `json:"version,omitempty"`
-	Default bool            `json:"default,omitempty"`
+	Default bool            `json:"default,omitzero"`
 	// TextLayer says the reader reads a page from the text its file carries
 	// and calls no model, so a console keeps it out of a picker of models
 	// while the routing policy still tries it first.
-	TextLayer bool `json:"text_layer,omitempty"`
+	TextLayer bool `json:"text_layer,omitzero"`
 	// Source is configured or added; Adapter and Model are what its spec
 	// names; Describes and Extracts say what it does besides reading
 	// pages; Spec is an added reader's spec as it was stored.
-	Source    string          `json:"source"`
-	Adapter   string          `json:"adapter,omitempty"`
-	Model     string          `json:"model,omitempty"`
-	Describes bool            `json:"describes"`
-	Extracts  bool            `json:"extracts"`
-	Spec      json.RawMessage `json:"spec,omitempty"`
+	Source    string         `json:"source"`
+	Adapter   string         `json:"adapter,omitempty"`
+	Model     string         `json:"model,omitempty"`
+	Describes bool           `json:"describes"`
+	Extracts  bool           `json:"extracts"`
+	Spec      jsontext.Value `json:"spec,omitzero"`
 }
 
 type imageView struct {
-	DPI      int    `json:"dpi,omitempty"`
-	LongEdge int    `json:"long_edge,omitempty"`
+	DPI      int    `json:"dpi,omitzero"`
+	LongEdge int    `json:"long_edge,omitzero"`
 	Format   string `json:"format,omitempty"`
 }
 
@@ -123,7 +125,7 @@ func viewReader(set *config.Readers, name string, withSpec bool) (readerView, bo
 		v.Source = config.SourceConfigured
 	}
 	if spec := set.Specs[name]; withSpec && len(spec) > 0 {
-		v.Spec = json.RawMessage(spec)
+		v.Spec = jsontext.Value(spec)
 	}
 	return v, true
 }
@@ -192,12 +194,12 @@ func specBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	if err != nil {
 		return nil, fault.New(fault.InvalidRequest, "the body is over %d bytes or stopped before its end", maxBody)
 	}
-	var members map[string]json.RawMessage
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	if err := dec.Decode(&members); err != nil || members == nil {
+	var members map[string]jsontext.Value
+	dec := jsontext.NewDecoder(bytes.NewReader(raw))
+	if err := json.UnmarshalDecode(dec, &members); err != nil || members == nil {
 		return nil, fault.New(fault.InvalidRequest, "the body is not a JSON object")
 	}
-	if dec.More() {
+	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
 		return nil, fault.New(fault.InvalidRequest, "the body holds more than one JSON value")
 	}
 	return bytes.TrimSpace(raw), nil

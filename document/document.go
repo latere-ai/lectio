@@ -9,7 +9,7 @@
 package document
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"slices"
@@ -143,13 +143,13 @@ type Block struct {
 	// not what the document says and is never cited as such.
 	Description string `json:"description,omitempty"`
 	// Figure is what a describer found a block of KindFigure to be.
-	Figure *Figure `json:"figure,omitempty"`
+	Figure *Figure `json:"figure,omitzero"`
 	// Level is the heading depth, 1 to 6, on a title or a heading.
-	Level int `json:"level,omitempty"`
+	Level int `json:"level,omitzero"`
 	// Table is the structure of a block of KindTable.
-	Table *Table `json:"table,omitempty"`
+	Table *Table `json:"table,omitzero"`
 	// Repeated marks a running header or footer after its first occurrence.
-	Repeated bool   `json:"repeated,omitempty"`
+	Repeated bool   `json:"repeated,omitzero"`
 	Flags    []Flag `json:"flags,omitempty"`
 }
 
@@ -177,12 +177,12 @@ type Table struct {
 type Cell struct {
 	Row     int `json:"row"`
 	Col     int `json:"col"`
-	RowSpan int `json:"row_span,omitempty"`
-	ColSpan int `json:"col_span,omitempty"`
+	RowSpan int `json:"row_span,omitzero"`
+	ColSpan int `json:"col_span,omitzero"`
 	// Header marks a cell of a header row or column.
-	Header bool   `json:"header,omitempty"`
+	Header bool   `json:"header,omitzero"`
 	Text   string `json:"text"`
-	Box    *Box   `json:"box,omitempty"`
+	Box    *Box   `json:"box,omitzero"`
 }
 
 // Ref renders a block's address.
@@ -256,9 +256,9 @@ type Error struct {
 // Usage is what a piece of work consumed. Cost and Currency are set only
 // when the model endpoint reported a cost.
 type Usage struct {
-	Pages        int    `json:"pages,omitempty"`
-	InputTokens  int64  `json:"input_tokens,omitempty"`
-	OutputTokens int64  `json:"output_tokens,omitempty"`
+	Pages        int    `json:"pages,omitzero"`
+	InputTokens  int64  `json:"input_tokens,omitzero"`
+	OutputTokens int64  `json:"output_tokens,omitzero"`
 	Cost         string `json:"cost,omitempty"`
 	Currency     string `json:"currency,omitempty"`
 }
@@ -280,24 +280,24 @@ type Page struct {
 	// pixels for images. Boxes do not depend on them.
 	Width    float64    `json:"width"`
 	Height   float64    `json:"height"`
-	Rotation int        `json:"rotation,omitempty"`
+	Rotation int        `json:"rotation,omitzero"`
 	State    PageState  `json:"state"`
 	Source   PageSource `json:"source,omitempty"`
 	// Reader and Model name what read the page. Both are empty on a native
 	// page, and Model is empty on a page read from its text layer.
 	Reader   string `json:"reader,omitempty"`
 	Model    string `json:"model,omitempty"`
-	Attempts int    `json:"attempts,omitempty"`
+	Attempts int    `json:"attempts,omitzero"`
 	// Reused reports that the result was taken from an earlier read of the
 	// same page of the same bytes by the same reader, and no model was
 	// called for it in this parse.
-	Reused bool `json:"reused,omitempty"`
+	Reused bool `json:"reused,omitzero"`
 	// Truncated reports that the reader's reply ended at its output limit:
 	// the blocks are what it finished, and the page may hold more.
-	Truncated bool    `json:"truncated,omitempty"`
+	Truncated bool    `json:"truncated,omitzero"`
 	Blocks    []Block `json:"blocks"`
-	Usage     *Usage  `json:"usage,omitempty"`
-	Error     *Error  `json:"error,omitempty"`
+	Usage     *Usage  `json:"usage,omitzero"`
+	Error     *Error  `json:"error,omitzero"`
 }
 
 // Validate reports the first thing about a page that the model forbids: a
@@ -379,9 +379,9 @@ const (
 // Field is the result of one extraction: an object in the shape of the
 // caller's schema, and for each value the blocks it was read from.
 type Field struct {
-	Name  string          `json:"name"`
-	State FieldState      `json:"state"`
-	Data  json.RawMessage `json:"data,omitempty"`
+	Name  string         `json:"name"`
+	State FieldState     `json:"state"`
+	Data  jsontext.Value `json:"data,omitzero"`
 	// Citations maps a JSON pointer into Data to the refs of the blocks the
 	// value came from.
 	Citations map[string][]string `json:"citations,omitempty"`
@@ -389,10 +389,10 @@ type Field struct {
 	// Constrained reports whether the schema was enforced by the model's
 	// decoding and not only stated in the prompt.
 	Constrained bool   `json:"constrained"`
-	Attempts    int    `json:"attempts,omitempty"`
-	Windows     int    `json:"windows,omitempty"`
-	Usage       *Usage `json:"usage,omitempty"`
-	Error       *Error `json:"error,omitempty"`
+	Attempts    int    `json:"attempts,omitzero"`
+	Windows     int    `json:"windows,omitzero"`
+	Usage       *Usage `json:"usage,omitzero"`
+	Error       *Error `json:"error,omitzero"`
 }
 
 // PageSummary is a page without its blocks, as the document index lists it.
@@ -401,7 +401,7 @@ type PageSummary struct {
 	State  PageState  `json:"state"`
 	Source PageSource `json:"source,omitempty"`
 	Blocks int        `json:"blocks"`
-	Error  *Error     `json:"error,omitempty"`
+	Error  *Error     `json:"error,omitzero"`
 }
 
 // Summary reduces a page to its entry in the document index.

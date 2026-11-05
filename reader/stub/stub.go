@@ -12,7 +12,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"sync"
@@ -107,9 +108,9 @@ func (Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (reader.
 		return reader.ExtractResult{}, reader.FromTransport(err)
 	}
 	var schema struct {
-		Properties map[string]json.RawMessage `json:"properties"`
+		Properties map[string]jsontext.Value `json:"properties"`
 	}
-	if err := json.Unmarshal(in.Schema, &schema); err != nil {
+	if err := json.Unmarshal(in.Schema, &schema, foreignJSON); err != nil {
 		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the schema is not JSON")
 	}
 
@@ -132,7 +133,7 @@ func (Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (reader.
 			out.Citations["/"+name] = []string{ref}
 		}
 	}
-	encoded, err := json.Marshal(data)
+	encoded, err := json.Marshal(data, outboundJSON)
 	if err != nil {
 		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the object does not encode")
 	}

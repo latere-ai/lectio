@@ -5,7 +5,8 @@ package quality
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -41,20 +42,28 @@ type Page struct {
 type Block struct {
 	Kind document.Kind `json:"kind"`
 	// Level is the depth a title or a heading has on its page.
-	Level int `json:"level,omitempty"`
+	Level int `json:"level,omitzero"`
 	// Text is what the block prints, as plain text. A table has none: its
 	// cells are its text. A figure's and a formula's are kept for a person
 	// to read and are not compared.
 	Text string `json:"text,omitempty"`
 	// Box is where the block lies on its page, as a block's box is, when
 	// the file's layout is known.
-	Box *document.Box `json:"box,omitempty"`
+	Box *document.Box `json:"box,omitzero"`
 	// Rows, Cols and Cells are a table's, every cell listed, an empty one
 	// too.
-	Rows  int             `json:"rows,omitempty"`
-	Cols  int             `json:"cols,omitempty"`
+	Rows  int             `json:"rows,omitzero"`
+	Cols  int             `json:"cols,omitzero"`
 	Cells []document.Cell `json:"cells,omitempty"`
 }
+
+// foreignJSON reads JSON written by hand: duplicate names, invalid UTF-8 and
+// any letter case in a member name are accepted.
+var foreignJSON = json.JoinOptions(
+	jsontext.AllowDuplicateNames(true),
+	jsontext.AllowInvalidUTF8(true),
+	json.MatchCaseInsensitiveNames(true),
+)
 
 // Parse reads a truth and refuses one that does not hold together: an
 // unknown member, a kind outside the set, a table with no cell or a cell
@@ -62,9 +71,8 @@ type Block struct {
 // page, or a span or a heading that addresses no block.
 func Parse(data []byte) (Truth, error) {
 	var t Truth
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(data), foreignJSON)
+	if err := json.UnmarshalDecode(dec, &t, foreignJSON, json.RejectUnknownMembers(true)); err != nil {
 		return Truth{}, fmt.Errorf("the truth is not read: %w", err)
 	}
 	for i, p := range t.Pages {

@@ -5,7 +5,8 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -133,7 +134,7 @@ func (b *bench) assembled(parseID string, pages ...document.Page) string {
 // extraction is a claim of the task that fills a field of the name, of a
 // parse whose index is under the key.
 func extraction(parseID, name string, token int64, index, schema, progress string) tasks.Claim {
-	request, err := json.Marshal(tasks.Field{Schema: json.RawMessage(schema), Instructions: "Amounts are in euro.", Citations: true})
+	request, err := json.Marshal(tasks.Field{Schema: jsontext.Value(schema), Instructions: "Amounts are in euro.", Citations: true})
 	if err != nil {
 		panic(err)
 	}
@@ -285,7 +286,7 @@ func TestALongDocumentIsExtractedOneWindowAClaim(t *testing.T) {
 func TestAReplyThatFailsValidationIsRepairedInTheNextClaim(t *testing.T) {
 	ext := &asking{answers: func(n int, req reader.ExtractRequest) (reader.ExtractResult, error) {
 		if n == 1 {
-			return reader.ExtractResult{Data: json.RawMessage(`{"number":42,"total":7}`), Citations: map[string][]string{"/number": {"1.2"}}, Model: "text-model"}, nil
+			return reader.ExtractResult{Data: jsontext.Value(`{"number":42,"total":7}`), Citations: map[string][]string{"/number": {"1.2"}}, Model: "text-model"}, nil
 		}
 		return honest(req.Text, false), nil
 	}}
@@ -311,7 +312,7 @@ func TestAReplyThatFailsValidationIsRepairedInTheNextClaim(t *testing.T) {
 	// A model that never satisfies the schema: 3 calls, then the field
 	// fails.
 	stubborn := &asking{answers: func(int, reader.ExtractRequest) (reader.ExtractResult, error) {
-		return reader.ExtractResult{Data: json.RawMessage(`{"number":"INV-0042","total":"SEVEN"}`), Model: "text-model"}, nil
+		return reader.ExtractResult{Data: jsontext.Value(`{"number":"INV-0042","total":"SEVEN"}`), Model: "text-model"}, nil
 	}}
 	b = extracting(t, stubborn)
 	index = b.assembled("prs_b", leaf(1, "Invoice INV-0042", "Total: 7"))
@@ -367,7 +368,7 @@ func TestAValueTheDocumentDoesNotStateFailsTheFieldAndIsNeverMadeUp(t *testing.T
 func TestAReplyThatWouldCostTooMuchToCheckFailsTheFieldInOneCall(t *testing.T) {
 	nested := strings.Repeat(`{"a":`, 40) + `{}` + strings.Repeat(`}`, 40)
 	ext := &asking{answers: func(int, reader.ExtractRequest) (reader.ExtractResult, error) {
-		return reader.ExtractResult{Data: json.RawMessage(nested), Model: "text-model", Usage: document.Usage{InputTokens: 9, OutputTokens: 240}}, nil
+		return reader.ExtractResult{Data: jsontext.Value(nested), Model: "text-model", Usage: document.Usage{InputTokens: 9, OutputTokens: 240}}, nil
 	}}
 	b := extracting(t, ext)
 	index := b.assembled("prs_a", leaf(1, "Nest a 40 times"))
@@ -587,7 +588,7 @@ func TestAnExtractionEndsForItsOwnReasonsWithNoCall(t *testing.T) {
 	for name, answers := range map[string]func(int, reader.ExtractRequest) (reader.ExtractResult, error){
 		"the result": nil,
 		"the progress": func(int, reader.ExtractRequest) (reader.ExtractResult, error) {
-			return reader.ExtractResult{Data: json.RawMessage(`{}`)}, nil
+			return reader.ExtractResult{Data: jsontext.Value(`{}`)}, nil
 		},
 	} {
 		writer := &asking{answers: answers}
@@ -716,7 +717,7 @@ func TestAnExtractionOfAParseWithNoIndexReadsWhatWasRead(t *testing.T) {
 	if s := b.w.run(ctx, unknown); s.Outcome != tasks.Done || len(ext.asked) != 1 {
 		t.Fatalf("a parse with no page: %+v, error %+v", s, s.Error)
 	}
-	c.Context.Manifest = json.RawMessage(`[`)
+	c.Context.Manifest = jsontext.Value(`[`)
 	if s := b.w.run(ctx, c); s.Outcome != tasks.Retryable {
 		t.Fatalf("a manifest that does not decode: %+v", s)
 	}
@@ -763,7 +764,7 @@ func obedient(t *testing.T) *httptest.Server {
 		if m := order.FindStringSubmatch(outside); m != nil {
 			content = `{"data":{"total":` + m[1] + `},"citations":[]}`
 		}
-		if err := json.NewEncoder(w).Encode(map[string]any{
+		if err := json.MarshalWrite(w, map[string]any{
 			"model":   "example-model",
 			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": content}}},
 			"usage":   map[string]any{"prompt_tokens": 100, "completion_tokens": 20},

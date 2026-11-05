@@ -5,7 +5,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"time"
 )
 
@@ -24,7 +24,7 @@ func (s *Store) Decode(ctx context.Context, into any, sql string, args ...any) e
 func SubmitDocument(sub Submission) (string, error) {
 	doc, err := json.Marshal(submission{
 		Submission: sub, DeadlineMS: sub.Deadline.Milliseconds(), RetentionMS: sub.Retention.Milliseconds(),
-	})
+	}, sqlJSON)
 	return string(doc), err
 }
 
@@ -35,6 +35,9 @@ func (s *Store) Reserve(ctx context.Context, group string, day time.Time, pages,
 	err = s.pool.QueryRow(ctx, `SELECT lectio_reserve($1, $2::date, $3, $4)`, group, day.Format(time.DateOnly), pages, limit).Scan(&reserved)
 	return reserved, err
 }
+
+// SQLJSON is the options every document sent to a statement is written with.
+var SQLJSON = sqlJSON
 
 // Bound is the unexported helper, for its own test.
 var Bound = bound

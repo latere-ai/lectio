@@ -5,7 +5,8 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,7 @@ func serve(t *testing.T) *endpoint {
 			_, _ = io.WriteString(w, e.body)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"model":   "model-that-answered",
 			"choices": []any{map[string]any{"finish_reason": e.finish, "message": map[string]any{"content": e.content}}},
 			"usage":   map[string]any{"prompt_tokens": 1200, "completion_tokens": 300},
@@ -486,7 +487,7 @@ func TestExtract(t *testing.T) {
 	e := serve(t)
 	e.content = `{"data":{"total":1280.5},"citations":[{"pointer":"/total","refs":["2.2"]},{"pointer":"/total","refs":["2.7"]},{"pointer":"","refs":["1.1"]},{"pointer":"/x","refs":[]}]}`
 	in := reader.ExtractRequest{
-		Schema: json.RawMessage(schema), Instructions: " Amounts are in euros. ", Citations: true,
+		Schema: jsontext.Value(schema), Instructions: " Amounts are in euros. ", Citations: true,
 		Text:     "[2.2] Total 1,280.50\n[2.7] Sum 1,280.50",
 		Previous: `{"data":{"total":"1,280.50"}}`, Problems: []string{"/total: expected number"},
 		Credential: reader.NewCredential(key),
@@ -521,7 +522,7 @@ func TestExtractConstrainedAndWithoutCitations(t *testing.T) {
 	e.content = `{"data":{"total":1},"citations":[{"pointer":"/total","refs":["1.1"]}]}`
 	x := e.extractor(t, func(c *Config) { c.Constrain = true })
 
-	got, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: json.RawMessage(schema), Text: "[1.1] Total 1", Constrain: true})
+	got, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: jsontext.Value(schema), Text: "[1.1] Total 1", Constrain: true})
 	if err != nil || !got.Constrained || got.Citations != nil {
 		t.Fatalf("Extract = %+v, %v; citations were not asked for", got, err)
 	}
@@ -529,7 +530,7 @@ func TestExtractConstrainedAndWithoutCitations(t *testing.T) {
 	// The schema the decoder enforces is derived from the caller's: closed,
 	// every member required, and every member allowed to be null, so a
 	// value the document does not state need not be invented.
-	if f == nil || f.JSONSchema.Name != "extraction" || !json.Valid(f.JSONSchema.Schema) || !strings.Contains(string(f.JSONSchema.Schema), `"total":{"type":["number","null"]}`) {
+	if f == nil || f.JSONSchema.Name != "extraction" || !f.JSONSchema.Schema.IsValid() || !strings.Contains(string(f.JSONSchema.Schema), `"total":{"type":["number","null"]}`) {
 		t.Fatalf("response format = %+v", f)
 	}
 	if ask := e.got.Messages[0].Content[0].Text; !strings.Contains(ask, "with an empty list of citations") || strings.Contains(ask, "list the refs") || e.auth != "" {
@@ -537,7 +538,7 @@ func TestExtractConstrainedAndWithoutCitations(t *testing.T) {
 	}
 
 	// The caller decides per schema; the extractor's own setting is a ceiling.
-	if got, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: json.RawMessage(schema), Text: "t"}); err != nil || got.Constrained || e.got.ResponseFormat != nil {
+	if got, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: jsontext.Value(schema), Text: "t"}); err != nil || got.Constrained || e.got.ResponseFormat != nil {
 		t.Fatalf("a call that does not ask for it is not constrained: %+v, %v", got, err)
 	}
 }
@@ -552,7 +553,7 @@ func TestAValueTheDocumentDoesNotStateIsLeftOut(t *testing.T) {
 		"lines":{"type":"array","items":{"type":"object","properties":{"sku":{"type":"string"},"qty":{"type":"integer"}}}}}}`
 	e := serve(t)
 	e.content = `{"data":{"number":"A-1","total":null,"note":null,"buyer":{"name":"ACME","vat":null},"lines":[{"sku":"x","qty":null},{"sku":null,"qty":2}],"extra":null},"citations":[]}`
-	got, err := e.extractor(t).Extract(context.Background(), reader.ExtractRequest{Schema: json.RawMessage(callers), Text: "t"})
+	got, err := e.extractor(t).Extract(context.Background(), reader.ExtractRequest{Schema: jsontext.Value(callers), Text: "t"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +581,7 @@ func TestTheEnforcedSchemaLetsEveryMemberBeNull(t *testing.T) {
 	}`), &callers); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(strict(callers, false))
+	raw, err := json.Marshal(strict(callers, false), json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +617,7 @@ func TestExtractFailures(t *testing.T) {
 		class reader.Class
 	}{
 		{name: "text past the bound", in: func(r *reader.ExtractRequest) { r.Text = strings.Repeat("x", 101) }, class: reader.Permanent},
-		{name: "a schema that is not JSON", in: func(r *reader.ExtractRequest) { r.Schema = json.RawMessage("{") }, class: reader.Permanent},
+		{name: "a schema that is not JSON", in: func(r *reader.ExtractRequest) { r.Schema = jsontext.Value("{") }, class: reader.Permanent},
 		{name: "a reply cut short", set: func(e *endpoint) { e.finish = "length" }, class: reader.Invalid},
 		{name: "prose", set: func(e *endpoint) { e.content = "The total is 12." }, class: reader.Invalid},
 		{name: "no data", set: func(e *endpoint) { e.content = `{"citations":[]}` }, class: reader.Invalid},
@@ -628,7 +629,7 @@ func TestExtractFailures(t *testing.T) {
 		if tc.set != nil {
 			tc.set(e)
 		}
-		in := reader.ExtractRequest{Schema: json.RawMessage(schema), Text: "[1.1] Total 1"}
+		in := reader.ExtractRequest{Schema: jsontext.Value(schema), Text: "[1.1] Total 1"}
 		if tc.in != nil {
 			tc.in(&in)
 		}

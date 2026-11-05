@@ -35,7 +35,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -194,7 +194,7 @@ func (r *Reader) ReadPage(ctx context.Context, page reader.Page) (reader.Result,
 	}
 
 	var out reply
-	if json.Unmarshal(raw, &out) != nil || out.Elements == nil {
+	if json.Unmarshal(raw, &out, foreignJSON) != nil || out.Elements == nil {
 		return reader.Result{}, reader.Errorf(reader.Invalid, "the engine's reply holds no list of elements")
 	}
 	raws := make([]reader.Raw, 0, len(*out.Elements))

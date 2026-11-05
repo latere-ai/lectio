@@ -5,7 +5,8 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -431,7 +432,7 @@ func TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(invoice["data"])
+	data, err := json.Marshal(invoice["data"], json.Deterministic(true))
 	if err != nil || len(schema.Check(data, false)) != 0 || string(data) != `{"items":[{"name":"bolt","price":3},{"name":"nut","price":4}],"number":"INV-0042","total":7}` {
 		t.Fatalf("the object %s, %v, findings %v", data, err, schema.Check(data, false))
 	}
@@ -481,7 +482,7 @@ func TestTwoSchemasAreExtractedFromOneParseAndNoPageIsReadAgain(t *testing.T) {
 // schema_not_satisfied and the rules it broke, and the parse and its
 // document as they were.
 func TestAReplyThatViolatesTheSchemaIsRepairedOrTheFieldFails(t *testing.T) {
-	bad := reader.ExtractResult{Data: json.RawMessage(`{"number":42}`), Model: "text-model", Usage: document.Usage{InputTokens: 100, OutputTokens: 10}}
+	bad := reader.ExtractResult{Data: jsontext.Value(`{"number":42}`), Model: "text-model", Usage: document.Usage{InputTokens: 100, OutputTokens: 10}}
 	var stubborn atomic.Bool
 	model := &textModel{}
 	model.answers = func(n int, _ reader.ExtractRequest) (reader.ExtractResult, bool) {
@@ -537,7 +538,7 @@ func TestALongDocumentIsExtractedInWindowsThroughTheAPI(t *testing.T) {
 	if got["state"] != "succeeded" || got["windows"] != 4.0 || model.calls() != 4 || got["attempts"] != 1.0 {
 		t.Fatalf("the extraction in windows: %v after %d calls", got, model.calls())
 	}
-	data, err := json.Marshal(got["data"])
+	data, err := json.Marshal(got["data"], json.Deterministic(true))
 	if err != nil || string(data) != `{"items":[{"name":"bolt","price":3},{"name":"nut","price":4}],"number":"INV-0042","total":7}` {
 		t.Fatalf("the merged object %s, %v", data, err)
 	}
@@ -741,7 +742,7 @@ func TestAnExtractionIsHeldToTheExtractorsItsCallerMayName(t *testing.T) {
 	model := &textModel{}
 	rec := &recorder{answer: func(q authz.Request) (authz.Decision, error) {
 		if q.Action == authorizer.ActionParseCreate && q.Resource.ID != "" {
-			return authz.Decision{Allow: true, Limits: json.RawMessage(`{"readers":["layout"]}`)}, nil
+			return authz.Decision{Allow: true, Limits: jsontext.Value(`{"readers":["layout"]}`)}, nil
 		}
 		return authz.Decision{Allow: true}, nil
 	}}

@@ -5,7 +5,8 @@ package quality
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -193,7 +194,7 @@ func (r *Report) Failed() []string {
 
 // JSON is the report as a file of the same numbers the Markdown prints.
 func (r *Report) JSON() ([]byte, error) {
-	out, err := json.MarshalIndent(r, "", "  ")
+	out, err := json.Marshal(r, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}

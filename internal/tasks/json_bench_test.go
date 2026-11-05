@@ -4,7 +4,8 @@
 package tasks
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 
 // benchPageResult is the stored result of one page of n blocks, as a
 // worker reports it in a settle.
-func benchPageResult(b *testing.B, page, n int) json.RawMessage {
+func benchPageResult(b *testing.B, page, n int) jsontext.Value {
 	b.Helper()
 	p := document.Page{Number: page, Width: 595, Height: 842, State: document.PageSucceeded, Source: document.SourceReader,
 		Reader: "default", Model: "reader-model-2026-03", Attempts: 1,
@@ -118,7 +119,7 @@ func benchReply(claims, pages int) Reply {
 	for i := range selected {
 		selected[i] = fmt.Sprint(i + 1)
 	}
-	manifest := json.RawMessage(`{"pages_total":` + fmt.Sprint(pages) + `,"selected":[` + strings.Join(selected, ",") + `],"media_type":"application/pdf","work":"parses/prs_01JQ3Y7K8M/work.pdf","token":1001}`)
+	manifest := jsontext.Value(`{"pages_total":` + fmt.Sprint(pages) + `,"selected":[` + strings.Join(selected, ",") + `],"media_type":"application/pdf","work":"parses/prs_01JQ3Y7K8M/work.pdf","token":1001}`)
 	until := time.Date(2026, 3, 14, 9, 30, 5, 0, time.UTC)
 	reply := Reply{SleepUntil: &until, Lost: []Ref{}, Refused: []Ref{}}
 	for i := 1; i <= claims; i++ {

@@ -5,7 +5,7 @@ package access_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net"
 	"net/http"
@@ -274,7 +274,7 @@ func TestOneRetryOnAConnectionFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		served.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{"allow": true}); err != nil {
+		if err := json.MarshalWrite(w, map[string]any{"allow": true}); err != nil {
 			t.Errorf("encode: %v", err)
 		}
 	}))

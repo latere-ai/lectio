@@ -21,7 +21,7 @@ require (
 	golang.org/x/net v0.62.0
 	golang.org/x/text v0.43.0
 	latere.ai/x/ci-gate v0.65.0
-	latere.ai/x/pkg v0.111.0
+	latere.ai/x/pkg v0.113.0
 )
 
 require (

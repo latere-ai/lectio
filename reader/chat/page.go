@@ -8,7 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,7 +46,7 @@ func ask(cfg Config) prompts.PageData {
 // pageSchema is the reply schema of a page, in the subset of JSON Schema
 // that constrained decoding accepts: every property required, no additional
 // properties, and no bounds on the box's length, which validation checks.
-var pageSchema = func() json.RawMessage {
+var pageSchema = func() jsontext.Value {
 	schema := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -68,7 +69,7 @@ var pageSchema = func() json.RawMessage {
 			},
 		},
 	}
-	raw, err := json.Marshal(schema)
+	raw, err := json.Marshal(schema, outboundJSON)
 	if err != nil {
 		panic(err) // the schema is a literal; it cannot fail to encode
 	}

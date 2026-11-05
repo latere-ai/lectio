@@ -5,7 +5,7 @@ package extract
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"maps"
 	"slices"
 
@@ -59,14 +59,14 @@ type Progress struct {
 	// Repairs how often that window's reply was sent back so far.
 	Previous string   `json:"previous,omitempty"`
 	Problems []string `json:"problems,omitempty"`
-	Repairs  int      `json:"repairs,omitempty"`
+	Repairs  int      `json:"repairs,omitzero"`
 
 	// Repaired counts the repairs over every window, Model is what the
 	// endpoint said answered last, and Constrained whether the schema was
 	// sent for enforcement.
-	Repaired    int    `json:"repaired,omitempty"`
+	Repaired    int    `json:"repaired,omitzero"`
 	Model       string `json:"model,omitempty"`
-	Constrained bool   `json:"constrained,omitempty"`
+	Constrained bool   `json:"constrained,omitzero"`
 }
 
 // Summary is what a field says of how it was filled, beside its object:
@@ -173,7 +173,7 @@ func (b *Bench) Take(ctx context.Context, schema *Schema, in Input, p *Progress,
 // the object holds nothing. It is filled when the schema asks for nothing,
 // and not satisfied otherwise.
 func (b *Bench) Empty(ctx context.Context, schema *Schema) (Step, Result, []Finding, error) {
-	empty := Result{Data: json.RawMessage(`{}`)}
+	empty := Result{Data: jsontext.Value(`{}`)}
 	findings, err := b.Check(ctx, schema, empty.Data, false)
 	switch {
 	case err != nil:
@@ -192,11 +192,11 @@ func reply(res reader.ExtractResult) string {
 		Refs    []string `json:"refs"`
 	}
 	wire := struct {
-		Data      json.RawMessage `json:"data"`
-		Citations []citation      `json:"citations"`
+		Data      jsontext.Value `json:"data"`
+		Citations []citation     `json:"citations"`
 	}{Data: res.Data, Citations: []citation{}}
-	if !json.Valid(res.Data) {
-		wire.Data = json.RawMessage(`null`)
+	if !res.Data.IsValid(jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true)) {
+		wire.Data = jsontext.Value(`null`)
 	}
 	for _, pointer := range slices.Sorted(maps.Keys(res.Citations)) {
 		wire.Citations = append(wire.Citations, citation{Pointer: pointer, Refs: res.Citations[pointer]})

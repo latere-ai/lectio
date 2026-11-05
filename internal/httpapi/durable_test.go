@@ -5,7 +5,7 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"log/slog"
 	"slices"
@@ -344,14 +344,14 @@ func TestTheDurableBackendSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	prepare := exchange(1)[0]
 	manifest := `{"media_type":"image/tiff","pages_total":4,"selected":[1,2,3,4],"source":"reader","work":"sources/x","token":1}`
 	exchange(0, tasks.Settle{Parse: prepare.Parse, Task: prepare.Task, Token: prepare.Token, Outcome: tasks.Done,
-		Prepare: &tasks.Prepared{Manifest: json.RawMessage(manifest), Pages: []int{1, 2, 3, 4}}})
+		Prepare: &tasks.Prepared{Manifest: jsontext.Value(manifest), Pages: []int{1, 2, 3, 4}}})
 	claims := exchange(3)
 	read := tasks.Settle{Parse: claims[0].Parse, Task: claims[0].Task, Token: claims[0].Token, Outcome: tasks.Done,
-		Output: "parses/prs_run/pages/1.1.json", Result: json.RawMessage(`{"blocks":2,"source":"reader"}`)}
+		Output: "parses/prs_run/pages/1.1.json", Result: jsontext.Value(`{"blocks":2,"source":"reader"}`)}
 	lost := tasks.Settle{Parse: claims[1].Parse, Task: claims[1].Task, Token: claims[1].Token, Outcome: tasks.Permanent,
 		Error: &tasks.Error{Code: "page_unreadable", Detail: "no"}}
 	odd := tasks.Settle{Parse: claims[2].Parse, Task: claims[2].Task, Token: claims[2].Token, Outcome: tasks.Done,
-		Output: "parses/prs_run/pages/3.1.json", Result: json.RawMessage(`"not a summary"`)}
+		Output: "parses/prs_run/pages/3.1.json", Result: jsontext.Value(`"not a summary"`)}
 	if err := objects.PutPage(ctx, objs, read.Output, objects.Page{Revision: 1, Image: "parses/prs_run/pages/1.1.png", Page: document.Page{Number: 1, State: document.PageSucceeded}}); err != nil {
 		t.Fatal(err)
 	}

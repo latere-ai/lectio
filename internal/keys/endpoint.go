@@ -6,7 +6,7 @@ package keys
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
@@ -277,12 +277,15 @@ type reply struct {
 	down *Unavailable
 }
 
+// jsonRequest is the body of a request to the endpoint.
+func jsonRequest(q question) ([]byte, error) { return json.Marshal(q, outboundJSON) }
+
 // request asks the endpoint once. No error it reports holds a byte of the
 // answer: an answer that is not the one the contract names may still hold a
 // key.
 func (e *Endpoint) request(ctx context.Context, q question) reply {
 	down := func(reason string, err error) reply { return reply{down: &Unavailable{Reason: reason, Err: err}} }
-	body, err := json.Marshal(q)
+	body, err := jsonRequest(q)
 	if err != nil {
 		return down("the request to the key endpoint could not be encoded", err)
 	}
@@ -321,7 +324,7 @@ func (e *Endpoint) request(ctx context.Context, q question) reply {
 		}}
 	}
 	var a issued
-	switch err := json.Unmarshal(raw, &a); {
+	switch err := json.Unmarshal(raw, &a, foreignJSON); {
 	case err != nil:
 		return down("the answer of the key endpoint is not a key and an expiry in RFC 3339", nil)
 	case a.Key == "":

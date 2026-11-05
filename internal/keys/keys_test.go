@@ -6,7 +6,7 @@ package keys
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -111,7 +111,7 @@ func newPlane(t *testing.T) *plane {
 		key, expires := keyOf(group, p.issued[group]), p.clock.now().Add(p.lifetime)
 		p.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{"key": key, "expires_at": expires.Format(time.RFC3339Nano)}); err != nil {
+		if err := json.MarshalWrite(w, map[string]any{"key": key, "expires_at": expires.Format(time.RFC3339Nano)}); err != nil {
 			t.Errorf("writing the answer: %v", err)
 		}
 	}))
@@ -580,8 +580,10 @@ func TestAnEndpointSourcePrintsNothingItHolds(t *testing.T) {
 			t.Fatalf("the source prints what it holds: %s", shown)
 		}
 	}
-	if raw, err := json.Marshal(map[string]any{"source": source, "key": key}); err != nil || strings.Contains(string(raw), bearer) || strings.Contains(string(raw), "sk-issued") {
-		t.Fatalf("the source as JSON: %s, %v", raw, err)
+	// A source holds no exported field, so it does not encode at all; what
+	// matters is that nothing it holds is written.
+	if raw, _ := json.Marshal(map[string]any{"source": source, "key": key}); strings.Contains(string(raw), bearer) || strings.Contains(string(raw), "sk-issued") {
+		t.Fatalf("the source as JSON: %s", raw)
 	}
 }
 

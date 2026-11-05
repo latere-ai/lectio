@@ -4,7 +4,7 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,7 +28,7 @@ type setView struct {
 	ID           string          `json:"id"`
 	Owner        string          `json:"owner,omitempty"`
 	Name         string          `json:"name"`
-	Schema       json.RawMessage `json:"schema"`
+	Schema       jsontext.Value  `json:"schema"`
 	Instructions string          `json:"instructions,omitempty"`
 	Citations    bool            `json:"citations"`
 	Extractor    string          `json:"extractor,omitempty"`

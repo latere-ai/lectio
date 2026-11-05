@@ -4,7 +4,7 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"net/http"
 	"testing"
 
@@ -30,7 +30,7 @@ func TestAnAllowsDefaultReaderReadsWhatNamesNone(t *testing.T) {
 		r.Readers = map[string]reader.Reader{"stub": &stub.Reader{}, "chosen": &stub.Reader{}}
 		r.Chain = []string{"stub"}
 		s.Authz = access.NewAuthorizer(&recorder{answer: func(authz.Request) (authz.Decision, error) {
-			return authz.Decision{Allow: true, Limits: json.RawMessage(limits)}, nil
+			return authz.Decision{Allow: true, Limits: jsontext.Value(limits)}, nil
 		}}, configured())
 	})
 	file := e.upload("scan.png", sheet(t))
@@ -43,7 +43,7 @@ func TestAnAllowsDefaultReaderReadsWhatNamesNone(t *testing.T) {
 
 	// The memory server has no extractor, so the default leaves the
 	// extraction to the policy, which names none.
-	asked, err := e.server.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)}, access.Decision{}, true)
+	asked, err := e.server.checkField(t.Context(), fieldRequest{Name: "title", Schema: jsontext.Value(`{"type":"object"}`)}, access.Decision{}, true)
 	if err != nil || asked.Extractor != "" {
 		t.Fatalf("an extraction with no default: %+v, %v", asked, err)
 	}
@@ -73,12 +73,12 @@ func TestADefaultReaderIsHeldToTheRoleItDoes(t *testing.T) {
 			t.Errorf("the default %q for %s: %q, %v", tc.def, tc.role, got, err)
 		}
 	}
-	asked, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
+	asked, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: jsontext.Value(`{"type":"object"}`)},
 		access.Decision{Limits: authorizer.Limits{Reader: "stub", Readers: []string{"stub"}}}, true)
 	if err != nil || asked.Extractor != "stub" {
 		t.Fatalf("an extraction under a default extractor: %+v, %v", asked, err)
 	}
-	if _, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)},
+	if _, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: jsontext.Value(`{"type":"object"}`)},
 		access.Decision{Limits: authorizer.Limits{Reader: "gone"}}, true); err == nil {
 		t.Fatal("an extraction under a default the server does not have was asked")
 	}
@@ -94,7 +94,7 @@ func TestASetsExtractionIsAskedAgainWithoutTheDefault(t *testing.T) {
 	}
 	s := &Server{Live: config.NewLive(set)}
 	d := access.Decision{Limits: authorizer.Limits{Reader: "stub"}}
-	if got, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: json.RawMessage(`{"type":"object"}`)}, d, false); err != nil || got.Extractor != "" {
+	if got, err := s.checkField(t.Context(), fieldRequest{Name: "title", Schema: jsontext.Value(`{"type":"object"}`)}, d, false); err != nil || got.Extractor != "" {
 		t.Fatalf("an ask of a set's extraction: %+v, %v", got, err)
 	}
 }

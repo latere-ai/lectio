@@ -8,7 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,7 +20,7 @@ import (
 
 // figureSchema is the reply schema of a figure, in the closed form a
 // constrained decoder takes.
-var figureSchema = func() json.RawMessage {
+var figureSchema = func() jsontext.Value {
 	raw, err := json.Marshal(map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -29,7 +30,7 @@ var figureSchema = func() json.RawMessage {
 			"description": map[string]any{"type": "string"},
 			"text":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
-	})
+	}, outboundJSON)
 	if err != nil {
 		panic(err) // the schema is a literal; it cannot fail to encode
 	}

@@ -4,7 +4,8 @@
 package tasks
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestASettleTravelsWithItsWaitInMilliseconds(t *testing.T) {
 		Parse: "prs_a", Task: "page-1", Token: 7, Outcome: Wait, RetryAfter: 7 * time.Second,
 		Usage: Usage{Calls: 1, InputTokens: 10, OutputTokens: 2}, Units: 5, Health: Unhealthy,
 		Error:   &Error{Code: "reader_unavailable", Detail: "a 503"},
-		Prepare: &Prepared{Manifest: json.RawMessage(`{"pages_total":2}`), Pages: []int{1, 2}},
+		Prepare: &Prepared{Manifest: jsontext.Value(`{"pages_total":2}`), Pages: []int{1, 2}},
 	}
 	doc, err := json.Marshal(s)
 	if err != nil {

@@ -5,7 +5,8 @@ package stub
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"reflect"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func TestReaderFailsOnDemand(t *testing.T) {
 
 func TestExtractor(t *testing.T) {
 	x := Extractor{}
-	schema := json.RawMessage(`{"type":"object","properties":{"total":{"type":"string"},"date":{"type":"string"}}}`)
+	schema := jsontext.Value(`{"type":"object","properties":{"total":{"type":"string"},"date":{"type":"string"}}}`)
 
 	got, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: schema, Text: "[2.3] Total 12.50\n[2.4] more", Citations: true})
 	if err != nil {
@@ -97,7 +98,7 @@ func TestExtractor(t *testing.T) {
 		t.Fatalf("a line without a ref cites nothing: %+v, %v", unreffed, err)
 	}
 
-	if _, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: json.RawMessage("{")}); reader.ClassOf(err) != reader.Permanent {
+	if _, err := x.Extract(context.Background(), reader.ExtractRequest{Schema: jsontext.Value("{")}); reader.ClassOf(err) != reader.Permanent {
 		t.Fatalf("a schema that is not JSON: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

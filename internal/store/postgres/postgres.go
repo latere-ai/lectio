@@ -21,7 +21,8 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -312,7 +313,7 @@ func (s *Store) prepare(ctx context.Context, settings tasks.Settings, readers fu
 			return fmt.Errorf("store: %w", err)
 		}
 	}
-	doc, err := json.Marshal(configOf(settings))
+	doc, err := json.Marshal(configOf(settings), sqlJSON)
 	if err != nil {
 		return fmt.Errorf("store: encoding the settings: %w", err)
 	}
@@ -430,7 +431,7 @@ func (s *Store) Exchange(ctx context.Context, worker string, req tasks.Request) 
 	if err := req.Validate(); err != nil {
 		return tasks.Reply{}, fmt.Errorf("store: %w", err)
 	}
-	doc, err := json.Marshal(req)
+	doc, err := json.Marshal(req, sqlJSON)
 	if err != nil {
 		return tasks.Reply{}, fmt.Errorf("store: encoding the exchange: %w", err)
 	}
@@ -490,7 +491,7 @@ type Submission struct {
 	// came and returned with the parse.
 	Options ParseOptions      `json:"options"`
 	Labels  map[string]string `json:"labels,omitempty"`
-	Origin  *Origin           `json:"origin,omitempty"`
+	Origin  *Origin           `json:"origin,omitzero"`
 
 	// IdempotencyKey makes the submit safe to repeat for 24 hours: a second
 	// submit of the owner with the key answers the parse the first made,
@@ -556,7 +557,7 @@ func (s *Store) Submit(ctx context.Context, sub Submission) (parse string, creat
 	}
 	doc, err := json.Marshal(submission{
 		Submission: sub, DeadlineMS: sub.Deadline.Milliseconds(), RetentionMS: sub.Retention.Milliseconds(),
-	})
+	}, sqlJSON)
 	if err != nil {
 		return "", false, fmt.Errorf("store: encoding the submit of %s: %w", sub.Parse, err)
 	}
@@ -638,29 +639,29 @@ func (s *Store) Retry(ctx context.Context, owner, parseID string) error {
 
 // Parse is a parse as the control plane holds it.
 type Parse struct {
-	ID               string          `json:"parse_id"`
-	Owner            string          `json:"owner"`
-	Group            string          `json:"group_id"`
-	Project          string          `json:"project_id"`
-	Class            tasks.Class     `json:"class"`
-	Priority         int             `json:"priority"`
-	Pin              string          `json:"pin"`
-	AllowFailedPages int             `json:"allow_failed_pages"`
-	State            string          `json:"state"`
-	PagesTotal       int             `json:"pages_total"`
-	PagesOpen        int             `json:"pages_open"`
-	PagesDone        int             `json:"pages_done"`
-	PagesFailed      int             `json:"pages_failed"`
-	Calls            int             `json:"calls"`
-	InputTokens      int64           `json:"input_tokens"`
-	OutputTokens     int64           `json:"output_tokens"`
-	Manifest         json.RawMessage `json:"manifest"`
-	Index            string          `json:"index_key"`
-	Error            *tasks.Error    `json:"error"`
-	DeadlineAt       time.Time       `json:"deadline_at"`
-	CreatedAt        time.Time       `json:"created_at"`
-	StartedAt        *time.Time      `json:"started_at"`
-	FinishedAt       *time.Time      `json:"finished_at"`
+	ID               string         `json:"parse_id"`
+	Owner            string         `json:"owner"`
+	Group            string         `json:"group_id"`
+	Project          string         `json:"project_id"`
+	Class            tasks.Class    `json:"class"`
+	Priority         int            `json:"priority"`
+	Pin              string         `json:"pin"`
+	AllowFailedPages int            `json:"allow_failed_pages"`
+	State            string         `json:"state"`
+	PagesTotal       int            `json:"pages_total"`
+	PagesOpen        int            `json:"pages_open"`
+	PagesDone        int            `json:"pages_done"`
+	PagesFailed      int            `json:"pages_failed"`
+	Calls            int            `json:"calls"`
+	InputTokens      int64          `json:"input_tokens"`
+	OutputTokens     int64          `json:"output_tokens"`
+	Manifest         jsontext.Value `json:"manifest"`
+	Index            string         `json:"index_key"`
+	Error            *tasks.Error   `json:"error"`
+	DeadlineAt       time.Time      `json:"deadline_at"`
+	CreatedAt        time.Time      `json:"created_at"`
+	StartedAt        *time.Time     `json:"started_at"`
+	FinishedAt       *time.Time     `json:"finished_at"`
 
 	// What the caller chose, and how many of the pages done were taken from
 	// an earlier read.
@@ -786,7 +787,7 @@ type Task struct {
 	Lane      string `json:"lane"`
 
 	// Result is what the task said of its output when it succeeded.
-	Result json.RawMessage `json:"result"`
+	Result jsontext.Value `json:"result"`
 
 	// Event is the change of the parse that settled the task, for a page
 	// that succeeded or failed, and 0 for a task that has not settled.
@@ -887,7 +888,7 @@ type Queue struct {
 func (s *Store) Queue(ctx context.Context, groups []string) (Queue, error) {
 	// A nil list encodes as the JSON null, which the function reads as
 	// every group that holds work.
-	scope, err := json.Marshal(groups)
+	scope, err := json.Marshal(groups, sqlJSON)
 	if err != nil {
 		return Queue{}, fmt.Errorf("store: encoding the groups of a read of the queue: %w", err)
 	}
@@ -932,7 +933,7 @@ type UsageSum struct {
 // written with each settle, so the read is of one small table and of no
 // task.
 func (s *Store) Usage(ctx context.Context, q UsageQuery) ([]UsageSum, error) {
-	doc, err := json.Marshal(q)
+	doc, err := json.Marshal(q, sqlJSON)
 	if err != nil {
 		return nil, fmt.Errorf("store: encoding a read of the meter: %w", err)
 	}
@@ -991,13 +992,13 @@ type Filter struct {
 // every owner's, and an empty list is nobody's. more reports whether others
 // follow.
 func (s *Store) Parses(ctx context.Context, owners []string, f Filter, after string, limit int) (out []Parse, more bool, err error) {
-	labels, err := json.Marshal(f.Labels)
+	labels, err := json.Marshal(f.Labels, sqlJSON)
 	if err != nil || f.Labels == nil {
 		labels = []byte("{}")
 	}
 	// A nil list encodes as the JSON null, which the statement reads as
 	// every owner's.
-	scope, err := json.Marshal(owners)
+	scope, err := json.Marshal(owners, sqlJSON)
 	if err != nil {
 		return nil, false, fmt.Errorf("store: encoding the owners of a list: %w", err)
 	}

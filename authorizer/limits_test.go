@@ -4,7 +4,8 @@
 package authorizer_test
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"maps"
 	"reflect"
@@ -41,7 +42,7 @@ func full() authorizer.WireLimits {
 
 // decision is an allow whose limits object is raw.
 func decision(raw string) authz.Decision {
-	return authz.Decision{Allow: true, Limits: json.RawMessage(raw)}
+	return authz.Decision{Allow: true, Limits: jsontext.Value(raw)}
 }
 
 func TestTheWireNamesEveryMemberAndNoOther(t *testing.T) {
@@ -49,7 +50,7 @@ func TestTheWireNamesEveryMemberAndNoOther(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got map[string]json.RawMessage
+	var got map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
@@ -301,5 +302,14 @@ func TestADefaultReaderIsOneTheCallerMayName(t *testing.T) {
 		if got := w.Over(authorizer.Limits{Reader: "kept"}).Reader; (raw == `{"reader":""}`) != (got == "kept") {
 			t.Errorf("%s laid over a default reads %q", raw, got)
 		}
+	}
+}
+
+// A limits object a policy engine writes with a repeated name takes the
+// last value, as it did when this was read by hand.
+func TestDecodeReadsARepeatedName(t *testing.T) {
+	got, err := authorizer.DecodeLimits(decision(`{"weight": 3, "weight": 4}`))
+	if err != nil || got.Weight == nil || *got.Weight != 4 {
+		t.Fatalf("DecodeLimits: %+v, %v", got, err)
 	}
 }

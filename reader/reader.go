@@ -25,7 +25,8 @@ package reader
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"log/slog"
 
 	"latere.ai/x/lectio/document"
@@ -81,12 +82,12 @@ type Description struct {
 	// Text reports that the reader reads what the file itself holds of a
 	// page: the caller hands it Page.Text for a page of a format that
 	// carries its text, beside the image.
-	Text bool `json:"text,omitempty"`
+	Text bool `json:"text,omitzero"`
 
 	// Local reports that the reader calls no model: it reads a page in the
 	// caller's own process, from what the caller hands it. A read by it,
 	// and a page it declines, is metered as no call.
-	Local bool `json:"local,omitempty"`
+	Local bool `json:"local,omitzero"`
 }
 
 // ImageSpec is how a page is rendered into an image.
@@ -95,7 +96,7 @@ type ImageSpec struct {
 	DPI int `json:"dpi"`
 	// LongEdge bounds the longer side in pixels; a larger render is scaled
 	// down to it. Zero is no bound.
-	LongEdge int `json:"long_edge,omitempty"`
+	LongEdge int `json:"long_edge,omitzero"`
 	// Format is "png" or "jpeg".
 	Format string `json:"format"`
 }
@@ -170,7 +171,7 @@ type ExtractorDescription struct {
 
 	// MaxInput bounds the text of one call, in characters. A document longer
 	// than this is extracted in windows by the caller. Zero is no bound.
-	MaxInput int `json:"max_input,omitempty"`
+	MaxInput int `json:"max_input,omitzero"`
 
 	// Constrained reports whether the extractor can have the model's
 	// decoding enforce a schema, and not only state it in the prompt.
@@ -180,7 +181,7 @@ type ExtractorDescription struct {
 // ExtractRequest is one extraction call.
 type ExtractRequest struct {
 	// Schema is the caller's JSON Schema, whose root is an object.
-	Schema json.RawMessage
+	Schema jsontext.Value
 
 	// Instructions are the caller's guidance for the model. May be empty.
 	Instructions string
@@ -210,7 +211,7 @@ type ExtractRequest struct {
 // ExtractResult is what an extractor returns.
 type ExtractResult struct {
 	// Data is the object the model returned for the caller's schema.
-	Data json.RawMessage
+	Data jsontext.Value
 
 	// Citations maps a JSON pointer into Data to the refs the value was
 	// read from. Refs are as the model gave them; the caller drops the

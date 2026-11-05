@@ -4,7 +4,8 @@
 package extract
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -465,10 +466,10 @@ func Problems(findings []Finding) []string {
 // encode writes a value as JSON. The values this package encodes were
 // decoded from JSON, so they encode; one that did not would be written as
 // null, which no schema that asks for an object takes.
-func encode(v any) json.RawMessage {
-	raw, err := json.Marshal(v)
+func encode(v any) jsontext.Value {
+	raw, err := json.Marshal(v, outboundJSON)
 	if err != nil {
-		return json.RawMessage(`null`)
+		return jsontext.Value(`null`)
 	}
 	return raw
 }

@@ -5,7 +5,8 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -89,7 +90,7 @@ func TestWorkOnAnEndedParseSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	}
 	prepared := done(exchange(1)[0])
 	prepared.Prepare = &tasks.Prepared{
-		Manifest: json.RawMessage(`{"media_type":"image/png","pages_total":1,"selected":[1],"source":"reader","work":"sources/x","token":1}`), Pages: []int{1},
+		Manifest: jsontext.Value(`{"media_type":"image/png","pages_total":1,"selected":[1],"source":"reader","work":"sources/x","token":1}`), Pages: []int{1},
 	}
 	read := done(exchange(1, prepared)[0])
 	read.Output = blob.PageKey("prs_a", 1, 1)
@@ -174,8 +175,8 @@ func TestWorkOnAnEndedParseSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	}
 	extracting := exchange(2)
 	filled, odd := done(extracting[0]), done(extracting[1])
-	filled.Output, filled.Result = blob.FieldKey("prs_a", "invoice", 1), json.RawMessage(`{"model":"m","attempts":1,"windows":1}`)
-	odd.Output, odd.Result = blob.FieldKey("prs_a", "odd", 1), json.RawMessage(`"no summary"`)
+	filled.Output, filled.Result = blob.FieldKey("prs_a", "invoice", 1), jsontext.Value(`{"model":"m","attempts":1,"windows":1}`)
+	odd.Output, odd.Result = blob.FieldKey("prs_a", "odd", 1), jsontext.Value(`"no summary"`)
 	exchange(0, filled, odd)
 	_, _, err = b.Field(ctx, current(), "invoice")
 	failed("an extraction whose object is gone", err)
@@ -183,7 +184,7 @@ func TestWorkOnAnEndedParseSaysWhatItsStoresDoNotAnswer(t *testing.T) {
 	failed("an extraction whose row holds no summary", err)
 	_, err = b.Fields(ctx, current())
 	failed("the extractions of such a parse", err)
-	if err := objects.Put(ctx, objs, filled.Output, extract.Result{Data: json.RawMessage(`{}`)}); err != nil {
+	if err := objects.Put(ctx, objs, filled.Output, extract.Result{Data: jsontext.Value(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok, err := b.Field(ctx, current(), "invoice"); err != nil || !ok || got.State != store.FieldSucceeded || string(got.Data) != `{}` || got.Model != "m" {
@@ -304,7 +305,7 @@ func TestAFigureRunTakesAsManyFiguresAsARunDescribes(t *testing.T) {
 	}
 	prepared := done(exchange(1)[0])
 	prepared.Prepare = &tasks.Prepared{
-		Manifest: json.RawMessage(`{"media_type":"image/png","pages_total":40,"selected":` + string(selected) + `,"source":"reader","work":"sources/x","token":1}`),
+		Manifest: jsontext.Value(`{"media_type":"image/png","pages_total":40,"selected":` + string(selected) + `,"source":"reader","work":"sources/x","token":1}`),
 		Pages:    numbers,
 	}
 	box := &document.Box{0.1, 0.1, 0.5, 0.5}

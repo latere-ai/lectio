@@ -5,7 +5,8 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -400,7 +401,7 @@ func TestAClaimCarriesWhatItsTaskNeeds(t *testing.T) {
 			t.Fatalf("the context of prepare is %+v, file %+v", c, c.File)
 		}
 		settle := done(prepare)
-		settle.Prepare = &tasks.Prepared{Manifest: json.RawMessage(manifest), Pages: []int{1, 2, 3}}
+		settle.Prepare = &tasks.Prepared{Manifest: jsontext.Value(manifest), Pages: []int{1, 2, 3}}
 		w.settle(settle)
 
 		claims := w.claim(3, 3)
@@ -429,7 +430,7 @@ func TestAClaimCarriesWhatItsTaskNeeds(t *testing.T) {
 // result.
 func read(c tasks.Claim, result string) tasks.Settle {
 	s := done(c)
-	s.Result = json.RawMessage(result)
+	s.Result = jsontext.Value(result)
 	return s
 }
 

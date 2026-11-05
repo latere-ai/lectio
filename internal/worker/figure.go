@@ -5,7 +5,7 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 
 	"latere.ai/x/lectio/document"
@@ -25,7 +25,7 @@ var figureUnit = unit{what: "figure", who: "describer", unreadable: fault.Figure
 
 // reused is what a figure task says of a description it took from an
 // earlier run.
-var reused = json.RawMessage(`{"reused":true}`)
+var reused = jsontext.Value(`{"reused":true}`)
 
 // figure describes one figure of a parse that has ended: it takes the
 // description an earlier run kept for the same figure when there is one,
