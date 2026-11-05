@@ -25,6 +25,7 @@ import (
 
 	"latere.ai/x/pkg/authz"
 	"latere.ai/x/pkg/httpjson"
+	"latere.ai/x/pkg/ulid"
 
 	"latere.ai/x/lectio/api"
 	"latere.ai/x/lectio/internal/access"
@@ -95,7 +96,7 @@ type Server struct {
 
 	// IDs makes identifiers, Now is the clock, and Log takes what a caller
 	// is not told. Nil takes a new generator, time.Now, and slog.Default.
-	IDs *id.Generator
+	IDs *ulid.Generator
 	Now func() time.Time
 	Log *slog.Logger
 
@@ -248,7 +249,7 @@ func (s *Server) file(r *http.Request, c call) (store.File, error) {
 // neither. Every answer it writes names the release in HeaderVersion.
 func (s *Server) Handler() http.Handler {
 	if s.IDs == nil {
-		s.IDs = &id.Generator{}
+		s.IDs = id.NewGenerator()
 	}
 	base := strings.TrimRight(s.BasePath, "/")
 	if s.BasePath == "" {

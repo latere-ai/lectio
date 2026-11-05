@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"latere.ai/x/pkg/pgxmigrate"
+	"latere.ai/x/pkg/ulid"
 
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/id"
@@ -53,9 +54,6 @@ const (
 	maxConnIdleTime   = time.Minute
 	healthCheckPeriod = time.Minute
 )
-
-// workerPrefix marks the id of a worker process.
-const workerPrefix = "wrk"
 
 // Options opens the store.
 type Options struct {
@@ -84,7 +82,7 @@ var ErrKeepSettings = errors.New("store: the settings in force are kept")
 // Store is the task store over one connection pool.
 type Store struct {
 	pool *pgxpool.Pool
-	ids  id.Generator
+	ids  *ulid.Generator
 
 	// clock is a test's stand-in for the database's now(). It is nil in a
 	// running server: no statement then passes a time, and the functions
@@ -265,7 +263,7 @@ func Open(ctx context.Context, poolURL string, o Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: opening the pool: %w", err)
 	}
-	s := &Store{pool: pool}
+	s := &Store{pool: pool, ids: id.NewGenerator()}
 	if err := s.prepare(ctx, settings, o.Readers); err != nil {
 		pool.Close()
 		return nil, err
@@ -417,7 +415,7 @@ func (s *Store) decode(ctx context.Context, into any, sql, sqlAt string, args ..
 // A process registers once when it starts, and again, under another id,
 // when an exchange answers that the fleet gave it up.
 func (s *Store) Register(ctx context.Context) (worker string, err error) {
-	worker = s.ids.New(workerPrefix)
+	worker = s.ids.New(id.Worker)
 	sql, args := s.stamp(registerSQL, registerAtSQL, []any{worker})
 	if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
 		return "", fmt.Errorf("store: registering a worker: %w", err)
