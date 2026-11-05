@@ -55,25 +55,9 @@ type OwnerPolicy struct {
 // latere.ai/x/pkg/authz/server does the same to whatever it decided;
 // lectiod reaches this policy through no endpoint, so it is done here.
 func (p *OwnerPolicy) Authorize(_ context.Context, req authz.Request) (authz.Decision, error) {
-	d := p.decide(req)
-	if !d.Allow {
-		return d, nil
-	}
-	grants, readable := grantsOf(req.Claims)
-	if !readable {
-		// Grants nobody can read are a token whose reach nobody knows,
-		// and the closed answer is a deny. It is no outage, so it is no
-		// error.
-		return authz.Decision{Reason: authz.ReasonGrant}, nil
-	}
-	return authz.Restrict(authorizer.Core, d, req, grants), nil
-}
-
-// grantsOf reads the grants a token carries. readable is false for a
-// claim that does not read as grants.
-func grantsOf(claims map[string]any) (grants authz.Grants, readable bool) {
-	grants, err := authz.ParseGrants(claims)
-	return grants, err == nil
+	// Grants nobody can read are a token whose reach nobody knows, and the
+	// closed answer is a deny. It is no outage, so it is no error.
+	return authz.RestrictByClaims(authorizer.Core, p.decide(req), req), nil
 }
 
 // Decide is Authorize under the name latere.ai/x/pkg/authz/server calls a
