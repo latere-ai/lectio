@@ -2,11 +2,42 @@
 # pipeline of latere-ai/ci, and the checks that need the tree and nothing
 # else. Every third-party action is pinned by commit.
 name: verify
+
+# A push or pull request that changes only specs or markdown outside the
+# exceptions starts no run, because no build or test reads them. The exceptions
+# are the three specs that tests hold to the code (the API, the identity and
+# authorization table, and the distribution), docs/quality.md and
+# docs/running.md, which tests hold to the code, README.md, which the release
+# test reads, and internal/testfixtures/, which the binary embeds. `lateregate
+# release` runs the whole bar, the spec tree included, before every tag. A tag
+# is never filtered by paths.
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - "**"
+      - "!specs/**"
+      - "!**.md"
+      - "specs/003-api.md"
+      - "specs/012-identity-and-authorization.md"
+      - "specs/016-distribution.md"
+      - "docs/quality.md"
+      - "docs/running.md"
+      - "README.md"
+      - "internal/testfixtures/**"
   pull_request:
+    paths:
+      - "**"
+      - "!specs/**"
+      - "!**.md"
+      - "specs/003-api.md"
+      - "specs/012-identity-and-authorization.md"
+      - "specs/016-distribution.md"
+      - "docs/quality.md"
+      - "docs/running.md"
+      - "README.md"
+      - "internal/testfixtures/**"
   workflow_dispatch:
 
 # A newer push to the same ref supersedes this run: its commit carries every
