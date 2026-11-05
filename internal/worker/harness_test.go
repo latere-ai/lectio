@@ -46,8 +46,15 @@ type scripted struct {
 	queue []tasks.Claim
 
 	// requests are the exchanges the worker made, and at when each arrived.
+	// answered is when the store last answered the worker, a registration
+	// or an exchange: the worker sends nothing before that, so it bounds
+	// from below when the worker sent the next one, under any load.
+	// before holds, for each exchange, answered as it stood when the
+	// exchange arrived.
 	requests []tasks.Request
 	at       []time.Time
+	answered time.Time
+	before   []time.Time
 
 	// script, when set, edits the reply of the nth exchange, counted from
 	// 1, or fails it.
@@ -72,6 +79,7 @@ func (s *scripted) Register(context.Context) (string, error) {
 		return "", errors.New("the database does not answer")
 	}
 	s.registers++
+	s.answered = time.Now()
 	return "wrk_" + strconv.Itoa(s.registers), nil
 }
 
@@ -80,6 +88,8 @@ func (s *scripted) Exchange(_ context.Context, _ string, req tasks.Request) (tas
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, req)
 	s.at = append(s.at, time.Now())
+	s.before = append(s.before, s.answered)
+	defer func() { s.answered = time.Now() }()
 	reply := tasks.Reply{}
 	for free := req.Free; free > 0 && len(s.queue) > 0 && !req.Shutdown; free-- {
 		next := s.queue[0]

@@ -76,11 +76,20 @@ func TestTheLoopClaimsRunsAndSettles(t *testing.T) {
 	b.store.mu.Lock()
 	defer b.store.mu.Unlock()
 	// The last exchange is the one that says the worker stops, and waits
-	// for nothing.
-	for i := 1; i < len(b.store.at)-1; i++ {
+	// for nothing. Every other one is sent a flush interval after the one
+	// before it was sent, and that one was sent after the store's answer
+	// before it, so it arrives a flush interval after that answer at the
+	// earliest. The store stamps an exchange when it arrives, which lags
+	// the send on a busy machine, so two arrivals alone can sit closer
+	// than the interval; an answer is stamped before the worker reads it.
+	for i := 0; i < len(b.store.at)-1; i++ {
+		since := b.store.before[0]
+		if i > 0 {
+			since = b.store.before[i-1]
+		}
 		// The timer that spaces two exchanges is allowed its granularity.
-		if gap := b.store.at[i].Sub(b.store.at[i-1]); gap < b.w.Flush-time.Millisecond {
-			t.Fatalf("exchanges %d and %d are %v apart, under the flush interval of %v", i-1, i, gap, b.w.Flush)
+		if gap := b.store.at[i].Sub(since); gap < b.w.Flush-time.Millisecond {
+			t.Fatalf("exchange %d arrived %v after the answer before the last one, under the flush interval of %v", i, gap, b.w.Flush)
 		}
 	}
 	if b.w.ID() != "" || b.w.Ready() == nil {
