@@ -1361,4 +1361,25 @@ func TestTheGateRendersTheDeployTreeWithKubectl(t *testing.T) {
 	if _, ok := suite["allow_skip"]; ok {
 		t.Error("the deploy suite allows a skip, so a render that did not happen would pass unnoticed")
 	}
+	// The old job ran every test of the root package, uncached, on a push.
+	// A run filter, a count, a tag set or a command would narrow that.
+	for _, key := range []string{"run", "count", "tags"} {
+		if v := dig(suite, "test", key); v != nil {
+			t.Errorf("the deploy suite filters its tests with %s %v, so some renders would not run", key, v)
+		}
+	}
+	if v, ok := suite["command"]; ok {
+		t.Errorf("the deploy suite runs the command %v instead of the root package tests, so some renders would not run", v)
+	}
+	if v, ok := suite["on"]; ok {
+		pushes := false
+		for _, e := range list(v) {
+			if str(e) == "push" {
+				pushes = true
+			}
+		}
+		if !pushes {
+			t.Errorf("the deploy suite runs on %v, not on a push, so a push that breaks a render would pass", v)
+		}
+	}
 }
