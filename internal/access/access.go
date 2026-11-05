@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"latere.ai/x/pkg/authz"
+	"latere.ai/x/pkg/requestid"
 
 	"latere.ai/x/lectio/authorizer"
 	"latere.ai/x/lectio/internal/fault"
@@ -85,8 +86,9 @@ func Ask(r *http.Request, action string, resource authz.Resource) Question {
 	return Question{Action: action, Resource: resource, Request: RequestInfo(r)}
 }
 
-// RequestInfo is what the authorizer is told about the request: its id
-// when the request carries one, the peer address as the server sees it,
+// RequestInfo is what the authorizer is told about the request: its id,
+// which is the client's X-Request-Id when that is 1 to 128 visible ASCII
+// characters and a new one otherwise, the peer address as the server sees it,
 // and the user agent. The id is for correlation alone. The address and
 // the user agent are inputs a policy may decide from.
 func RequestInfo(r *http.Request) authz.Caller {
@@ -95,7 +97,7 @@ func RequestInfo(r *http.Request) authz.Caller {
 		// An address with no port is already the host.
 		host = r.RemoteAddr
 	}
-	return authz.Caller{ID: r.Header.Get("X-Request-Id"), IP: host, UserAgent: r.UserAgent()}
+	return authz.Caller{ID: requestid.FromRequest(r), IP: host, UserAgent: r.UserAgent()}
 }
 
 // Decision is the answer to a question.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"latere.ai/x/pkg/authz"
+	"latere.ai/x/pkg/requestid"
 
 	"latere.ai/x/lectio/authorizer"
 	"latere.ai/x/lectio/internal/access"
@@ -462,6 +463,19 @@ func TestAskBuildsTheQuestionOfARequest(t *testing.T) {
 	want := authz.Caller{ID: "req-7", IP: "203.0.113.4", UserAgent: "client/1.0"}
 	if q.Action != authorizer.ActionParseList || q.Resource.Kind != authorizer.KindParse || q.Request != want {
 		t.Errorf("the question is %+v", q)
+	}
+
+	// An id that could break a log line is replaced, and a request with
+	// none is given one.
+	for _, bad := range []string{"has a space", "tab\there", "caf\u00e9", strings.Repeat("x", 129)} {
+		r.Header.Set("X-Request-Id", bad)
+		if got := access.RequestInfo(r).ID; got == bad || !requestid.Valid(got) {
+			t.Errorf("the id %q reads as %q", bad, got)
+		}
+	}
+	r.Header.Del("X-Request-Id")
+	if got := access.RequestInfo(r).ID; !requestid.Valid(got) {
+		t.Errorf("a request with no id reads as %q", got)
 	}
 
 	// An address with no port is the host as it stands, and IPv6 loses
