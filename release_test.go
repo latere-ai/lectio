@@ -61,7 +61,8 @@ func TestTheReleaseRunsItsJobsInOrder(t *testing.T) {
 		needs []string
 	}{
 		"build":   {"image-build.yml", nil},
-		"publish": {"image-publish.yml", []string{"build"}},
+		"deploy":  {"image-deploy.yml", []string{"build"}},
+		"publish": {"image-publish.yml", []string{"build", "deploy"}},
 		"verify":  {"release-verify.yml", []string{"publish"}},
 	}
 	versions := map[string]bool{}
@@ -103,7 +104,7 @@ func TestTheReleaseRunsItsJobsInOrder(t *testing.T) {
 
 // TestTheReleaseHoldsEachJobToItsOwnPermissions: the workflow's token reads
 // the repository and nothing else, and each job is given what its stage
-// does and no more. No secret is passed, since no stage reads one. No shell
+// does and no more. The deploy stage alone is passed a secret. No shell
 // command handed to a stage carries an expression, so no value becomes
 // part of the text a runner executes. Signing, attesting and tagging are
 // the stages' alone: the file calls none of those tools itself.
@@ -114,6 +115,7 @@ func TestTheReleaseHoldsEachJobToItsOwnPermissions(t *testing.T) {
 	}
 	for job, want := range map[string]map[string]string{
 		"build":   {"contents": "read", "actions": "read", "packages": "write", "id-token": "write", "attestations": "write"},
+		"deploy":  {"contents": "read"},
 		"publish": {"contents": "write", "packages": "write", "id-token": "write"},
 		"verify":  {"contents": "read", "packages": "read", "attestations": "read"},
 	} {
@@ -123,8 +125,14 @@ func TestTheReleaseHoldsEachJobToItsOwnPermissions(t *testing.T) {
 	}
 	jobs, _ := release["jobs"].(map[string]any)
 	for name, job := range jobs {
-		if dig(job, "secrets") != nil {
-			t.Errorf("%s passes secrets, and no stage reads one", name)
+		// Only the deploy stage reads a secret: the kubeconfig of the
+		// rollout identity, under the one name the stage gives it.
+		if got := labels(dig(job, "secrets")); name == "deploy" {
+			if want := map[string]string{"DEPLOY_KUBECONFIG": "${{ secrets.LECTIO_KUBECONFIG }}"}; !maps.Equal(got, want) {
+				t.Errorf("deploy passes the secrets %v, want %v", got, want)
+			}
+		} else if dig(job, "secrets") != nil {
+			t.Errorf("%s passes secrets, and no stage but the deploy stage reads one", name)
 		}
 		for key, value := range labels(dig(job, "with")) {
 			if strings.HasSuffix(key, "_command") && strings.Contains(value, "${{") {
@@ -202,7 +210,7 @@ func TestTheReleasePublishesBothImages(t *testing.T) {
 	if got := strings.Fields(str(dig(release, "jobs", "verify", "with", "images"))); !slices.Equal(got, []string{serverImage, converterImage}) {
 		t.Errorf("the verify stage checks %v, want %s and %s", got, serverImage, converterImage)
 	}
-	for _, job := range []string{"build", "publish", "verify"} {
+	for _, job := range []string{"build", "deploy", "publish", "verify"} {
 		if dig(release, "jobs", job, "with", "namespace") != nil {
 			t.Errorf("%s names an image namespace; it is the repository owner's, or the repository variable's", job)
 		}
@@ -260,7 +268,10 @@ func TestTheImagesPublishUnderTheOwnersNamespace(t *testing.T) {
 		t.Fatalf("the walk found %d image references, too few to be the tree", found)
 	}
 	for _, path := range []string{".github/workflows/release.yml", "tools/release/deploy-archive.sh"} {
-		namesNoInstallation(t, path, files[path], false)
+		// The deploy job's url is the origin its smoke runs against, the
+		// one address the workflow names.
+		text := strings.ReplaceAll(files[path], "https://api."+publisher+".ai/v1/parsing", "")
+		namesNoInstallation(t, path, text, false)
 	}
 }
 
@@ -368,6 +379,11 @@ func TestTheDeployArchivePinsBothImages(t *testing.T) {
 	for name, image := range want {
 		if !seen[image] {
 			t.Errorf("no overlay of the archive runs %s as %s", name, image)
+		}
+	}
+	for _, dir := range installationDirs {
+		if _, err := os.Stat(filepath.Join(unpacked, "deploy", filepath.Base(dir))); err == nil {
+			t.Errorf("the archive holds %s, which is Latere's installation and not an operator's to copy", dir)
 		}
 	}
 }
