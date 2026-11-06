@@ -6,15 +6,20 @@ This file is for people and agents changing Lectio. Users read the
 
 ## Getting set up
 
-You need Go 1.27 or newer and `git`. Then:
+You need Go 1.27 or newer, `git`, and a container runtime that
+Testcontainers can reach, Docker or Podman. Then:
 
 ```sh
 make        # the quality gate
 make build  # out/lectiod
 ```
 
-`make` needs only the Go toolchain and git. Everything it pins comes from
-public modules, so it runs the same on your machine as in CI.
+The suites of the durable server run against a real Postgres, a
+PgBouncer in front of it and an S3 server, each started in a container
+on first use and removed at the end. Where no container runtime answers,
+those suites skip. Under Podman the helper finds the machine's socket and
+turns Testcontainers' reaper off itself. Everything `make` pins comes
+from public modules, so it runs the same on your machine as in CI.
 
 Install the hooks once with `make hooks`. They run formatting and license
 checks before a commit and the linter before a push, so you see a finding
