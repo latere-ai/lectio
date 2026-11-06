@@ -23,7 +23,7 @@ name its hosts and secrets, and the release archive leaves them out.
 the `deploy` job of the release workflow once the repository variable
 `LECTIO_RELEASE_DEPLOY` is set; a fork sets none and deploys nothing.
 
-The compose file is described in [docs/running.md](../docs/running.md).
+The compose file is described in [docs/local.md](../docs/local.md).
 
 ## What it needs
 

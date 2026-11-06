@@ -138,7 +138,7 @@ A PDF that carries its text can be read with no model at all. A reader
 of the `text` adapter builds a page's blocks from the words the file
 holds and where it draws them, and declines a page it would have to
 guess at, so that the next reader of the chain reads it
-([Running Lectio](running.md#reading-a-pdfs-own-text)). The run that
+([Readers](readers.md#reading-a-pdfs-own-text)). The run that
 scores a model scores it too:
 
 ```sh

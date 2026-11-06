@@ -504,7 +504,7 @@ Built:
   declaration of the gate skips the sidecar's Deployment: the sidecar is
   a command of this repository, which the deployment rules hold to
   naming the audience it verifies, and it verifies no token.
-- `deploy/examples/compose.yaml` and `docs/running.md`: Postgres, an
+- `deploy/examples/compose.yaml` and `docs/local.md`: Postgres, an
   object store with its bucket, `lectiod` in the role `all` with the
   stub reader, and the sidecar on a socket with no network. It is
   written against the settings of the durable server and has not parsed

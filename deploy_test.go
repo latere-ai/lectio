@@ -1095,7 +1095,7 @@ func exampleAddress(value string) bool {
 }
 
 // shipped are the files an operator receives or copies from: the deploy
-// tree, the image files and the page that says how to run them.
+// tree, the image files and the pages that say how to install and run them.
 func shipped(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -1118,7 +1118,7 @@ func shipped(t *testing.T) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"Dockerfile", filepath.Join("docs", "running.md")} {
+	for _, path := range []string{"Dockerfile", filepath.Join("docs", "install.md"), filepath.Join("docs", "local.md")} {
 		read(path)
 	}
 	return out
