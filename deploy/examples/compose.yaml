@@ -3,7 +3,7 @@
 #
 # Lectio on one machine: Postgres, an S3-compatible object store with its
 # bucket, lectiod in both roles in one process, and the conversion sidecar.
-# docs/running.md says how to start it and how to run a parse against it.
+# docs/local.md says how to start it and how to run a parse against it.
 #
 #   podman compose -f deploy/examples/compose.yaml up --build
 #
@@ -36,7 +36,7 @@ services:
       POSTGRES_USER: lectio
       POSTGRES_PASSWORD: lectio-example-password
     volumes:
-      - postgres:/var/lib/postgresql/data
+      - postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lectio -d lectio"]
       interval: 2s
