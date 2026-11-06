@@ -16,263 +16,116 @@ Tenants share the workers and the model's rate limit by weight, with an
 interactive class ahead of a batch class, and no tenant can queue its
 way past another.
 
-> **Status: first release.** The specs in [`specs/`](specs/README.md)
-> are the design, and each says what of it is built. Two servers run.
-> The development server is the whole parsing path in one process with
-> nothing durable. The durable server keeps parses and their tasks in
-> Postgres and bytes in an S3 bucket, with the API and the workers as
-> separate processes: a worker that is killed loses its lease and not
-> the work. It verifies its callers against an OpenID Connect issuer,
-> asks an authorizer or its own owner policy what each may do, and
-> holds a parse to the limits it is given. It reads again the pages of
-> a parse that failed, streams a parse's pages and progress as events,
-> meters what each group, owner and reader read by the hour, and shows
-> what waits and what runs per group. It extracts an object in the
-> shape of a schema from a parsed document, each value citing the
-> blocks it was read from, and describes a parse's figures on request.
-> The development server describes figures too, and answers `501` for
-> the other 5: it keeps no task store.
+[![CI](https://github.com/latere-ai/lectio/actions/workflows/verify.yml/badge.svg)](https://github.com/latere-ai/lectio/actions/workflows/verify.yml)
+[![Release](https://img.shields.io/github/v/release/latere-ai/lectio)](https://github.com/latere-ai/lectio/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/latere-ai/lectio)](go.mod)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-## Run it
+## Status
 
-```sh
-make run          # builds out/lectiod and starts it with LECTIO_DEV=true
-```
+Lectio is before 1.0: a minor release may still change the API, the
+Reader and Policy documents or the configuration, and its section in the
+[changelog](CHANGELOG.md) says what changed and what an operator must
+do. The [releases page](https://github.com/latere-ai/lectio/releases)
+lists every release with its two signed images, `lectiod` and
+`lectio-convert`, and its deploy tree. Lectio has had no external
+security audit; [SECURITY.md](SECURITY.md#what-is-protected) lists what
+it commits to and the test that holds each commitment.
 
-The development server listens on `:8080`, keeps everything in memory,
-and takes the token `dev`, whose holder owns what it creates. With no
-reader configured it reads pages
-with a stub that calls no model, so the path can be followed end to end
-before a key exists.
+Two servers run. The development server is the whole parsing path in
+one process with nothing durable. The durable server keeps parses and
+their tasks in Postgres and bytes in an S3 bucket, with the API and the
+workers as separate processes.
 
-```sh
-api=http://localhost:8080/v1
-auth='Authorization: Bearer dev'
+| Area | Built | Designed, not built yet |
+|---|---|---|
+| Parsing | a parse as a graph of tasks in Postgres, in which a killed worker loses only its lease and a page read once is never read again; failed pages read again; a parse's pages and progress streamed as events | streaming assembly |
+| Files | PDFs and images through a reader; text, Markdown, CSV, Word documents and Excel workbooks from the file itself; presentations, rich text, OpenDocument text and legacy Word files through the conversion sidecar; uploads and fetching by URL | HTML and XML read from the file itself |
+| Results | the document, a page, a block or chunks, as JSON or Markdown, chosen when read; figures described on request; fields extracted in the shape of a schema, each citing its blocks; sets of parses extracted alike | extraction in the development server |
+| Readers | any endpoint of the OpenAI chat completions API, a gateway included; a PDF's own text; chains of readers; readers changed while the server runs; one key for everyone or a key per tenant from a key endpoint | |
+| Tenants | groups sharing workers and the model's rate limit by weight, an interactive and a batch class, limits on pages per parse and per day, meters by the hour, what waits and what runs per group | limits on submits per minute and on tokens per parse |
+| Callers | tokens from any OpenID Connect issuer; every request asked of an authorizer, or of the owner policy without one | |
+| Running it | `lectiod` in the roles `api` and `worker`; the two images; Kubernetes manifests | |
+| Observability | over OTLP, the log, a span and the request metrics of every API request, and a span for each outbound call | a trace per parse and task, the processing record, and the queue and pool metrics |
 
-# Upload a file. The same bytes twice are one file.
-curl -s -H "$auth" --data-binary @report.csv "$api/files?name=report.csv"
+[specs/README.md](specs/README.md) is the design, and each spec says
+under Implementation status what of it is built.
 
-# Parse it, holding the answer up to 30 seconds for the parse to end.
-curl -s -H "$auth" -H 'Prefer: wait=30' -H 'Content-Type: application/json' \
-  -d '{"source":{"file":"fil_..."}}' "$api/parses"
+## Quickstart
 
-# Read the result: whole, as Markdown, one page, one block, or as chunks.
-curl -s -H "$auth" "$api/parses/prs_.../document"
-curl -s -H "$auth" "$api/parses/prs_.../document?format=markdown"
-curl -s -H "$auth" "$api/parses/prs_.../pages/1"
-curl -s -H "$auth" "$api/parses/prs_.../blocks/1.2"
-curl -s -H "$auth" "$api/parses/prs_.../chunks?by=section"
-
-# A figure as an image of its own, and what the figures show.
-curl -s -H "$auth" "$api/parses/prs_.../blocks/4.1/image" -o figure.png
-curl -s -H "$auth" -H 'Prefer: wait=30' -X POST "$api/parses/prs_.../figures"
-```
-
-A page is readable as soon as it was read, while the rest of the parse
-is still running. How a result looks is chosen when it is read, so
-another format or another chunk size never runs the parse again. The
-contract is [`api/openapi.yaml`](api/openapi.yaml), and the server
-serves it at `/v1/openapi.yaml`.
-
-A reader that finds a figure says where it is. Describing figures is a
-second request against the same parse: each figure is cut from its page
-and described alone, and no page is read again.
-
-Extracting an object in the shape of a schema is a request against a
-parse too, in the durable server. Each value cites the blocks it was
-read from, and a value the document does not state is left out:
+The development server runs the whole parsing path in one process with
+nothing durable. With no reader configured, it reads text, Markdown,
+CSV, Word documents and Excel workbooks from the file itself, so it
+needs no model. Install Go (the version
+`go.mod` names), `make`, `git` and `curl` first, then upload a CSV file,
+parse it, and read it back as Markdown:
 
 ```sh
-curl -s -H "$auth" -H 'Content-Type: application/json' -X POST "$api/parses/prs_.../fields" \
-  -d '{"name":"invoice","schema":{"type":"object","properties":{"number":{"type":"string"},"total":{"type":"number"}}}}'
-curl -s -H "$auth" "$api/parses/prs_.../fields/invoice?resolve=true"
+git clone https://github.com/latere-ai/lectio.git && cd lectio && make build
+LECTIO_DEV=true LECTIO_ADDR=127.0.0.1:8080 out/lectiod > out/dev.log 2>&1 &
+pid=$!
+until curl -sf http://127.0.0.1:8080/v1/openapi.yaml > /dev/null; do sleep 1; done
+
+api=http://127.0.0.1:8080/v1 auth='Authorization: Bearer dev'
+printf 'name,qty\nbolts,12\nnuts,40\n' > out/sample.csv
+file=$(curl -s -H "$auth" --data-binary @out/sample.csv "$api/files?name=sample.csv" \
+  | sed -n 's/.*"id":"\(fil_[^"]*\)".*/\1/p')
+parse=$(curl -s -H "$auth" -H 'Prefer: wait=30' -H 'Content-Type: application/json' \
+  -d "{\"source\":{\"file\":\"$file\"}}" "$api/parses" | sed -n 's/^{"id":"\(prs_[^"]*\)".*/\1/p')
+curl -s -H "$auth" "$api/parses/$parse/document?format=markdown"
+
+kill "$pid"
 ```
 
-To read pages with a model, declare a reader and point `LECTIO_CONFIG`
-at the file. Any endpoint that speaks the OpenAI chat completions API
-works, a gateway included:
+The last request prints the table:
 
-```yaml
-apiVersion: lectio.latere.ai/v1
-kind: Reader
-metadata: { name: default }
-spec:
-  adapter: chat
-  endpoint: https://gateway.example/v1
-  model: your-vision-model
-  image: { dpi: 160, longEdge: 2048, format: png }
-  constrained: true
+```
+| name | qty |
+| --- | --- |
+| bolts | 12 |
+| nuts | 40 |
 ```
 
-```sh
-LECTIO_DEV=true LECTIO_CONFIG=reader.yaml LECTIO_MODEL_KEY=... out/lectiod
+[Running it locally](docs/local.md) goes on to the durable stack on one
+machine, office files through the conversion sidecar, and a reader that
+sends PDF pages and images to a model.
+
+## How it fits
+
+```mermaid
+flowchart LR
+  caller["caller"] -->|"upload, parse, read"| api["lectiod: API"]
+  api --> pg[("Postgres: parses, tasks, fair queue")]
+  api --> obj[("bucket: sources, pages, documents")]
+  pg --> w["lectiod: workers"]
+  w -->|"one page per call"| model["model endpoint"]
+  w --> obj
+  w -->|"office files"| convert["lectio-convert, no network"]
+  api -. "verify" .-> issuer["OpenID Connect issuer"]
+  api -. "ask, receive limits" .-> authz["authorizer"]
+  w -. "a tenant's key, optional" .-> keys["key endpoint"]
 ```
 
-This build reads PDFs and images (PNG, JPEG, TIFF) through a reader,
-and text, Markdown, CSV, Word documents (`.docx`) and Excel workbooks
-(`.xlsx`, `.xlsm`) from the file itself, with no model. A Word document
-comes back as one page: its headings with their levels, its lists, its
-tables with merged cells and header rows, its footnotes, and a figure
-where a picture is. A workbook comes back as one page per sheet, each a
-table, with dates in ISO 8601 and each formula as the value the workbook
-stored for it.
-
-A PDF that carries its text need not be read by a model. A reader of
-the `text` adapter reads a page from the words the file holds and where
-it draws them, and declines a page it would have to guess at, a scan or
-a table set without ruling, so that the next reader in the chain reads
-it:
-
-```yaml
-apiVersion: lectio.latere.ai/v1
-kind: Reader
-metadata: { name: own }
-spec: { adapter: text }
----
-apiVersion: lectio.latere.ai/v1
-kind: Policy
-metadata: { name: default }
-spec:
-  read: { chain: [own, default] }
-```
-
-A page read that way says `"source": "text_layer"` and costs no call.
-[`docs/running.md`](docs/running.md#reading-a-pdfs-own-text) says what
-it reads and what it declines.
-
-Presentations (`.pptx`, `.ppt`, `.odp`, `.key`), rich text (`.rtf`),
-open document text (`.odt`) and legacy Word files (`.doc`) are converted
-first, by a sidecar that holds an office suite. A server with no sidecar
-refuses them, and a legacy Excel file (`.xls`) is refused either way.
-The sidecar runs a large program on a file somebody else wrote, so it
-is run with no network, on a socket the server shares with it:
-
-```sh
-podman build -f deploy/converter/Dockerfile -t lectio-convert .
-podman volume create lectio-convert
-podman run -d --network none -v lectio-convert:/run/lectio \
-  -e LECTIO_CONVERT_ADDR=unix:/run/lectio/convert.sock lectio-convert
-```
-
-A server in a container that mounts the same volume reaches it with
-`LECTIO_CONVERTER_URL=unix:///run/lectio/convert.sock`. For a server on
-a laptop, the sidecar can listen on a port instead. It then has a
-network, which is for your own files and not for ones you do not trust:
-
-```sh
-podman run -d -p 127.0.0.1:8090:8090 lectio-convert
-LECTIO_DEV=true LECTIO_CONVERTER_URL=http://127.0.0.1:8090 out/lectiod
-```
-
-To check a reader against a real file, end to end:
-
-```sh
-LECTIO_LIVE_CONFIG=reader.yaml LECTIO_LIVE_FILE=paper.pdf make live
-```
-
-It parses the file with that reader and writes the Markdown, each
-page's blocks and each page's image to `LECTIO_LIVE_OUT` when it is
-set. It calls a model, so it is never part of `make check`.
-
-To put numbers on a reader, `make live-quality` reads a corpus of files
-whose content is known, through the durable server, scores each against
-its truth, and fails when a file is under its bar.
-[`docs/quality.md`](docs/quality.md) has the corpus, the measures and
-the bars.
-
-## Run it durably
-
-Without `LECTIO_DEV`, `lectiod` keeps its work in Postgres and its
-bytes in an S3 bucket. For a try on one machine, both run in
-containers. The values below are examples; use your own.
-
-```sh
-podman run -d --name lectio-db -p 127.0.0.1:5432:5432 \
-  -e POSTGRES_USER=lectio -e POSTGRES_PASSWORD=example -e POSTGRES_DB=lectio \
-  postgres:16-alpine
-
-# Any S3 compatible server does. A directory under its data path is a bucket.
-podman run -d --name lectio-objects -p 127.0.0.1:9000:9000 \
-  -e MINIO_ROOT_USER=example -e MINIO_ROOT_PASSWORD=example-secret \
-  --entrypoint sh minio/minio -c 'mkdir -p /data/lectio && exec minio server /data'
-
-export LECTIO_DATABASE_URL='postgres://lectio:example@127.0.0.1:5432/lectio?sslmode=disable'
-export LECTIO_BUCKET=lectio LECTIO_S3_ENDPOINT=http://127.0.0.1:9000 LECTIO_S3_REGION=us-east-1
-export LECTIO_S3_ACCESS_KEY=example LECTIO_S3_SECRET_KEY=example-secret LECTIO_S3_PATH_STYLE=true
-export LECTIO_OIDC_ISSUERS=https://issuer.example    # your identity provider
-
-make build
-out/lectiod                 # the API and a worker in one process
-```
-
-The durable server takes no static token. It verifies each bearer
-against the issuers of `LECTIO_OIDC_ISSUERS`, for the audience `lectio`
-unless `LECTIO_OIDC_AUDIENCE` names another, and does not start without
-an issuer. The same requests as above then work against
-`http://localhost:8080/v1` with a token your provider issued, and a
-parse survives a restart of the process.
-
-Who may do what is decided in one of 2 ways. With nothing more set, the
-owner policy decides: a caller, known by its issuer and its `sub`, acts
-on the files and parses it created, and the subjects of
-`LECTIO_ADMIN_SUBJECTS` read everyone's. With `LECTIO_AUTHORIZER_URL`
-and `LECTIO_AUTHORIZER_TOKEN` set, every request is asked of that
-endpoint, whose answer may also say whose a new parse is, which group
-it joins, and what it is held to: pages per parse and per day, file
-size, classes, readers, priority and retention. The package
-[`authorizer`](authorizer) is what such an endpoint is written against,
-and [`specs/012-identity-and-authorization.md`](specs/012-identity-and-authorization.md)
-is the contract.
-
-A file is kept for 24 hours after its last use and a parse for 30 days
-after it ended, unless `LECTIO_FILE_RETENTION` and
-`LECTIO_PARSE_RETENTION` say otherwise. To run
-the roles apart, as a deployment does, start one process of each with
-the same settings:
-
-```sh
-LECTIO_ROLE=api out/lectiod
-LECTIO_ROLE=worker LECTIO_INTERNAL_ADDR=:8082 out/lectiod
-```
-
-The API applies the database schema when it starts. A worker serves no
-public address. Each process answers `/livez` and `/readyz` on
-`LECTIO_INTERNAL_ADDR`, `:8081` unless set. Workers can be added,
-stopped and killed while parses run: a stopped worker gives its pages
-back at once, and a killed one loses them after `LECTIO_TASK_LEASE`,
-60 seconds unless set, to the workers that are left. With a
-transaction-mode pooler in front of the database, name the pooler in
-`LECTIO_DATABASE_POOL_URL` and keep the direct address in
-`LECTIO_DATABASE_URL`. Every setting is in
-[`specs/016-distribution.md`](specs/016-distribution.md).
-
-## Build and deploy it
-
-```sh
-podman build -t lectiod .                                         # the server
-podman build -f deploy/converter/Dockerfile -t lectio-convert .   # the conversion sidecar
-```
-
-The server's image holds `lectiod` and nothing else: no shell, no
-office suite, 37 MiB. It runs as a user that is not root, with a
-read-only root file system. [`docs/running.md`](docs/running.md) runs
-it 3 ways: the development server in a container, the whole stack on
-one machine with compose, and a cluster.
-
-[`deploy/`](deploy/README.md) holds the cluster's manifests: a base
-with one Deployment for the API and one for the workers, a component
-that adds the sidecar with no way out to any network, and 2 example
-overlays. The base names no host, registry or secret value; an
-installation's overlay does. The manifests and the compose file are
-written for the durable server with callers who sign in through an
-issuer; the server takes one static token until that is wired in, as
-the status above says.
-
-A release publishes both images, signed and with a bill of materials
-and provenance attested, and attaches the deploy tree with both images
-pinned by digest.
-
-## What it is for
+- **A caller** uploads a file or names a URL, asks for a parse, and
+  reads the result, with a token from your OpenID Connect issuer.
+- **The API**, `lectiod` in the role `api`, verifies the token, asks
+  your authorizer what the caller may do and what the parse is held to,
+  keeps the file in the bucket, and records the parse and its tasks in
+  Postgres.
+- **The workers**, `lectiod` in the role `worker`, take tasks from the
+  fair queue in Postgres, render each page, and send it to the model
+  endpoint through a reader. A format read from the file itself needs
+  no model, and neither does a PDF page that a reader of the `text`
+  adapter reads from the words the file holds.
+- **The model endpoint** is any endpoint of the OpenAI chat completions
+  API, a gateway included. A key endpoint you run can give each
+  tenant's pages a key of its own, so the gateway meters each tenant.
+- **The conversion sidecar**, `lectio-convert`, turns presentations,
+  rich text and older office formats into a PDF or a Word document with
+  an office suite, in a container with no network.
+- **Your authorizer** decides who may do what and sets the limits;
+  without one, a built-in owner policy lets each caller act on what it
+  created.
 
 A language model, a search index, or a workflow cannot use a scanned
 contract or a 400-page report as a file. It needs the text in reading
@@ -281,31 +134,32 @@ the page a value came from. Hosted vision-language models read a page
 well, and a single call is easy. Reading ten thousand pages for forty
 tenants through a rate-limited API, without losing work to a restart
 and without one tenant's backlog stalling the rest, is the part that
-takes a system.
+takes a system. Lectio is that system, and nothing else: it does not
+serve models, store files beyond the parse, or hold accounts.
 
-Lectio is that system, and nothing else: it does not serve models,
-store files beyond the parse, or hold accounts. Identity comes from any
-OpenID Connect issuer. Permission and limits come from an endpoint the
-operator writes. Models are reached through any OpenAI-compatible
-endpoint, a gateway included, with one key for every tenant or with a
-key of each tenant's own that an endpoint of the operator issues, so
-the gateway meters and bounds each tenant
-([docs/running.md](docs/running.md#whose-key-reads-a-page)).
+## Documentation
 
-## Shape
+| | |
+|---|---|
+| [Running it locally](docs/local.md) | the development server, and the durable stack on one machine, ending in a parse |
+| [Install](docs/install.md) | the images, Postgres, the bucket, the roles and probes, the conversion sidecar, the cluster manifests, and upgrading |
+| [Configuration](docs/configuration.md) | every setting, its default, and what refuses a start |
+| [Readers](docs/readers.md) | the Reader and Policy documents, a PDF's own text, changing readers while the server runs, and whose key reads a page |
+| [API](docs/api.md) | files, parses and their results, events, figures, fields and sets, and the errors to branch on |
+| [Writing an authorizer](docs/authorizer.md) | the question Lectio asks, the vocabulary, the limits an allow carries, and the owner policy |
+| [Security](docs/security.md) | what Lectio guarantees, what it sees and keeps, and what it does not defend |
+| [Quality](docs/quality.md) | the corpus a reader is measured on, the measures and the bars |
+| [`api/openapi.yaml`](api/openapi.yaml) | the full API reference, also served at `/v1/openapi.yaml` |
+| [Changelog](CHANGELOG.md) | what changed in each release, and what an operator must do |
 
-```mermaid
-flowchart LR
-  caller["caller"] -->|"submit a file"| api["lectiod: API"]
-  api --> pg[("Postgres: parses, tasks, fair queue")]
-  api --> obj[("object store: sources, pages, documents")]
-  pg --> w["lectiod: workers"]
-  w -->|"one page per call"| model["model endpoint"]
-  w --> obj
-  api -. "verify" .-> issuer["OIDC issuer"]
-  api -. "ask, receive limits" .-> authz["authorizer"]
-  w -. "ask a tenant's key, optional" .-> keys["key endpoint"]
-```
+[`docs/README.md`](docs/README.md) is the index, by reader.
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) is how to build and test a change
+and where code belongs. [`SECURITY.md`](SECURITY.md) is what the
+project protects and where to report a vulnerability; please do not
+open an issue for one.
 
 ## License
 
