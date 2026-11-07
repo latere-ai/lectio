@@ -169,8 +169,9 @@ type Extractor interface {
 type ExtractorDescription struct {
 	Name string `json:"name"`
 
-	// MaxInput bounds the text of one call, in characters. A document longer
-	// than this is extracted in windows by the caller. Zero is no bound.
+	// MaxInput bounds the text of one call, in bytes of UTF-8. A document
+	// longer than this is extracted in windows by the caller. Zero is no
+	// bound.
 	MaxInput int `json:"max_input,omitzero"`
 
 	// Constrained reports whether the extractor can have the model's

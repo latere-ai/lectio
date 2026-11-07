@@ -73,8 +73,8 @@ type Config struct {
 	// endpoint that knows only the older name.
 	OutputLimit string
 
-	// MaxInput bounds the text of one extraction call, in characters. Zero
-	// takes 400,000.
+	// MaxInput bounds the text of one extraction call, in bytes of UTF-8.
+	// Zero takes 400,000.
 	MaxInput int
 
 	// Timeout bounds one call. Zero takes two minutes.

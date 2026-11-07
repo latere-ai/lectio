@@ -103,7 +103,7 @@ type Extractor interface {
 
 type ExtractorDescription struct {
     Name        string
-    MaxInput    int  // characters of text in one call; 0 is no bound
+    MaxInput    int  // bytes of text in one call; 0 is no bound
     Constrained bool // whether decoding can enforce a schema
 }
 

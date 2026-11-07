@@ -40,7 +40,7 @@ const citationsSchema = `{"type":"array","items":{"type":"object","additionalPro
 // Extract asks the model for an object in the shape of the schema.
 func (e *Extractor) Extract(ctx context.Context, in reader.ExtractRequest) (reader.ExtractResult, error) {
 	if len(in.Text) > e.c.cfg.MaxInput {
-		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the text is %d characters, past this extractor's bound of %d", len(in.Text), e.c.cfg.MaxInput)
+		return reader.ExtractResult{}, reader.Errorf(reader.Permanent, "the text is %d bytes, past this extractor's bound of %d", len(in.Text), e.c.cfg.MaxInput)
 	}
 	ask, err := prompts.Extract(prompts.ExtractData{
 		Text: in.Text, Schema: string(in.Schema), Citations: in.Citations, Instructions: in.Instructions,
