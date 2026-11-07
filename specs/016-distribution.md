@@ -140,7 +140,7 @@ whether the binary reads the variable today.
 |---|---|---|---|
 | `LECTIO_ROLE` | `all`: `api`, `worker` or `all` | [[001-architecture]] | yes |
 | `LECTIO_INTERNAL_ADDR` | `:8081` | this spec | yes: `/livez`, `/readyz`, `/version` |
-| `LECTIO_ADDR` | `:8080` | [[003-api]] | yes |
+| `LECTIO_ADDR` | `:8080`; `127.0.0.1:8080` with `LECTIO_DEV=true` | [[003-api]] | yes |
 | `LECTIO_BASE_PATH` | `/v1` | [[003-api]] | yes |
 | `LECTIO_DATABASE_URL` | none | [[004-durable-tasks]] | yes: migrations, and the store where no pooled URL is named |
 | `LECTIO_DATABASE_POOL_URL` | none: the serving path opens `LECTIO_DATABASE_URL` | [[004-durable-tasks]] | yes |
@@ -255,7 +255,9 @@ are durations as Go writes them, such as `24h` and `720h`.
 `LECTIO_DEV=true` runs one process with the memory store, one static
 token (`LECTIO_DEV_TOKEN`) under the owner policy unless the table
 above selects otherwise, and the stub reader unless `LECTIO_CONFIG`
-names real ones, and logs at start that nothing is durable. Without it, `lectiod` is the durable server:
+names real ones, and logs at start that nothing is durable. It listens
+on the loopback address unless `LECTIO_ADDR` names another, since its
+token is static; the image sets `LECTIO_ADDR=:8080` for its container. Without it, `lectiod` is the durable server:
 it refuses to start when a required setting is missing and names it,
 the database URL and the bucket's 5 settings among them.
 `lectiod version` prints the build's version. The command takes no

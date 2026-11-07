@@ -116,8 +116,9 @@ The limits an operator plans around:
 - **What a deleted file leaves** in the parses that read it.
 - **A conversion sidecar run with a network.** The shipped manifests take
   it away; an installation of its own must too.
-- **A development server on a public address.** It listens on every
-  interface with the token `dev` by default.
+- **A development server moved to a public address.** It accepts the
+  token `dev` and listens on the loopback address alone, until
+  `LECTIO_ADDR` or a published container port moves it.
 - **An authorizer that answers wrongly,** or an issuer that signs a token
   for the wrong subject. Lectio follows the decision it is given.
 - **A compromised host,** and the services you configure: the model
@@ -137,8 +138,10 @@ The limits an operator plans around:
 
 Beside the secrets:
 
-- Run the development server for one person on one machine. Bind it to
-  `127.0.0.1` with `LECTIO_ADDR`, since its default is every interface.
+- Run the development server for one person on one machine. It listens
+  on `127.0.0.1:8080` unless `LECTIO_ADDR` names another address. The
+  image listens on every interface of its container, so publish its
+  port on `127.0.0.1` alone.
 - Put TLS in front of `lectiod`, which serves plain HTTP, and keep the
   internal listener, `LECTIO_INTERNAL_ADDR`, inside the cluster.
 - `LECTIO_OIDC_ISSUERS` and `LECTIO_AUTHORIZER_URL` accept `http`. List

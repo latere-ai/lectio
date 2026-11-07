@@ -8,6 +8,14 @@ refused before it is pushed.
 
 ### Changed
 
+- **The development server listens on `127.0.0.1:8080` by default,**
+  where it listened on `:8080`, every interface, so the static token it
+  accepts is reachable from its own machine alone. `make run` starts it
+  the same way. An explicit `LECTIO_ADDR` still wins: if you reached a
+  development server from another host, set `LECTIO_ADDR=:8080`, or the
+  address to listen on. The durable server keeps `:8080`, and the image
+  sets `LECTIO_ADDR=:8080`, so a container is reached as before.
+
 - **The documentation is split by reader.** `docs/running.md` is
   replaced by `docs/local.md` for running Lectio on one machine,
   `docs/install.md` for an installation, `docs/configuration.md` for

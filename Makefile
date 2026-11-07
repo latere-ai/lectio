@@ -37,8 +37,9 @@ build:
 	@echo "built $(OUT_DIR)/$(SERVICE)"
 
 # run starts the development server: one process, nothing durable, the
-# stub reader unless LECTIO_CONFIG names a real one. It logs the address it
-# listens on; the token is `dev` unless LECTIO_DEV_TOKEN sets another.
+# stub reader unless LECTIO_CONFIG names a real one. It listens on
+# 127.0.0.1:8080 unless LECTIO_ADDR names another address, and logs it; the
+# token is `dev` unless LECTIO_DEV_TOKEN sets another.
 run: build
 	LECTIO_DEV=true $(OUT_DIR)/$(SERVICE)
 

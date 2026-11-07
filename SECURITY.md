@@ -45,6 +45,7 @@ what happens past it, not its exact value.
 |---|---|---|
 | a caller with a token of another owner | every operation but the contract at `GET /v1/openapi.yaml` and the `/healthz` probe needs a token, which is refused when its issuer is not listed, its audience is another, it has expired, or its signature does not check; each operation asks the authorizer, or the owner policy without one, before it acts; under the owner policy another caller's file or parse is not found, whatever is asked of it | `TestWhatTheVerifierRefuses`, `TestEveryRouteAsksItsAction`, `TestACallerIsKnownAndSeesOnlyItsOwn`, `TestTheOwnerPolicyThroughTheAPI` |
 | a caller when the authorizer denies or cannot answer | the request is answered before anything is done; an authorizer that allows the reserved probe stops the start | `TestADenyAndAnOutageAnswerBeforeAnythingIsDone`, `TestTheClientFailsClosed`, `TestCheckReadsTheProbesAnswer`, `TestTheModesOfADevelopmentServer` |
+| a caller on another machine, against a development server | the development server listens on `127.0.0.1:8080` unless `LECTIO_ADDR` names another address, so its static token is reachable from its own machine alone; the image sets `LECTIO_ADDR=:8080`, every interface of its container, which is reached only as its port is published | `TestTheDevelopmentServerListensOnTheLoopbackAddress`, `TestTheImagesAreWhatTheManifestsRun` |
 | a caller held to limits | an allow lowers the server's limits on a file's size, a parse's pages and the retention, and never raises them; a limit the server cannot hold, such as a cap on the queue in the development server, refuses the request and names the limit | `TestEachLimitOfASubmit`, `TestALimitTheServerDoesNotEnforceIsRefused` |
 | the network around the server | a source URL is fetched over `https` only, from a publicly routable address, checked at dial time and after every redirect; a host listed in `LECTIO_FETCH_ALLOW` is fetched whatever it resolves to, and a redirect from it to another host is checked like any connection; a URL that carries a user and a password is refused | `TestFetchRefusesNonPublicAddresses`, `TestFetchFailures` |
 | a source URL, and whatever its query proves | the fetch sends no trace header to the host, and a fetch that fails tells the caller neither the address nor the query | `TestFetchCarriesNoTraceToTheHostACallerChose` |
@@ -87,10 +88,11 @@ what happens past it, not its exact value.
   calls, as the shipped manifests do. The memory limit on its suite
   bounds address space; the memory its container may hold is the
   container's own limit.
-- **A development server on a public address.** The development server
-  listens on `:8080`, every interface, by default, and accepts the
-  static token `dev` unless issuers are listed. Nothing stops it from
-  being bound where others can reach it.
+- **A development server moved to a public address.** The development
+  server accepts the static token `dev` unless issuers are listed. It
+  listens on the loopback address alone, but nothing stops an operator
+  from setting `LECTIO_ADDR` to an address others can reach, or from
+  publishing the image's port beyond the machine.
 - **Hosts listed in `LECTIO_FETCH_ALLOW`.** A fetch to one of them skips
   the public-address check, so any caller can have Lectio read what that
   host serves.

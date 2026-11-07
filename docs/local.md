@@ -25,8 +25,8 @@ The development server needs Go and `curl` and no container.
 One process that keeps files, parses and results in memory, takes the
 token `dev` (`LECTIO_DEV_TOKEN` names another), and reads pages with a
 stub reader that calls no model. Nothing survives a stop. It listens on
-`:8080`, every interface, unless `LECTIO_ADDR` says otherwise, so the
-block below binds it to the loopback address:
+`127.0.0.1:8080`, the loopback address alone, unless `LECTIO_ADDR` says
+otherwise:
 
 ```sh
 make build
