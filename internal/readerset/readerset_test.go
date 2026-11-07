@@ -201,12 +201,13 @@ func TestWhatWouldNotBuildIsRefusedAndChangesNothing(t *testing.T) {
 	m := newMemory()
 	mgr := manager(t, m, &bytes.Buffer{})
 	for name, err := range map[string]error{
-		"a configured name":    first(mgr.PutReader(ctx, "stub", []byte(textReader))),
-		"removing configured":  mgr.DeleteReader(ctx, "stub"),
-		"a spec that is none":  first(mgr.PutReader(ctx, "own", []byte(`{"adapter":"vision"}`))),
-		"a policy naming none": mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["gone"]},"describe":{"chain":["stub"]},"extract":{"chain":["stub"]}}`)),
-		"an empty read chain":  mgr.PutPolicy(ctx, []byte(`{"describe":{"chain":["stub"]}}`)),
-		"removing what is not": mgr.DeleteReader(ctx, "gone"),
+		"a configured name":       first(mgr.PutReader(ctx, "stub", []byte(textReader))),
+		"removing configured":     mgr.DeleteReader(ctx, "stub"),
+		"a spec that is none":     first(mgr.PutReader(ctx, "own", []byte(`{"adapter":"vision"}`))),
+		"a policy naming none":    mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["gone"]},"describe":{"chain":["stub"]},"extract":{"chain":["stub"]}}`)),
+		"an empty read chain":     mgr.PutPolicy(ctx, []byte(`{"describe":{"chain":["stub"]}}`)),
+		"a policy that escalates": mgr.PutPolicy(ctx, []byte(`{"read":{"chain":["stub"]},"escalate":{"onInvalid":3}}`)),
+		"removing what is not":    mgr.DeleteReader(ctx, "gone"),
 	} {
 		want := fault.InvalidRequest
 		switch name {

@@ -226,7 +226,6 @@ spec:
   read:    { chain: [default, engine] }
   extract: { chain: [default] }
   describe: { chain: [default] }
-  escalate: { onInvalid: 2, max: 1 }
 `
 
 func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
@@ -263,7 +262,7 @@ func TestDocumentsDeclareReadersAndThePolicy(t *testing.T) {
 		t.Fatalf("the chat extractor: %+v", d)
 	}
 	// What is set and not acted on is named.
-	if want := `Policy escalate`; strings.Join(got.Unapplied, "|") != want {
+	if len(got.Unapplied) != 0 {
 		t.Fatalf("unapplied: %q", got.Unapplied)
 	}
 	if want := `Reader "default" maxInFlight and cost|Policy extract.chain`; strings.Join(got.RunnerUnapplied, "|") != want {
@@ -324,6 +323,10 @@ func TestAConfigurationThatDoesNotHoldIsRefusedWhole(t *testing.T) {
 		"a layout engine asked to extract":  {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: e}\nspec: {adapter: layout, endpoint: 'http://engine.internal/read'}\n---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [e]}, extract: {chain: [e]}}\n"}, "cannot fill a schema from text"},
 		"a bound on text below zero":        {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: chat, endpoint: 'https://gateway.example/v1', model: m, maxInput: -1}\n"}, "maxInput is below zero"},
 		"a bound on text nothing reads":     {map[string]string{"a.yaml": head + "kind: Reader\nmetadata: {name: x}\nspec: {adapter: stub, maxInput: 100}\n"}, "only a chat reader"},
+		// When a page moves on unusable replies is fixed, so a Policy that
+		// sets it is refused, even to what the fixed rule does.
+		"a policy that sets escalate":          {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [x]}, escalate: {onInvalid: 3}}\n"}, "escalate is not a setting"},
+		"a policy that sets escalate as fixed": {map[string]string{"a.yaml": stub("x") + "---\n" + head + "kind: Policy\nmetadata: {name: p}\nspec: {read: {chain: [x]}, escalate: {onInvalid: 2, max: 1}}\n"}, "escalate is not a setting"},
 	} {
 		got, err := Load(write(t, tc.files))
 		if err == nil || !strings.Contains(err.Error(), tc.want) || got.Readers != nil {

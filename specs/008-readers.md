@@ -616,7 +616,6 @@ spec:
   read:     { chain: [own, default, strong] } # readers tried in order
   extract:  { chain: [text] }               # for structured extraction
   describe: { chain: [vision] }             # for describing figures
-  escalate: { onInvalid: 2, max: 1 }
 ```
 
 A chain that begins with a `text` reader reads every page that carries
@@ -646,8 +645,8 @@ configured document is never changed by it.
 A configuration is taken whole or not at all. A document of another
 kind or version, a member a spec does not have, a reader that cannot
 be built, a name used twice, a second Policy, several readers with no
-Policy to order them, and a chain that names a reader that is not
-there are each an error, and nothing is loaded: a configuration that
+Policy to order them, a chain that names a reader that is not there,
+and a Policy that sets `escalate` are each an error, and nothing is loaded: a configuration that
 half loads would read pages with a model nobody chose. One reader with
 no Policy is its own chain. With no `LECTIO_CONFIG` at all, the
 development server reads pages with the stub reader and says so at
@@ -786,8 +785,9 @@ Built:
 Remaining:
 
 - Reload on `SIGHUP`: documents are read once, at start.
-- `escalate` on the Policy is read and not applied: escalation is fixed
-  as described above. The server names it at start.
+- A Policy that says when a page escalates. Escalation is fixed as
+  described above, and a Policy that sets `escalate` is refused at load
+  and by `PUT /policy`, so that a setting is never read and ignored.
 - `maxInFlight` and `cost` on a Reader and `extract.chain` on the
   Policy are applied by the durable server
   ([[007-model-capacity]], [[011-structured-extraction]]) and not by a

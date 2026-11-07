@@ -446,7 +446,10 @@ type policySpec struct {
 	Describe struct {
 		Chain []string `yaml:"chain"`
 	} `yaml:"describe"`
-	Escalate struct {
+	// Escalate is decoded only to be refused with a reason: when a page
+	// moves to the next reader on unusable replies is fixed, two of them
+	// and once, and a Policy that set it would be ignored.
+	Escalate *struct {
 		OnInvalid int `yaml:"onInvalid"`
 		Max       int `yaml:"max"`
 	} `yaml:"escalate"`
@@ -626,6 +629,9 @@ func assemble(where string, docs []document, policy *document) (Readers, error) 
 		if err := strict(policy.Spec, &spec); err != nil {
 			return Readers{}, fmt.Errorf("%s: %w", policy.where, err)
 		}
+		if spec.Escalate != nil {
+			return Readers{}, fmt.Errorf("%s: escalate is not a setting: a page moves to the next reader of its chain after two unusable replies, once", policy.where)
+		}
 		out.Chain, out.DescribeChain, out.ExtractChain = spec.Read.Chain, spec.Describe.Chain, spec.Extract.Chain
 		if policy.source == SourceSet {
 			out.PolicySource = SourceSet
@@ -639,9 +645,6 @@ func assemble(where string, docs []document, policy *document) (Readers, error) 
 			// Extraction is built over the task store, which a
 			// development server does not have.
 			out.RunnerUnapplied = append(out.RunnerUnapplied, "Policy extract.chain")
-		}
-		if spec.Escalate.OnInvalid != 0 || spec.Escalate.Max != 0 {
-			out.Unapplied = append(out.Unapplied, "Policy escalate")
 		}
 	}
 

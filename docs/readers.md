@@ -180,12 +180,17 @@ spec:
 | `read.chain` | list of reader names | the one configured Reader, when there is one | The readers a page is tried with, in order. A request that names no reader goes down this chain. A stored Policy must name at least one. |
 | `describe.chain` | list of reader names | empty | The readers that describe a figure, tried in order. Each must be able to describe: a `chat` or `stub` reader. With no chain, a figure is described only by a describer a request names. |
 | `extract.chain` | list of reader names | empty | The readers that fill a schema from a document's text, tried in order. Each must be a `chat` or `stub` reader. With no chain, an extraction runs only when its request names an `extractor`. |
-| `escalate.onInvalid` | integer | not applied | Read and not applied. Escalation is fixed as described in [How a chain falls through](#how-a-chain-falls-through), and `lectiod` names the member in its log at start. |
-| `escalate.max` | integer | not applied | The same. |
-
 An error names a chain whose reader is missing, and a `describe` or `extract`
 chain whose reader cannot do the job: a `layout` or `text` reader named
 there stops the load, and the message says so.
+
+A Policy has no `escalate` member. When a page moves on replies that are not
+usable is fixed, as [How a chain falls through](#how-a-chain-falls-through)
+says, and a Policy that sets `escalate` is refused at load, and by
+`PUT /policy` with `400 invalid_request`. A Policy stored through the API
+by an earlier release that sets it no longer loads: the server logs the error
+and runs on the configured readers and Policy alone until the stored Policy
+is replaced or removed.
 
 A development server has no task store. It does not apply `extract.chain`,
 and says so at start.
