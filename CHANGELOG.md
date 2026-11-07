@@ -24,6 +24,28 @@ refused before it is pushed.
   and `docs/security.md` for what Lectio sends where and keeps.
   `docs/README.md` indexes them.
 
+- **HTML and XML files are refused when they arrive,** with
+  `415 unsupported_media_type` on the upload or on the submit that fetches
+  one, where they were stored and every parse of one then failed with the
+  same code. The detail names the format. A file whose content is HTML or
+  XML is refused whatever its name says.
+
+- **A Policy that sets `escalate` is refused,** at start and by
+  `PUT /policy` with `400 invalid_request`, where it was read and ignored.
+  A page still moves to the next reader of its chain after two replies
+  that are not usable, once. A Policy stored through the API that sets
+  `escalate` no longer loads after the upgrade: the server logs it and
+  runs on the configured readers and Policy alone until it is replaced
+  or removed.
+
+### Removed
+
+- **The API contract no longer lists the error code `rate_limited` or the
+  parse member `progress.waiting`.** No route answered the one and no
+  parse carried the other, so a client sees no change in what it is sent;
+  a client generated from `api/openapi.yaml` loses the constant and the
+  field. `queue_full` remains the one `429`.
+
 ### Fixed
 
 - **The example stack starts on Postgres 18.** `deploy/examples/compose.yaml`
