@@ -79,7 +79,7 @@ The type is decided from the file, not from what the caller said. Lectio looks a
 | Legacy Word (`.doc`) | Converted to `.docx` by the sidecar, then from the file itself. |
 | Signed container (`.p7m`) | Opened to the file inside, which is detected again. |
 | Excel 97 to 2003 (`.xls`) | Refused at upload with `415 unsupported_media_type`: save the workbook as `.xlsx`. |
-| HTML and XML | Recognized and stored, and a parse of one fails with `unsupported_media_type`: this build does not read them. |
+| HTML and XML | Refused at upload with `415 unsupported_media_type`, by their content whatever the file is called. One inside a signed container is found when the container is opened, and the parse fails with `unsupported_media_type`. |
 | Anything else | `415 unsupported_media_type`. |
 
 A server with no sidecar ([`LECTIO_CONVERTER_URL`](configuration.md#conversion)) stores a presentation, and a parse of it fails with `unsupported_media_type`. The failure is on the parse and not on the upload, because the upload only learns the type.

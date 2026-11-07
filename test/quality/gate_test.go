@@ -132,12 +132,13 @@ func TestAFileReadFromItselfMatchesItsTruth(t *testing.T) {
 	}
 }
 
-// TestHTMLAndXMLAreNotRead says why the corpus holds neither: a parse of
-// one is refused. When they are read, this fails, and each then needs a
-// file and a truth in the corpus.
+// TestHTMLAndXMLAreNotRead says why the corpus holds neither: an upload of
+// one is refused, and so is a parse of one, an XML file found inside a
+// signed container among them. When they are read, this fails, and each
+// then needs a file and a truth in the corpus.
 func TestHTMLAndXMLAreNotRead(t *testing.T) {
 	p, _ := pipeline(t)
-	for _, fixture := range []string{testfixtures.HTML, testfixtures.XML, testfixtures.SurveyHTML} {
+	for _, fixture := range []string{testfixtures.HTML, testfixtures.XML, testfixtures.SurveyHTML, testfixtures.WrappedXML} {
 		if _, err := p.Prepare(context.Background(), testfixtures.Read(t, fixture), detect.DeclaredType{FileName: fixture}, ""); fault.CodeOf(err) != fault.UnsupportedMediaType {
 			t.Errorf("%s: %v", fixture, err)
 		}

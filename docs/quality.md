@@ -46,7 +46,7 @@ PDF holds the same pages as images with no text, the PNG and the JPEG
 hold page 1, and the TIFF holds pages 2 to 4, so the same truth scores
 all 5.
 
-HTML and XML are not in the corpus: a parse of either is refused today.
+HTML and XML are not in the corpus: an upload of either is refused today.
 
 ## The measures
 

@@ -43,7 +43,8 @@ const (
 	// ClassNativeSpreadsheet is a workbook or a delimited table read from its
 	// own structure.
 	ClassNativeSpreadsheet RouteClass = "native-spreadsheet"
-	// ClassNativeText is a text format read from its own structure.
+	// ClassNativeText is plain text or Markdown, read from its own
+	// structure.
 	ClassNativeText RouteClass = "native-text"
 	// ClassConvertToPDF is a presentation or a rich text file, converted to
 	// PDF and then read as ClassReader.
@@ -94,8 +95,6 @@ var classByMIME = map[string]RouteClass{
 	MIMEXLSM:       ClassNativeSpreadsheet,
 	MIMECSV:        ClassNativeSpreadsheet,
 	MIMETXT:        ClassNativeText,
-	MIMEHTML:       ClassNativeText,
-	MIMEXMLText:    ClassNativeText,
 	MIMEMarkdown:   ClassNativeText,
 	MIMEPPTX:       ClassConvertToPDF,
 	MIMEPPT:        ClassConvertToPDF,
@@ -109,12 +108,15 @@ var classByMIME = map[string]RouteClass{
 }
 
 // refused maps a canonical media type that is known and not read to the
-// sentence that says so. Such a type cannot be told from its content here:
-// a legacy spreadsheet is a compound file, as a legacy word-processing file
-// and a legacy presentation are, so its name or its declared type is what
-// names it, and the refusal can say more than "no supported format".
+// sentence that says so, so the refusal can say more than "no supported
+// format". A legacy spreadsheet cannot be told from its content here: it
+// is a compound file, as a legacy word-processing file and a legacy
+// presentation are, so its name or its declared type is what names it.
+// HTML and XML are told by their content as well as by their names.
 var refused = map[string]string{
-	MIMEXLS: "a legacy spreadsheet (.xls) is not read; save the workbook as .xlsx",
+	MIMEXLS:     "a legacy spreadsheet (.xls) is not read; save the workbook as .xlsx",
+	MIMEHTML:    "an HTML page is not read; print it to PDF, or save its text as .txt or .md",
+	MIMEXMLText: "an XML file is not read",
 }
 
 // mimeByExt maps a lowercase file name extension, without the dot, to a
@@ -184,11 +186,13 @@ func Canonical(mime string) string {
 // Detect returns the canonical media type of a file. peek is the head of the
 // file, 8 KiB or more for a reliable answer on zipped packages; declared
 // carries the file name and the declared type. A file that no step identifies
-// as a supported type fails with fault.UnsupportedMediaType.
+// as a supported type, and one identified as a type that is not read, fail
+// with fault.UnsupportedMediaType.
 func Detect(peek []byte, declared DeclaredType) (string, error) {
 	// The content comes first. It cannot tell the text formats apart, since
 	// CSV, Markdown and plain text are all just text, so a plain text result
 	// is refined by the extension when the extension names a text format.
+	// Content that is a type not read is refused whatever it is called.
 	if mime := sniff(peek); mime != "" && mime != MIMEOctet {
 		if mime == MIMETXT {
 			if ext := mimeFromExt(declared.FileName); isTextFormat(ext) {
@@ -197,6 +201,9 @@ func Detect(peek []byte, declared DeclaredType) (string, error) {
 		}
 		if _, ok := classByMIME[mime]; ok {
 			return mime, nil
+		}
+		if why, ok := refused[mime]; ok {
+			return "", fault.New(fault.UnsupportedMediaType, "%s", why)
 		}
 	}
 

@@ -781,6 +781,9 @@ func TestAFileIsFetchedFromAURL(t *testing.T) {
 			_, _ = w.Write(scan)
 		case "/blob.bin":
 			_, _ = w.Write([]byte{0, 1, 2, 3, 4, 5, 6, 7})
+		case "/page.html":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<!DOCTYPE html><html><body><p>a page</p></body></html>"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -805,6 +808,7 @@ func TestAFileIsFetchedFromAURL(t *testing.T) {
 	}{
 		origin.URL + "/gone":      {http.StatusUnprocessableEntity, "source_unreachable"},
 		origin.URL + "/blob.bin":  {http.StatusUnsupportedMediaType, "unsupported_media_type"},
+		origin.URL + "/page.html": {http.StatusUnsupportedMediaType, "unsupported_media_type"},
 		"ftp://example.com/a.pdf": {http.StatusBadRequest, "invalid_request"},
 	} {
 		if got := e.do("POST", "/parses", `{"source":{"url":"`+target+`"}}`); got.status != want.status || got.code(t) != want.code {
@@ -832,6 +836,8 @@ func TestUploadsAreChecked(t *testing.T) {
 		"an empty body":              {"/files", []byte{}, "image/png", 400, "invalid_request"},
 		"a file over the limit":      {"/files", make([]byte, 5000), "image/png", 413, "file_too_large"},
 		"a type that is not read":    {"/files?name=blob.bin", []byte{0, 1, 2, 3, 4, 5, 6, 7}, "application/octet-stream", 415, "unsupported_media_type"},
+		"an html page":               {"/files?name=page.html", testfixtures.Read(t, testfixtures.HTML), "text/html", 415, "unsupported_media_type"},
+		"an xml file":                {"/files?name=invoice.xml", testfixtures.Read(t, testfixtures.XML), "application/xml", 415, "unsupported_media_type"},
 		"a name that is too long":    {"/files?name=" + strings.Repeat("n", 300), sheet(t), "image/png", 400, "invalid_request"},
 		"a form with no file part":   {"/files", []byte("--b\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nx\r\n--b--\r\n"), "multipart/form-data; boundary=b", 400, "invalid_request"},
 		"a form with no boundary":    {"/files", []byte("x"), "multipart/form-data", 400, "invalid_request"},

@@ -97,7 +97,8 @@ The numbers are identifiers, not the order of work. The order is:
    detection, unwrapping, counting and selection, native text, Markdown
    and CSV, image and PDF rendering, conversion through the sidecar,
    `.docx`, `.xlsx` and `.xlsm` read natively, and assembly with its
-   views. Not built: native HTML and XML, and streaming assembly.
+   views. Not built: native HTML and XML, which are refused at upload,
+   and streaming assembly.
 6. **Fields** (011), **telemetry** (015), and the first release. Built:
    extraction with a schema in the durable server, as a task that makes
    one call a claim, and the run that describes figures there; and for

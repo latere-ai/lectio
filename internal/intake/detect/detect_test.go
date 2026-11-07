@@ -36,8 +36,6 @@ func TestDetectFixturesContentFirst(t *testing.T) {
 		{testfixtures.LedgerXLSM, MIMEXLSM, ClassNativeSpreadsheet},
 		{testfixtures.WrappedPDF, MIMEPKCS7MIME, ClassUnwrapP7M},
 		{testfixtures.WrappedXML, MIMEPKCS7MIME, ClassUnwrapP7M},
-		{testfixtures.HTML, MIMEHTML, ClassNativeText},
-		{testfixtures.XML, MIMEXMLText, ClassNativeText},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -72,7 +70,6 @@ func TestDetectContentBeatsNameAndDeclaredType(t *testing.T) {
 		{"docx named as pdf", testfixtures.DOCX, DeclaredType{FileName: "report.pdf", MIME: "application/pdf"}, MIMEDOCX},
 		{"png declared as jpeg", testfixtures.PNG, DeclaredType{MIME: "image/jpeg"}, MIMEPNG},
 		{"signed container named as xml", testfixtures.WrappedXML, DeclaredType{FileName: "invoice.xml"}, MIMEPKCS7MIME},
-		{"html named as csv", testfixtures.HTML, DeclaredType{FileName: "table.csv"}, MIMEHTML},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -205,6 +202,48 @@ func TestDetectRefusesALegacySpreadsheet(t *testing.T) {
 	}
 }
 
+// HTML and XML are known and not read. Each is refused where it is
+// detected, with a detail that names the format: by its content whatever
+// it is called, and by its name or its declared type when the content says
+// only text or nothing. Neither has a route.
+func TestDetectRefusesHTMLAndXML(t *testing.T) {
+	html, xml := testfixtures.Read(t, testfixtures.HTML), testfixtures.Read(t, testfixtures.XML)
+	for name, tc := range map[string]struct {
+		peek     []byte
+		declared DeclaredType
+		format   string
+	}{
+		"an html page":                         {html, DeclaredType{}, "HTML"},
+		"an html page named as csv":            {html, DeclaredType{FileName: "table.csv"}, "HTML"},
+		"an html page declared as text":        {html, DeclaredType{MIME: "text/plain"}, "HTML"},
+		"html markup alone":                    {[]byte("<html><body>x</body></html>"), DeclaredType{}, "HTML"},
+		"text named as html":                   {[]byte("just some words"), DeclaredType{FileName: "page.htm"}, "HTML"},
+		"bytes declared as html":               {[]byte("\x00\x01\x02\x03random"), DeclaredType{MIME: "text/html; charset=utf-8"}, "HTML"},
+		"an xml file":                          {xml, DeclaredType{}, "XML"},
+		"an xml file named as text":            {xml, DeclaredType{FileName: "data.txt"}, "XML"},
+		"an xml declaration after white space": {[]byte("\n  <?xml version=\"1.0\"?><a/>"), DeclaredType{}, "XML"},
+		"text named as xml":                    {[]byte("just some words"), DeclaredType{FileName: "notes.xml"}, "XML"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mime, err := Detect(tc.peek, tc.declared)
+			if err == nil {
+				t.Fatalf("Detect = %q, want a refusal", mime)
+			}
+			if got := fault.CodeOf(err); got != fault.UnsupportedMediaType {
+				t.Errorf("code = %q, want %q", got, fault.UnsupportedMediaType)
+			}
+			if detail := fault.DetailOf(err); !strings.Contains(detail, tc.format) {
+				t.Errorf("the detail does not name %s: %q", tc.format, detail)
+			}
+		})
+	}
+	for _, mime := range []string{MIMEHTML, MIMEXMLText} {
+		if class, ok := ClassOf(mime); ok {
+			t.Errorf("%s has the route %q, and nothing reads it", mime, class)
+		}
+	}
+}
+
 // zipHead is the head of a ZIP whose first local file header names part: the
 // signature, the 26 bytes of fixed fields, and the name.
 func zipHead(part string) []byte {
@@ -267,9 +306,6 @@ func TestDetectTextByContent(t *testing.T) {
 		peek string
 		want string
 	}{
-		{"xml declaration", `<?xml version="1.0"?><a/>`, MIMEXMLText},
-		{"xml declaration after white space", "\n  <?xml version=\"1.0\"?><a/>", MIMEXMLText},
-		{"html", "<html><body>x</body></html>", MIMEHTML},
 		{"plain text", "just some words", MIMETXT},
 		{"big-endian tiff", "MM\x00*\x00\x00\x00\x08", MIMETIFF},
 	}

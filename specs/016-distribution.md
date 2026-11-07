@@ -550,7 +550,7 @@ Built:
   the tests of `test/quality` in the gate, `make live-quality`, and
   `docs/quality.md`. The live run has read the corpus with one reader,
   through the durable server, with the result above. The corpus holds
-  no HTML and no XML, which a parse refuses, and none of the other
+  no HTML and no XML, which an upload refuses, and none of the other
   converted formats (`.ppt`, `.odp`, `.odt`, `.key`).
 
 Remaining:

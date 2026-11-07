@@ -105,11 +105,12 @@ declare millions.
 | TIFF | one page per frame | `reader` |
 | `.docx` | native: one page of blocks, tables kept as tables | `native` |
 | `.xlsx`, `.xlsm`, `.csv` | native: one page per sheet, each a table | `native` |
-| text, Markdown, HTML, XML | native | `native` |
+| text, Markdown | native | `native` |
 | `.doc` | converted to `.docx`, then native | `native` |
 | `.pptx`, `.ppt`, `.rtf`, `.key`, `.odt`, `.odp` | converted to PDF, then as a PDF | `reader`, or `text_layer` |
 | `.p7m` | unwrapped, then as the document inside | either |
 | `.xls` | refused with `unsupported_media_type`, with a detail that says to save the workbook as `.xlsx` | |
+| HTML, XML | refused with `unsupported_media_type`, by their content whatever the file is called, with a detail that names the format | |
 | anything else | refused with `unsupported_media_type` | |
 
 A `native` page task copies blocks that `prepare` already produced and
@@ -601,8 +602,8 @@ Remaining:
 
 - A comparison of the PDF renderer's output against a native build of
   the engine, on a fixture set, kept as a benchmark.
-- Native reading of HTML and XML. They are detected and accepted as
-  uploads, and a parse of one fails with `unsupported_media_type`.
+- Native reading of HTML and XML. They are detected and refused, at
+  upload and at a fetch, with `unsupported_media_type`.
 - The bytes of a picture in a `.docx`. A figure of a native page has no
   image.
 - The denial of the network to the sidecar, as something the
