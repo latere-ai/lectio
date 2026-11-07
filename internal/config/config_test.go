@@ -27,12 +27,39 @@ func TestSettingsHaveDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Addr != ":8080" || s.BasePath != "/v1" || s.Dev || s.DevToken != "dev" || s.MaxFileBytes != 256<<20 || s.MaxPages != 3000 ||
+	if s.Addr != DefaultAddr || s.BasePath != "/v1" || s.Dev || s.DevToken != "dev" || s.MaxFileBytes != 256<<20 || s.MaxPages != 3000 ||
 		s.Workers != 8 || s.Attempts != 5 || s.MaxDeadline != time.Hour || s.Grace != 25*time.Second || !s.ModelKey.IsZero() || s.FetchAllow != nil || s.ConverterURL != "" {
 		t.Fatalf("defaults: %+v", s)
 	}
 	if s.FileRetention != 24*time.Hour || s.ParseRetention != 30*24*time.Hour {
 		t.Fatalf("a file is kept for %s and a parse for %s, want 24 hours and 30 days", s.FileRetention, s.ParseRetention)
+	}
+}
+
+// TestTheDevelopmentServerListensOnTheLoopbackAddress: with no
+// LECTIO_ADDR the durable server listens on every interface, as its
+// container needs, and the development server on the loopback address
+// alone, since it accepts a static token. An address that is set wins in
+// either.
+func TestTheDevelopmentServerListensOnTheLoopbackAddress(t *testing.T) {
+	if DefaultAddr != ":8080" || DefaultDevAddr != "127.0.0.1:8080" {
+		t.Fatalf("the defaults are %q and %q", DefaultAddr, DefaultDevAddr)
+	}
+	for name, tc := range map[string]struct {
+		getenv func(string) string
+		want   string
+	}{
+		"the durable server":                     {env(), DefaultAddr},
+		"the durable server with an address":     {env("LECTIO_ADDR", "10.0.0.7:9000"), "10.0.0.7:9000"},
+		"the development server":                 {env("LECTIO_DEV", "true"), DefaultDevAddr},
+		"the development server with an address": {env("LECTIO_DEV", "true", "LECTIO_ADDR", ":8080"), ":8080"},
+		"the development server with a blank":    {env("LECTIO_DEV", "true", "LECTIO_ADDR", "  "), DefaultDevAddr},
+		"the development server switched off":    {env("LECTIO_DEV", "false"), DefaultAddr},
+	} {
+		s, err := FromEnv(tc.getenv)
+		if err != nil || s.Addr != tc.want {
+			t.Errorf("%s listens on %q (%v), want %q", name, s.Addr, err, tc.want)
+		}
 	}
 }
 

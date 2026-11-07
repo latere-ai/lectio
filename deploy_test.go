@@ -1271,14 +1271,17 @@ func finalStage(t *testing.T, path string) (whole, stage string) {
 
 // TestTheImagesAreWhatTheManifestsRun holds the 2 Dockerfiles to what the
 // manifests assume of them: the user the Pods run as, the ports the
-// containers name, and for the server a static binary with its version
-// stamped, alone on a base with no shell.
+// containers name and listen on, and for the server a static binary with
+// its version stamped, alone on a base with no shell.
 func TestTheImagesAreWhatTheManifestsRun(t *testing.T) {
 	user := fmt.Sprintf("\nUSER %d:%d\n", uid, uid)
 
 	whole, stage := finalStage(t, "Dockerfile")
 	for _, want := range []string{
 		"\nFROM gcr.io/distroless/static-debian12:nonroot\n", user, "\nEXPOSE 8080 8081\n",
+		// A development server run from the image is reached through its
+		// published port, so the image listens on every interface.
+		"\nENV LECTIO_ADDR=:8080\n",
 		"\nENTRYPOINT [\"/usr/local/bin/lectiod\"]\n",
 	} {
 		if !strings.Contains(stage, want) {

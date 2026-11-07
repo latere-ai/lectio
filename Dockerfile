@@ -43,7 +43,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -buil
 # requires a non-root user can check it without reading the image's
 # passwd file. No office suite is here: conversion is the sidecar's image,
 # deploy/converter/Dockerfile.
+#
+# The API listens on every interface of the container, where its port is
+# reached only as it is published. Outside a container the development
+# server listens on the loopback address alone.
 FROM gcr.io/distroless/static-debian12:nonroot
+ENV LECTIO_ADDR=:8080
 EXPOSE 8080 8081
 USER 65532:65532
 COPY --from=build /out/lectiod /usr/local/bin/lectiod

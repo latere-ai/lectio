@@ -151,7 +151,7 @@ type Settings struct {
 // the value: a variable may hold a secret by mistake.
 func FromEnv(getenv func(string) string) (Settings, error) {
 	s := Settings{
-		Addr: ":8080", BasePath: "/v1", DevToken: "dev",
+		BasePath: "/v1", DevToken: "dev",
 		MaxFileBytes: 256 << 20, MaxPages: 3000, Workers: 8, Attempts: tasks.DefaultAttempts,
 		MaxDeadline: time.Hour, Grace: 25 * time.Second,
 		FileRetention: DefaultFileRetention, ParseRetention: DefaultParseRetention,
@@ -201,6 +201,12 @@ func FromEnv(getenv func(string) string) (Settings, error) {
 			errs = append(errs, errors.New("LECTIO_DEV is not true or false"))
 		}
 		s.Dev = dev
+	}
+	if s.Addr == "" {
+		s.Addr = DefaultAddr
+		if s.Dev {
+			s.Addr = DefaultDevAddr
+		}
 	}
 	if !strings.HasPrefix(s.BasePath, "/") {
 		errs = append(errs, errors.New("LECTIO_BASE_PATH does not begin with a slash"))
@@ -318,6 +324,16 @@ func (g *GroupDefaults) read(raw string) error {
 	}
 	return nil
 }
+
+// Where the API listens when LECTIO_ADDR names no address.
+const (
+	// DefaultAddr is the durable server's: every interface, since it runs
+	// in a container whose port is published.
+	DefaultAddr = ":8080"
+	// DefaultDevAddr is the development server's: the loopback address, so
+	// the static token it accepts is reachable from this machine alone.
+	DefaultDevAddr = "127.0.0.1:8080"
+)
 
 // How long what is stored is kept when no setting says otherwise.
 const (
