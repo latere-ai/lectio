@@ -257,33 +257,79 @@ func fieldOf(t *testing.T, r reply) string {
 	return field
 }
 
-// TestADevelopmentServerBuildsNothingOverTheTaskStore: the 7 operations
-// that are built over the task store are routed and authenticated in a
-// development server, ask their action, and answer 501, which the contract
-// lists for each of them: a retry, the event stream, the meter, the view
-// of the queue, and the 3 of an extraction. An extraction is checked as the
-// contract says before it is answered, so a request that is malformed is
-// told so by either server.
+// unbuilt reports whether a development server answers a route 501, as
+// docs/api.md lists them under "What the development server does not
+// build": a retry and the event stream, the meter and the view of the
+// queue, the routes of an extraction and of sets, and the changes to the
+// stored readers and policy, which it has no store for.
+func unbuilt(rt access.Route) bool {
+	switch {
+	case strings.HasSuffix(rt.Path, "/retry"), strings.HasSuffix(rt.Path, "/events"),
+		rt.Path == "/usage", rt.Path == "/queue",
+		strings.Contains(rt.Path, "/fields"), strings.HasPrefix(rt.Path, "/sets"):
+		return true
+	case strings.HasPrefix(rt.Path, "/readers/"), rt.Path == "/policy":
+		return rt.Method == http.MethodPut || rt.Method == http.MethodDelete
+	}
+	return false
+}
+
+// unbuiltRoutes is how many routes docs/api.md lists as answered 501 by a
+// development server: 2 of a parse, the meter and the queue, 4 of an
+// extraction, 8 of sets, and 4 that change readers or the policy.
+const unbuiltRoutes = 2 + 2 + 4 + 8 + 4
+
+// TestADevelopmentServerBuildsNothingOverTheTaskStore walks every route of
+// access.Routes on a development server. The routes the contract builds
+// over the task store are authenticated and answer 501 not_implemented;
+// every other route answers something else. So a route added over the task
+// store fails here until docs/api.md and unbuilt list it. An extraction is
+// checked as the contract says before it is answered, so a request that is
+// malformed is told so by either server.
 func TestADevelopmentServerBuildsNothingOverTheTaskStore(t *testing.T) {
-	e := serve(t, nil)
-	pid := e.parsed(e.upload("scan.png", sheet(t)), "")["id"].(string)
-	for _, route := range []string{
-		"POST /parses/" + pid + "/retry", "GET /parses/" + pid + "/events", "GET /usage", "GET /queue",
-		"POST /parses/" + pid + "/fields", "GET /parses/" + pid + "/fields", "GET /parses/" + pid + "/fields/invoice",
-	} {
-		method, path, _ := strings.Cut(route, " ")
-		var body any
-		if strings.HasSuffix(route, "/fields") && method == "POST" {
-			body = `{"name":"invoice","schema":{"type":"object"}}`
-		}
-		got := e.do(method, path, body)
-		if got.status != http.StatusNotImplemented || got.code(t) != "not_implemented" {
-			t.Errorf("%s in a development server: %d %s", route, got.status, got.body)
-		}
-		if got := e.as("").do(method, path, body); got.status != http.StatusUnauthorized {
-			t.Errorf("%s with no token: %d %s", route, got.status, got.body)
+	a := asking(t)
+	var walk []string
+	listed := map[string]bool{}
+	n := 0
+	for _, rt := range access.Routes() {
+		op := rt.Method + " " + rt.Path
+		walk = append(walk, op)
+		if listed[op] = unbuilt(rt); listed[op] {
+			n++
 		}
 	}
+	if n != unbuiltRoutes {
+		t.Fatalf("%d routes are listed as not built in a development server, and docs/api.md lists %d", n, unbuiltRoutes)
+	}
+	// The bodies a route is checked against before it is answered.
+	bodies := map[string]string{
+		"POST /parses/{parse}/fields":       `{"name":"invoice","schema":{"type":"object"}}`,
+		"PUT /parses/{parse}/fields/{name}": `{"schema":{"type":"object"}}`,
+	}
+	for _, op := range walkOrder(walk) {
+		method, path := a.path(op)
+		var got reply
+		if body, ok := bodies[op]; ok {
+			got = a.do(method, path, body)
+		} else {
+			got = a.request(op)
+		}
+		switch {
+		case listed[op] && (got.status != http.StatusNotImplemented || got.code(t) != "not_implemented"):
+			t.Errorf("%s in a development server, want 501 not_implemented: %d %s", op, got.status, got.body)
+		case !listed[op] && got.status == http.StatusNotImplemented:
+			t.Errorf("%s answers 501 in a development server, and docs/api.md does not list it: %s", op, got.body)
+		}
+		if !listed[op] {
+			continue
+		}
+		if got := a.as("").do(method, path, nil); got.status != http.StatusUnauthorized {
+			t.Errorf("%s with no token: %d %s", op, got.status, got.body)
+		}
+	}
+
+	e := serve(t, nil)
+	pid := e.parsed(e.upload("scan.png", sheet(t)), "")["id"].(string)
 	if got := e.as("bob-token").do("POST", "/parses/"+pid+"/retry", nil); got.status != http.StatusNotFound {
 		t.Errorf("a retry of another caller's parse in a development server: %d %s", got.status, got.body)
 	}

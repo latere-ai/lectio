@@ -21,23 +21,31 @@ import (
 )
 
 // operations lists every operation of api/openapi.yaml as "METHOD /path",
-// sorted, with the deletes last and a parse's before a file's: a walk that
-// deletes what the other operations are about ends with nothing to ask.
+// in the order of a walk.
 func operations(t *testing.T) []string {
 	t.Helper()
-	var out, last []string
+	var ops []string
 	for path, item := range contract["paths"].(map[string]any) {
 		for method := range item.(map[string]any) {
-			if method == "parameters" {
-				continue
+			if method != "parameters" {
+				ops = append(ops, strings.ToUpper(method)+" "+path)
 			}
-			op := strings.ToUpper(method) + " " + path
-			if method == "delete" {
-				last = append(last, op)
-				continue
-			}
-			out = append(out, op)
 		}
+	}
+	return walkOrder(ops)
+}
+
+// walkOrder sorts operations given as "METHOD /path" with the deletes last
+// and a parse's before a file's: a walk that deletes what the other
+// operations are about ends with nothing to ask.
+func walkOrder(ops []string) []string {
+	var out, last []string
+	for _, op := range ops {
+		if strings.HasPrefix(op, http.MethodDelete+" ") {
+			last = append(last, op)
+			continue
+		}
+		out = append(out, op)
 	}
 	slices.Sort(out)
 	slices.Sort(last)
@@ -93,8 +101,7 @@ func setless(op string) bool { return over == nil && strings.Contains(op, "{set}
 // operation takes one.
 func (a *asked) request(op string) reply {
 	a.t.Helper()
-	method, path, _ := strings.Cut(op, " ")
-	path = strings.NewReplacer("{file}", a.file, "{parse}", a.parse, "{set}", a.set, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(path)
+	method, path := a.path(op)
 	switch op {
 	case "POST /sets":
 		return a.do(method, path, `{"name":"walk","schema":{"type":"object"}}`)
@@ -106,6 +113,13 @@ func (a *asked) request(op string) reply {
 		return a.do(method, path, `{"source":{"file":"`+a.file+`"},"reader":"stub","class":"batch","priority":2,"pages":"1-2,2","labels":{"k":"v"},"origin":{"path":"a/2.png"},"reuse":false}`)
 	}
 	return a.do(method, path, nil)
+}
+
+// path is the method of one operation and its path with the walk's
+// objects in it.
+func (a *asked) path(op string) (method, path string) {
+	method, path, _ = strings.Cut(op, " ")
+	return method, strings.NewReplacer("{file}", a.file, "{parse}", a.parse, "{set}", a.set, "{page}", "1", "{ref}", "1.1", "{name}", "invoice").Replace(path)
 }
 
 // known are the members a request of the walk knows of its resource:
