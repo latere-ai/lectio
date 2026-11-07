@@ -40,7 +40,6 @@ const (
 	IdempotencyConflict  Code = "idempotency_conflict"
 	NotTerminal          Code = "not_terminal"
 	AlreadyTerminal      Code = "already_terminal"
-	RateLimited          Code = "rate_limited"
 	QueueFull            Code = "queue_full"
 	NotImplemented       Code = "not_implemented"
 	ReaderNotPermitted   Code = "reader_not_permitted"

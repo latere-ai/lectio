@@ -360,10 +360,12 @@ was served, and what each group read in an hour is in the meters
 ([[013-limits-and-usage]]).
 
 Like a group, a project is never a metric label: their number is
-unbounded ([[015-observability]]). A parse's `progress.waiting` is
-computed when it is read: `turn` when the parse has queued tasks that
-could run and none leased, `capacity` when its queued tasks have no
-reader with room. Nothing is written while a task waits.
+unbounded ([[015-observability]]). A parse does not say why it is not
+moving, and the contract has no member for it ([[003-api]]). One would
+be computed when the parse is read, `turn` when the parse has queued
+tasks that could run and none leased and `capacity` when its queued
+tasks have no reader with room, so that nothing is written while a task
+waits.
 
 ## Not in this spec
 
@@ -421,7 +423,8 @@ the charge and of `max_running` run on a direct connection. Not proven: the reco
 soak run with kills, which waits for the soak of [[004-durable-tasks]];
 every test of the store ends with that recount over its own rows.
 
-Remaining: `progress.waiting`. A share of service per interval, which
+Remaining: a member of a parse that says why it is not moving, which
+the contract does not have. A share of service per interval, which
 the first draft put in `GET /queue`, is not in its answer. A
 development server answers `GET /queue` with `501`. `internal/run`, the
 in-process runner, still stands in for this spec there: every parse's

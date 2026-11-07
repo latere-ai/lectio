@@ -241,7 +241,7 @@ Every error has the same shape. Branch on `code`. `message` is one fixed sentenc
 | 501 | `not_implemented` | The route is not built in this server, as [the last section](#what-the-development-server-does-not-build) lists. |
 | 503 | `authorizer_unavailable` | The authorizer gave no decision, so the request failed closed. Retryable. |
 
-The contract also lists `rate_limited` (`429`, retryable). No route answers it today, so a client need not handle it.
+`queue_full` is the one `429`: Lectio sets no limit on requests per minute.
 
 ### Codes on a parse, a page or an extraction
 

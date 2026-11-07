@@ -1188,7 +1188,6 @@ components:
                 - idempotency_conflict
                 - not_terminal
                 - already_terminal
-                - rate_limited
                 - queue_full
                 - budget_exhausted
                 - not_implemented
@@ -1308,10 +1307,6 @@ components:
             pages_done: { type: integer }
             pages_failed: { type: integer }
             pages_reused: { type: integer, description: How many of the pages done were taken from an earlier read and cost no model call. }
-            waiting:
-              type: string
-              enum: [turn, capacity]
-              description: Why nothing is moving, when nothing is.
         usage: { $ref: "#/components/schemas/Usage" }
         error: { $ref: "#/components/schemas/Problem" }
         created_at: { type: string, format: date-time }

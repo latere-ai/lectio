@@ -373,7 +373,6 @@ var problems = map[fault.Code]problem{
 	fault.TooManyPages:          {http.StatusRequestEntityTooLarge, "The file has too many pages.", false},
 	fault.UnsupportedMediaType:  {http.StatusUnsupportedMediaType, "This type of file cannot be parsed.", false},
 	fault.SourceUnreachable:     {http.StatusUnprocessableEntity, "The file could not be fetched from its address.", true},
-	fault.RateLimited:           {http.StatusTooManyRequests, "Too many requests. Try again shortly.", true},
 	fault.QueueFull:             {http.StatusTooManyRequests, "Too much work is waiting. Try again shortly.", true},
 	fault.NotImplemented:        {http.StatusNotImplemented, "This is not available yet.", false},
 	fault.CapabilityUnsupported: {http.StatusUnprocessableEntity, "This server does not support a limit that applies to this request.", false},
