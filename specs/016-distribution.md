@@ -77,10 +77,10 @@ deploy/bootstrap/         the namespace and the template of the Secrets, applied
 deploy/components/        the conversion sidecar for a cluster, as a part an overlay adds
 deploy/converter/         the image of the conversion sidecar
 deploy/examples/          2 example overlays; a compose file: Postgres, an object store, lectiod, the sidecar
-docs/                     running it; the quality corpus, its measures and bars; the configuration reference and the API guide (not built)
+docs/                     running it on one machine and as an installation; the configuration reference, the Reader and Policy documents, the API guide, the authorizer, security; the quality corpus, its measures and bars
 test/quality/             the quality corpus held to its truths: the gate's tests, and the live run
 test/                     conformance, end-to-end, soak (not built)
-tools/                    the script that writes a release's deploy archive; generators and checks (not built)
+tools/                    the script that writes a release's deploy archive, and the live check after a deploy
 ```
 
 Public packages are the four a consumer, an adapter or an authorizer
@@ -131,10 +131,14 @@ either reaches a converter or refuses the format.
 
 ### Configuration
 
-Every variable is `LECTIO_*` and is listed once, here, with its owner.
-The table is generated into `docs/configuration.md` and a test fails
-when the binary reads a variable the table lacks. The last column says
-whether the binary reads the variable today.
+Every variable the binaries read is `LECTIO_*` and is listed once,
+here, with its owner. `docs/configuration.md` is the operator's
+reference to the same variables, written by hand: nothing generates it.
+A test holds the manifests of `deploy/` to the table, so none sets a
+variable it does not list, and no test holds the table or the page to
+the variables the code reads. The last column is `yes` on every row,
+and says after it which process reads the variable, where not every
+one does.
 
 | Variable | Default | Owner | Read today |
 |---|---|---|---|
@@ -161,8 +165,6 @@ whether the binary reads the variable today.
 | `LECTIO_SHUTDOWN_GRACE` | 25s | [[004-durable-tasks]] | yes: open requests and running tasks |
 | `LECTIO_TASK_LEASE`, `LECTIO_TASK_EXPIRIES`, `LECTIO_SWEEP_INTERVAL` | 60s, 3, 30s | [[004-durable-tasks]] | yes |
 | `LECTIO_WORKER_FLUSH`, `LECTIO_WORKER_POLL` | 200ms, 1s | [[004-durable-tasks]] | yes |
-| `LECTIO_TASK_RETENTION` | 7 days | [[004-durable-tasks]] | no |
-| `LECTIO_CLASS_WEIGHTS` | `interactive=4,batch=1` | [[006-fairness-and-priority]] | no |
 | `LECTIO_GROUP_DEFAULTS` | none: a share of 1, no bound, no budget, priority 0 alone | [[006-fairness-and-priority]] | yes |
 | `LECTIO_POOL_RECOVERY`, `LECTIO_POOL_RESUME` | 30s, 10s | [[007-model-capacity]] | yes |
 | `LECTIO_MAX_FILE_BYTES`, `LECTIO_MAX_PAGES` | 256 MiB, 3000 | [[009-intake]] | yes |
@@ -171,15 +173,20 @@ whether the binary reads the variable today.
 | `LECTIO_CONVERT_ADDR` | `:8090` | [[009-intake]] | yes, by `lectio-convert` |
 | `LECTIO_CONVERT_SUITE` | `soffice`, found on `PATH` | [[009-intake]] | yes, by `lectio-convert` |
 | `LECTIO_CONVERT_TIMEOUT`, `LECTIO_CONVERT_MEMORY_BYTES` | 2m, 4 GiB | [[009-intake]] | yes, by `lectio-convert` |
-| `LECTIO_CHUNK_MAX_CHARS` | 6000 | [[010-assembly]] | no |
 | `LECTIO_MAX_DEADLINE` | 1h | [[013-limits-and-usage]] | yes |
-| `LECTIO_SUBMIT_LIMIT`, `LECTIO_MAX_PARSE_TOKENS` | 120 per minute, off | [[013-limits-and-usage]] | no |
 | `LECTIO_FETCH_ALLOW` | none | [[014-sources-and-retention]] | yes |
 | `LECTIO_READER_ENDPOINTS`, `LECTIO_READERS_POLL` | the configured readers' endpoints, 10s | [[019-readers-at-runtime]] | yes: the durable server; a development server stores no reader |
 | `LECTIO_FILE_RETENTION`, `LECTIO_PARSE_RETENTION` | 24h, 720h | [[014-sources-and-retention]] | yes: the durable server; a development server keeps nothing |
-| `LECTIO_KEEP_PAGE_IMAGES` | true | [[014-sources-and-retention]] | no |
 | `LECTIO_DEV` | false | this spec | yes |
 | `LECTIO_DEV_TOKEN` | `dev` | this spec | yes: the one caller of a development server that lists no issuer |
+
+Six variables that the designs name are read by no binary, and are
+not in the table: `LECTIO_TASK_RETENTION` ([[004-durable-tasks]]),
+`LECTIO_CLASS_WEIGHTS` ([[006-fairness-and-priority]]),
+`LECTIO_CHUNK_MAX_CHARS` ([[010-assembly]]), `LECTIO_SUBMIT_LIMIT` and
+`LECTIO_MAX_PARSE_TOKENS` ([[013-limits-and-usage]]), and
+`LECTIO_KEEP_PAGE_IMAGES` ([[014-sources-and-retention]]). Each joins
+the table when a binary reads it.
 
 A value that does not parse is an error that names its variable and
 never its value: a variable may hold a secret by mistake.
@@ -555,9 +562,10 @@ Built:
 
 Remaining:
 
-- `lectio-stubs` and its image, the rest of `docs/`, the generated
-  configuration reference and its test, an image test of the
-  conversion sidecar, and the smoke test of the compose file.
+- `lectio-stubs` and its image, a test that holds the configuration
+  table and `docs/configuration.md` to the variables the code reads, an
+  image test of the conversion sidecar, and the smoke test of the
+  compose file.
 - In the release: the binaries for 4 platforms and the stubs' image.
   The release carries 2 images and the deploy archive.
 - The test tiers in part. The suite is unit tests; the tests of
@@ -596,7 +604,7 @@ Remaining:
 |---|---|
 | `make check` passes on a fresh clone with only the toolchain on `PATH` | the hermetic gate |
 | `docker compose -f deploy/examples/compose.yaml up` followed by the documented two commands parses the sample file end to end | a smoke test run in CI |
-| The configuration table lists every variable the binary reads and none it does not | a generator test |
+| The configuration table lists every variable the binaries read and none they do not | a test that reads the variables from the code |
 | `lectiod` without `LECTIO_DEV` and without a database names the missing variable and exits non-zero; with `LECTIO_DEV` it starts and warns | start-up tests |
 | The store conformance suite passes on the memory store, on Postgres, and on Postgres through a transaction-mode pooler | the conformance tier |
 | The server image contains no office suite and is under 60 MiB; the conversion sidecar converts the presentation fixture with its network disabled | image tests |

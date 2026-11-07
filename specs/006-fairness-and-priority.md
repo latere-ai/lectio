@@ -200,10 +200,10 @@ For each free slot, in the claim step of the exchange
    not looked at again in this step and is charged nothing.
 2. **Class.** Among eligible classes, take the one with the smaller
    `max(vtime, dispatch.clock)`, interactive first on a tie. The
-   weights are `LECTIO_CLASS_WEIGHTS`, default `interactive=4,batch=1`:
-   when both classes have work, interactive receives four units in five
-   and batch one in five. When only one class has work it receives all
-   of them.
+   weights are 4 for interactive and 1 for batch, and no variable
+   changes them yet: when both classes have work, interactive receives
+   four units in five and batch one in five. When only one class has
+   work it receives all of them.
 3. **Group.** Among eligible groups of that class, take the one with
    the smallest `max(vtime, class.clock)`, ties broken by group id.
 4. **Project.** Among that group's eligible projects in the class, take

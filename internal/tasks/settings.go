@@ -24,8 +24,8 @@ const (
 	DefaultBackoffBase = time.Second
 	DefaultBackoffCap  = 60 * time.Second
 
-	// LECTIO_CLASS_WEIGHTS: when both classes have work, interactive
-	// receives 4 units in 5.
+	// The class weights: when both classes have work, interactive receives
+	// 4 units in 5. No variable sets them.
 	DefaultInteractiveWeight = 4
 	DefaultBatchWeight       = 1
 

@@ -2,28 +2,34 @@
 # SPDX-FileCopyrightText: 2026 Latere AI
 # SPDX-License-Identifier: Apache-2.0
 #
-# The live check after a deploy. The release pipeline runs it once the
-# rollout is done and the deploy credential is gone, again every few seconds
-# until it passes, and attaches its Markdown evidence to the release. An
-# operator can run it by hand after an upgrade.
+# The live check after a deploy: it asks the API from outside, through
+# whatever routes requests to lectiod, and proves the release that answers.
+# An operator runs it by hand after an upgrade. The release workflow runs it
+# after the deploy job's rollout, where that job runs at all (the repository
+# variable LECTIO_RELEASE_DEPLOY is set): with the cluster credential
+# already dropped, again every few seconds until it passes or the stage's
+# time runs out, and the release notes carry its Markdown evidence.
 #
 # Unauthenticated, read-only, and safe to run any number of times. It does
 # not wait: it fails at once on the first failing check and leaves the retry
 # to its caller.
 #
-# BASE_URL is the API origin plus the path prefix lectiod is served under,
-# for production https://api.latere.ai/v1/parsing. It has no default.
+# BASE_URL is the API origin plus LECTIO_BASE_PATH, such as
+# https://parse.example.com/v1, and for production https://api.latere.ai/v1/parsing.
+# It has no default.
 #
 # Checks, in order:
-#   1. GET $BASE_URL/openapi.yaml answers 200: the public route reaches lectiod.
+#   1. GET $BASE_URL/openapi.yaml answers 200: the route reaches lectiod.
 #   2. GET $BASE_URL/readers answers 401: the API's own refusal of a request
 #      with no bearer, which proves the request reached lectiod's routes.
-#      lectiod's /healthz is served at the origin root, which the ingress
-#      does not route, so there is no public health route to check.
+#      /healthz is not checked: it is served outside the base path, which an
+#      ingress that routes only the base path, as the production one does,
+#      never reaches.
 #   3. The Lectio-Version header of the answer equals TAG, when TAG is set.
-#      lectiod has no /version route; every answer names the release that
-#      wrote it in that header, which is the one public place the version
-#      is readable. A /version route is the route this check lacks.
+#      Every answer names the release that wrote it in that header, which is
+#      where the version is readable from outside: lectiod's /version is
+#      served on its internal listener (LECTIO_INTERNAL_ADDR), which no
+#      ingress routes.
 #
 # Required tools: curl, grep.
 #
