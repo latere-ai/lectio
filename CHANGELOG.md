@@ -8,6 +8,8 @@ refused before it is pushed.
 
 ### Changed
 
+- **The production manifests no longer name a telemetry collector.** The egress policy drops the collector rule, and telemetry stays off until `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+
 - **The development server listens on `127.0.0.1:8080` by default,**
   where it listened on `:8080`, every interface, so the static token it
   accepts is reachable from its own machine alone. `make run` starts it

@@ -13,11 +13,6 @@
 # 443: the decider the API asks, and the key route a worker asks.
 # platformd's side admits both in lectiod-platformd-tls, which
 # platform's deploy/prod holds.
-#
-# The collector the namespace's monitoring injects is dialed at the node's
-# address on host port 40318, which Cilium translates to the collector's
-# Pod on container port 4318 before policy, so the Pods on 4318 are
-# admitted.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -41,16 +36,6 @@ spec:
               app: platformd
       ports:
         - port: 8443
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: dash0-system
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: opentelemetry-collector
-      ports:
-        - port: 4318
           protocol: TCP
 ---
 # The workers' way to the readers: the Lux core at its Service, pod port
