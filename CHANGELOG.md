@@ -8,6 +8,8 @@ refused before it is pushed.
 
 ### Changed
 
+- Built with Go 1.27.4, which fixes GO-2026-6859.
+
 - **The production manifests no longer name a telemetry collector.** The egress policy drops the collector rule, and telemetry stays off until `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 - **The development server listens on `127.0.0.1:8080` by default,**
