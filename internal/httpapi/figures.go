@@ -19,6 +19,7 @@ import (
 	"latere.ai/x/lectio/internal/render"
 	"latere.ai/x/lectio/internal/run"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/tasks"
 )
 
 // getBlockImage serves a block as it looks on its page: the page's image
@@ -67,7 +68,7 @@ type figuresRequest struct {
 
 // runView is a run that describes figures, as the API returns it.
 type runView struct {
-	State      string         `json:"state"`
+	State      tasks.RunState `json:"state"`
 	Total      int            `json:"total"`
 	Done       int            `json:"done"`
 	Failed     int            `json:"failed"`

@@ -15,6 +15,7 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/tasks"
 )
 
 // The bounds of an event stream (specs/003-api.md). A stream is a poll of
@@ -65,8 +66,8 @@ type (
 	}
 	// stateEvent is the parse's state, with why it failed when it did.
 	stateEvent struct {
-		State string          `json:"state"`
-		Error *document.Error `json:"error,omitzero"`
+		State tasks.ParseState `json:"state"`
+		Error *document.Error  `json:"error,omitzero"`
 	}
 )
 
@@ -90,7 +91,7 @@ type eventStream struct {
 	last int64
 	// state is the state last sent on this connection, so a change of the
 	// parse that left its state alone does not send the state again.
-	state string
+	state tasks.ParseState
 	// wrote is when the stream last wrote anything.
 	wrote time.Time
 }

@@ -44,7 +44,7 @@ func TestAParseSelectsNoMorePagesThanItsAllowLets(t *testing.T) {
 		for _, tc := range []struct {
 			id           string
 			limit, pages int
-			state        string
+			state        tasks.ParseState
 		}{
 			{"prs_at", 3, 3, "running"},
 			{"prs_past", 3, 4, "failed"},

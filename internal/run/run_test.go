@@ -19,6 +19,7 @@ import (
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/render"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/internal/testfixtures"
 	"latere.ai/x/lectio/reader"
 	"latere.ai/x/lectio/reader/stub"
@@ -293,7 +294,7 @@ func TestAFileTheRendererRefusesFailsEachPageOnce(t *testing.T) {
 }
 
 func TestFailedPagesAreAllowedUpToTheNumberAsked(t *testing.T) {
-	for allowed, want := range map[int]string{0: store.StateFailed, 1: store.StateSucceeded} {
+	for allowed, want := range map[int]tasks.ParseState{0: store.StateFailed, 1: store.StateSucceeded} {
 		r := start(t, &Runner{
 			Readers: map[string]reader.Reader{"stub": failing(0, reader.Errorf(reader.Permanent, "no"))}, Chain: []string{"stub"},
 		})

@@ -26,6 +26,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -407,8 +408,12 @@ func (r *Runner) finish(ctx context.Context, id string, err error) {
 }
 
 // update changes a parse. A parse that was deleted meanwhile is left alone.
+// A change the parse's lifecycle has no step for is refused by the store and
+// logged: the parse stays as it was.
 func (r *Runner) update(id string, change func(*store.Parse)) {
-	_, _ = r.Store.UpdateParse(id, change)
+	if _, err := r.Store.UpdateParse(id, change); err != nil && fault.CodeOf(err) != fault.ParseNotFound {
+		slog.Error("run: a change of a parse was refused", "parse", id, "error", err)
+	}
 }
 
 // work is one worker: it takes the next job in dispatch order and does

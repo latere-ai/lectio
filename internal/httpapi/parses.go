@@ -28,6 +28,7 @@ import (
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/intake/pages"
 	"latere.ai/x/lectio/internal/store"
+	"latere.ai/x/lectio/internal/tasks"
 )
 
 // The bounds of a submit that the contract states.
@@ -68,18 +69,18 @@ type parseRequest struct {
 
 // progress is where a parse stands.
 type progress struct {
-	Stage       string `json:"stage"`
-	PagesTotal  int    `json:"pages_total"`
-	PagesDone   int    `json:"pages_done"`
-	PagesFailed int    `json:"pages_failed"`
-	PagesReused int    `json:"pages_reused,omitzero"`
+	Stage       tasks.ParseStage `json:"stage"`
+	PagesTotal  int              `json:"pages_total"`
+	PagesDone   int              `json:"pages_done"`
+	PagesFailed int              `json:"pages_failed"`
+	PagesReused int              `json:"pages_reused,omitzero"`
 }
 
 // parseView is a parse as the API returns it.
 type parseView struct {
 	ID               string            `json:"id"`
 	Owner            string            `json:"owner,omitempty"`
-	State            string            `json:"state"`
+	State            tasks.ParseState  `json:"state"`
 	Class            string            `json:"class"`
 	Priority         int               `json:"priority"`
 	File             string            `json:"file"`
@@ -415,10 +416,13 @@ func narrowed(f store.Filter, by *authz.Filter) (owners []string, out store.Filt
 
 func (s *Server) listParses(w http.ResponseWriter, r *http.Request, c call) error {
 	q := r.URL.Query()
-	filter := store.Filter{State: q.Get("state"), File: q.Get("file"), OriginPath: q.Get("origin.path")}
-	states := []string{"", store.StateQueued, store.StateRunning, store.StateSucceeded, store.StateFailed, store.StateCanceled}
-	if !slices.Contains(states, filter.State) {
-		return invalid("state", "state is one of queued, running, succeeded, failed, canceled")
+	filter := store.Filter{File: q.Get("file"), OriginPath: q.Get("origin.path")}
+	if text := q.Get("state"); text != "" {
+		state, ok := tasks.ParseStateOf(text)
+		if !ok {
+			return invalid("state", "state is one of queued, running, succeeded, failed, canceled")
+		}
+		filter.State = state
 	}
 	for _, label := range q["label"] {
 		k, v, found := strings.Cut(label, "=")

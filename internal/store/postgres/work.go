@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/figures"
 	"latere.ai/x/lectio/internal/tasks"
@@ -42,9 +43,9 @@ const (
 // task ends, whether it waits for its parse to end, for its turn, or for a
 // model.
 const (
-	FieldPending   = "pending"
-	FieldSucceeded = "succeeded"
-	FieldFailed    = "failed"
+	FieldPending   = document.FieldPending
+	FieldSucceeded = document.FieldSucceeded
+	FieldFailed    = document.FieldFailed
 )
 
 // FieldRequest is an extraction to queue.
@@ -161,10 +162,10 @@ func (s *Store) AskFieldAgain(ctx context.Context, f FieldRequest) (replaced str
 // Field is one extraction as the store holds it. The result's bytes are in
 // the object store under Output.
 type Field struct {
-	Parse string `json:"parse_id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
-	Pin   string `json:"pin"`
+	Parse string              `json:"parse_id"`
+	Name  string              `json:"name"`
+	State document.FieldState `json:"state"`
+	Pin   string              `json:"pin"`
 
 	// Request is what the extraction was asked with, the tasks.Field its
 	// request wrote, as the text it was kept as.
@@ -222,13 +223,13 @@ func (s *Store) Fields(ctx context.Context, parseID string) ([]Field, error) {
 // The states of a run that describes a parse's figures, and of one figure
 // in the last run that took it.
 const (
-	RunRunning   = "running"
-	RunSucceeded = "succeeded"
-	RunFailed    = "failed"
+	RunRunning   = tasks.RunRunning
+	RunSucceeded = tasks.RunSucceeded
+	RunFailed    = tasks.RunFailed
 
-	FigurePending   = "pending"
-	FigureSucceeded = "succeeded"
-	FigureFailed    = "failed"
+	FigurePending   = tasks.FigurePending
+	FigureSucceeded = tasks.FigureSucceeded
+	FigureFailed    = tasks.FigureFailed
 )
 
 // FigureAsk is one figure a run sets out to describe.
@@ -306,8 +307,8 @@ func (s *Store) StartFigures(ctx context.Context, r FigureStart) error {
 
 // FigureRun is the run of a parse that describes its figures.
 type FigureRun struct {
-	State string `json:"state"`
-	Redo  bool   `json:"redo"`
+	State tasks.RunState `json:"state"`
+	Redo  bool           `json:"redo"`
 
 	// Total is how many figures the run set out to describe, and Open how
 	// many of them have a task that has not ended. Done and Failed count
@@ -335,12 +336,12 @@ type FigureRun struct {
 // object store under Output, which a figure keeps from an earlier run when
 // a later one lost it.
 type Figure struct {
-	Ref     string       `json:"ref"`
-	Page    int          `json:"page"`
-	PageKey string       `json:"page_key"`
-	State   string       `json:"state"`
-	Output  string       `json:"output"`
-	Error   *tasks.Error `json:"error"`
+	Ref     string            `json:"ref"`
+	Page    int               `json:"page"`
+	PageKey string            `json:"page_key"`
+	State   tasks.FigureState `json:"state"`
+	Output  string            `json:"output"`
+	Error   *tasks.Error      `json:"error"`
 }
 
 // Figures is the run of a parse and the figures a run took, of one instant.

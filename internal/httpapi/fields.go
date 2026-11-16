@@ -50,20 +50,20 @@ type citationView struct {
 // of a block, or, when the read asked for it, the ref with its page and
 // its box.
 type fieldView struct {
-	Name         string           `json:"name"`
-	State        string           `json:"state"`
-	Schema       jsontext.Value   `json:"schema,omitzero"`
-	Instructions string           `json:"instructions,omitempty"`
-	Data         jsontext.Value   `json:"data,omitzero"`
-	Citations    map[string][]any `json:"citations,omitempty"`
-	Model        string           `json:"model,omitempty"`
-	Constrained  bool             `json:"constrained"`
-	Attempts     int              `json:"attempts,omitzero"`
-	Windows      int              `json:"windows,omitzero"`
-	Usage        *document.Usage  `json:"usage,omitzero"`
-	Error        *document.Error  `json:"error,omitzero"`
-	Set          string           `json:"set,omitempty"`
-	SetVersion   int              `json:"set_version,omitzero"`
+	Name         string              `json:"name"`
+	State        document.FieldState `json:"state"`
+	Schema       jsontext.Value      `json:"schema,omitzero"`
+	Instructions string              `json:"instructions,omitempty"`
+	Data         jsontext.Value      `json:"data,omitzero"`
+	Citations    map[string][]any    `json:"citations,omitempty"`
+	Model        string              `json:"model,omitempty"`
+	Constrained  bool                `json:"constrained"`
+	Attempts     int                 `json:"attempts,omitzero"`
+	Windows      int                 `json:"windows,omitzero"`
+	Usage        *document.Usage     `json:"usage,omitzero"`
+	Error        *document.Error     `json:"error,omitzero"`
+	Set          string              `json:"set,omitempty"`
+	SetVersion   int                 `json:"set_version,omitzero"`
 }
 
 // viewField is a field as the API returns it, each citation a ref.

@@ -5,6 +5,7 @@ package run
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -103,7 +104,7 @@ func (r *Runner) Figures(p store.Parse, opt FigureOptions) (store.FigureRun, err
 		all.Wait()
 
 		now := time.Now().UTC()
-		r.Store.UpdateFigureRun(p.ID, func(run *store.FigureRun) {
+		r.updateRun(p.ID, func(run *store.FigureRun) {
 			run.FinishedAt, run.State = &now, store.RunSucceeded
 			// A run failed when it described nothing it set out to. One
 			// that lost some figures and described others succeeded, and
@@ -140,7 +141,7 @@ func (r *Runner) describe(j *job, f figures.Figure, chain []string, redo bool) {
 		return
 	}
 	lost := func(why *document.Error) {
-		r.Store.UpdateFigureRun(j.parse.ID, func(run *store.FigureRun) {
+		r.updateRun(j.parse.ID, func(run *store.FigureRun) {
 			run.Failed++
 			if run.Failures == nil {
 				run.Failures = map[string]document.Error{}
@@ -155,7 +156,7 @@ func (r *Runner) describe(j *job, f figures.Figure, chain []string, redo bool) {
 	if !redo {
 		if res, ok := r.Store.Figure(j.parse.Owner, key); ok {
 			r.write(j.parse.ID, f.Ref, res)
-			r.Store.UpdateFigureRun(j.parse.ID, func(run *store.FigureRun) { run.Done++; run.Reused++ })
+			r.updateRun(j.parse.ID, func(run *store.FigureRun) { run.Done++; run.Reused++ })
 			return
 		}
 	}
@@ -193,7 +194,7 @@ func (r *Runner) describe(j *job, f figures.Figure, chain []string, redo bool) {
 	default:
 		r.write(j.parse.ID, f.Ref, res)
 		r.Store.KeepFigure(j.parse.Owner, key, res)
-		r.Store.UpdateFigureRun(j.parse.ID, func(run *store.FigureRun) {
+		r.updateRun(j.parse.ID, func(run *store.FigureRun) {
 			run.Done++
 			run.Usage = run.Usage.Add(res.Usage)
 			delete(run.Failures, f.Ref)
@@ -205,4 +206,12 @@ func (r *Runner) describe(j *job, f figures.Figure, chain []string, redo bool) {
 // write puts a description onto a figure's block.
 func (r *Runner) write(parseID, ref string, res reader.FigureResult) {
 	r.Store.UpdateBlock(parseID, ref, figures.Kept(res).Onto)
+}
+
+// updateRun changes a parse's figure run. A change the run's lifecycle has
+// no step for is refused by the store and logged: the run stays as it was.
+func (r *Runner) updateRun(parse string, change func(*store.FigureRun)) {
+	if err := r.Store.UpdateFigureRun(parse, change); err != nil {
+		slog.Error("run: a change of a figure run was refused", "parse", parse, "error", err)
+	}
 }

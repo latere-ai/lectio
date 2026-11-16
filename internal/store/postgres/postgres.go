@@ -36,6 +36,7 @@ import (
 	"latere.ai/x/pkg/pgxmigrate"
 	"latere.ai/x/pkg/ulid"
 
+	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/id"
 	"latere.ai/x/lectio/internal/store/postgres/migrations"
@@ -283,10 +284,32 @@ func bound(maxConns int32) int32 {
 	return maxConns
 }
 
+// insertStates holds the state each statement that inserts a record writes
+// to a state its lifecycle table starts in: a parse and its tasks are queued,
+// an extraction and a figure are pending, a run is running or, with no figure
+// to describe, succeeded, and a file has no mark of a delete.
+func insertStates() error {
+	if err := errors.Join(
+		tasks.ParseTable.CheckStart(tasks.ParseQueued),
+		tasks.TaskTable.CheckStart(tasks.Queued),
+		tasks.FieldTable.CheckStart(document.FieldPending),
+		tasks.FigureTable.CheckStart(tasks.FigurePending),
+		tasks.RunTable.CheckStart(tasks.RunRunning),
+		tasks.RunTable.CheckStart(tasks.RunSucceeded),
+		tasks.FileTable.CheckStart(tasks.FileLive),
+	); err != nil {
+		return fmt.Errorf("store: an inserted record starts in a state its lifecycle lacks: %w", err)
+	}
+	return nil
+}
+
 // prepare refuses a schema at another version than this binary's and writes
 // the settings: the ones readers answers for what is stored, when it is
 // set.
 func (s *Store) prepare(ctx context.Context, settings tasks.Settings, readers func(context.Context, ReaderState) (tasks.Settings, error)) error {
+	if err := insertStates(); err != nil {
+		return err
+	}
 	highest, err := migrations.Highest()
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
@@ -639,29 +662,29 @@ func (s *Store) Retry(ctx context.Context, owner, parseID string) error {
 
 // Parse is a parse as the control plane holds it.
 type Parse struct {
-	ID               string         `json:"parse_id"`
-	Owner            string         `json:"owner"`
-	Group            string         `json:"group_id"`
-	Project          string         `json:"project_id"`
-	Class            tasks.Class    `json:"class"`
-	Priority         int            `json:"priority"`
-	Pin              string         `json:"pin"`
-	AllowFailedPages int            `json:"allow_failed_pages"`
-	State            string         `json:"state"`
-	PagesTotal       int            `json:"pages_total"`
-	PagesOpen        int            `json:"pages_open"`
-	PagesDone        int            `json:"pages_done"`
-	PagesFailed      int            `json:"pages_failed"`
-	Calls            int            `json:"calls"`
-	InputTokens      int64          `json:"input_tokens"`
-	OutputTokens     int64          `json:"output_tokens"`
-	Manifest         jsontext.Value `json:"manifest"`
-	Index            string         `json:"index_key"`
-	Error            *tasks.Error   `json:"error"`
-	DeadlineAt       time.Time      `json:"deadline_at"`
-	CreatedAt        time.Time      `json:"created_at"`
-	StartedAt        *time.Time     `json:"started_at"`
-	FinishedAt       *time.Time     `json:"finished_at"`
+	ID               string           `json:"parse_id"`
+	Owner            string           `json:"owner"`
+	Group            string           `json:"group_id"`
+	Project          string           `json:"project_id"`
+	Class            tasks.Class      `json:"class"`
+	Priority         int              `json:"priority"`
+	Pin              string           `json:"pin"`
+	AllowFailedPages int              `json:"allow_failed_pages"`
+	State            tasks.ParseState `json:"state"`
+	PagesTotal       int              `json:"pages_total"`
+	PagesOpen        int              `json:"pages_open"`
+	PagesDone        int              `json:"pages_done"`
+	PagesFailed      int              `json:"pages_failed"`
+	Calls            int              `json:"calls"`
+	InputTokens      int64            `json:"input_tokens"`
+	OutputTokens     int64            `json:"output_tokens"`
+	Manifest         jsontext.Value   `json:"manifest"`
+	Index            string           `json:"index_key"`
+	Error            *tasks.Error     `json:"error"`
+	DeadlineAt       time.Time        `json:"deadline_at"`
+	CreatedAt        time.Time        `json:"created_at"`
+	StartedAt        *time.Time       `json:"started_at"`
+	FinishedAt       *time.Time       `json:"finished_at"`
 
 	// What the caller chose, and how many of the pages done were taken from
 	// an earlier read.
@@ -695,9 +718,7 @@ type Parse struct {
 }
 
 // Terminal reports whether the parse has ended.
-func (p Parse) Terminal() bool {
-	return p.State == "succeeded" || p.State == "failed" || p.State == "canceled"
-}
+func (p Parse) Terminal() bool { return p.State.Terminal() }
 
 // Parse returns a parse with its counters.
 func (s *Store) Parse(ctx context.Context, parseID string) (Parse, error) {
@@ -980,7 +1001,7 @@ func (s *Store) ParseOf(ctx context.Context, owner, parseID string) (Parse, erro
 
 // Filter narrows a list of parses. A zero member matches everything.
 type Filter struct {
-	State      string
+	State      tasks.ParseState
 	File       string
 	OriginPath string
 	// Labels must each be on a parse with the same value.

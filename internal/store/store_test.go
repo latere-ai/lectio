@@ -11,6 +11,7 @@ import (
 	"latere.ai/x/lectio/document"
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/render"
+	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/reader"
 )
 
@@ -49,7 +50,10 @@ func TestFiles(t *testing.T) {
 		}
 	}
 
-	if _, _, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", File: "fil_1", State: StateRunning}, "", ""); err != nil {
+	if _, _, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", File: "fil_1", State: StateQueued, Stage: StageQueued}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateParse("prs_1", func(p *Parse) { p.State = StateRunning }); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.DeleteFile("alice", "fil_1"); fault.CodeOf(err) != fault.NotTerminal {
@@ -68,18 +72,18 @@ func TestFiles(t *testing.T) {
 
 func TestIdempotentCreate(t *testing.T) {
 	m := NewMemory()
-	first, created, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice"}, "key", "body")
+	first, created, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", State: StateQueued, Stage: StageQueued}, "key", "body")
 	if err != nil || !created || first.ID != "prs_1" {
 		t.Fatalf("CreateParse = %+v, %v, %v", first, created, err)
 	}
-	again, created, err := m.CreateParse(Parse{ID: "prs_2", Owner: "alice"}, "key", "body")
+	again, created, err := m.CreateParse(Parse{ID: "prs_2", Owner: "alice", State: StateQueued, Stage: StageQueued}, "key", "body")
 	if err != nil || created || again.ID != "prs_1" {
 		t.Fatalf("the same key and body return the first parse: %+v, %v, %v", again, created, err)
 	}
-	if _, _, err := m.CreateParse(Parse{ID: "prs_3", Owner: "alice"}, "key", "other body"); fault.CodeOf(err) != fault.IdempotencyConflict {
+	if _, _, err := m.CreateParse(Parse{ID: "prs_3", Owner: "alice", State: StateQueued, Stage: StageQueued}, "key", "other body"); fault.CodeOf(err) != fault.IdempotencyConflict {
 		t.Fatalf("the same key with another body: %v", err)
 	}
-	if p, created, err := m.CreateParse(Parse{ID: "prs_4", Owner: "bob"}, "key", "other body"); err != nil || !created || p.ID != "prs_4" {
+	if p, created, err := m.CreateParse(Parse{ID: "prs_4", Owner: "bob", State: StateQueued, Stage: StageQueued}, "key", "other body"); err != nil || !created || p.ID != "prs_4" {
 		t.Fatalf("a key is one owner's: %+v, %v, %v", p, created, err)
 	}
 
@@ -88,7 +92,7 @@ func TestIdempotentCreate(t *testing.T) {
 	made := make(chan string, 50)
 	for i := range 50 {
 		wg.Go(func() {
-			p, _, err := m.CreateParse(Parse{ID: fmt.Sprintf("prs_c%02d", i), Owner: "carol"}, "one", "body")
+			p, _, err := m.CreateParse(Parse{ID: fmt.Sprintf("prs_c%02d", i), Owner: "carol", State: StateQueued, Stage: StageQueued}, "one", "body")
 			if err == nil {
 				made <- p.ID
 			}
@@ -107,16 +111,14 @@ func TestIdempotentCreate(t *testing.T) {
 
 func TestParses(t *testing.T) {
 	m := NewMemory()
-	for i, p := range []Parse{
+	for _, p := range []Parse{
 		{ID: "prs_1", Owner: "alice", State: StateSucceeded, File: "fil_a", Origin: &Origin{Path: "reports/q3.pdf"}, Labels: map[string]string{"batch": "oct", "kind": "invoice"}, ContentSHA: "sha"},
 		{ID: "prs_2", Owner: "alice", State: StateFailed, File: "fil_a", Labels: map[string]string{"batch": "oct"}},
 		{ID: "prs_3", Owner: "alice", State: StateSucceeded, File: "fil_b", ContentSHA: "sha"},
 		{ID: "prs_4", Owner: "alice", State: StateRunning, File: "fil_b", ContentSHA: "sha"},
 		{ID: "prs_5", Owner: "bob", State: StateSucceeded, File: "fil_c", ContentSHA: "sha"},
 	} {
-		if _, _, err := m.CreateParse(p, "", ""); err != nil {
-			t.Fatalf("parse %d: %v", i, err)
-		}
+		seed(t, m, p)
 	}
 
 	if _, err := m.Parse("alice", "prs_5"); fault.CodeOf(err) != fault.ParseNotFound {
@@ -216,9 +218,7 @@ func TestAReadIsKeptForItsOwner(t *testing.T) {
 
 func TestResultsAndDelete(t *testing.T) {
 	m := NewMemory()
-	if _, _, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", State: StateRunning}, "", ""); err != nil {
-		t.Fatal(err)
-	}
+	seed(t, m, Parse{ID: "prs_1", Owner: "alice", State: StateRunning})
 	m.PutPage("prs_1", document.Page{Number: 2, State: document.PageSucceeded}, &render.Image{MediaType: "image/png", Data: []byte("two")})
 	m.PutPage("prs_1", document.Page{Number: 1, State: document.PageFailed}, nil)
 	m.PutPage("prs_1", document.Page{Number: 1, State: document.PageSucceeded}, nil)
@@ -269,7 +269,7 @@ func TestResultsAndDelete(t *testing.T) {
 }
 
 func TestTerminal(t *testing.T) {
-	for state, want := range map[string]bool{StateQueued: false, StateRunning: false, StateSucceeded: true, StateFailed: true, StateCanceled: true} {
+	for state, want := range map[tasks.ParseState]bool{StateQueued: false, StateRunning: false, StateSucceeded: true, StateFailed: true, StateCanceled: true} {
 		if got := (Parse{State: state}).Terminal(); got != want {
 			t.Errorf("%s: Terminal() = %v", state, got)
 		}
@@ -280,9 +280,7 @@ func TestTerminal(t *testing.T) {
 // lock, and goes with its parse.
 func TestFigureRuns(t *testing.T) {
 	m := NewMemory()
-	if _, _, err := m.CreateParse(Parse{ID: "prs_1", Owner: "alice", State: StateSucceeded}, "", ""); err != nil {
-		t.Fatal(err)
-	}
+	seed(t, m, Parse{ID: "prs_1", Owner: "alice", State: StateSucceeded})
 	if _, ok := m.FigureRun("prs_1"); ok {
 		t.Fatal("a parse nobody asked to describe has no run")
 	}
@@ -360,5 +358,22 @@ func TestADescriptionIsKeptForItsOwner(t *testing.T) {
 	m.KeepFigure("alice", "", reader.FigureResult{Description: "no key"})
 	if _, ok := m.Figure("alice", ""); ok {
 		t.Fatal("a description was kept under no key")
+	}
+}
+
+// seed stores a parse in the state it names. A parse starts queued, so one
+// that is to stand elsewhere is moved there along the table's steps, which is
+// how the writers that move a parse take it.
+func seed(t *testing.T, m *Memory, p Parse) {
+	t.Helper()
+	state := p.State
+	p.State, p.Stage = StateQueued, StageQueued
+	if _, _, err := m.CreateParse(p, "", ""); err != nil {
+		t.Fatalf("creating %s: %v", p.ID, err)
+	}
+	for _, to := range pathTo(t, tasks.ParseTable, state)[1:] {
+		if _, err := m.UpdateParse(p.ID, func(p *Parse) { p.State = to }); err != nil {
+			t.Fatalf("moving %s to %s: %v", p.ID, to, err)
+		}
 	}
 }

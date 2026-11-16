@@ -11,6 +11,7 @@ package store
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"latere.ai/x/lectio/internal/fault"
 	"latere.ai/x/lectio/internal/parse"
 	"latere.ai/x/lectio/internal/render"
+	"latere.ai/x/lectio/internal/tasks"
 	"latere.ai/x/lectio/reader"
 )
 
@@ -42,22 +44,23 @@ type File struct {
 	ExpiresAt *time.Time
 }
 
-// The states of a parse.
+// The states of a parse, which tasks.ParseTable holds to its steps.
 const (
-	StateQueued    = "queued"
-	StateRunning   = "running"
-	StateSucceeded = "succeeded"
-	StateFailed    = "failed"
-	StateCanceled  = "canceled"
+	StateQueued    = tasks.ParseQueued
+	StateRunning   = tasks.ParseRunning
+	StateSucceeded = tasks.ParseSucceeded
+	StateFailed    = tasks.ParseFailed
+	StateCanceled  = tasks.ParseCanceled
 )
 
-// The stages a parse reports while it runs.
+// The stages a parse reports while it runs, which tasks.StageTable holds to
+// its steps.
 const (
-	StageQueued     = "queued"
-	StagePreparing  = "preparing"
-	StageReading    = "reading"
-	StageAssembling = "assembling"
-	StageDone       = "done"
+	StageQueued     = tasks.StageQueued
+	StagePreparing  = tasks.StagePreparing
+	StageReading    = tasks.StageReading
+	StageAssembling = tasks.StageAssembling
+	StageDone       = tasks.StageDone
 )
 
 // The classes of work.
@@ -78,7 +81,7 @@ type Origin struct {
 type Parse struct {
 	ID    string
 	Owner string
-	State string
+	State tasks.ParseState
 
 	// What was asked.
 	File             string
@@ -103,7 +106,7 @@ type Parse struct {
 	Reuse      bool
 
 	// Where it stands.
-	Stage       string
+	Stage       tasks.ParseStage
 	PagesTotal  int
 	PagesDone   int
 	PagesFailed int
@@ -269,9 +272,7 @@ type QueueScope struct {
 }
 
 // Terminal reports whether the parse has ended.
-func (p Parse) Terminal() bool {
-	return p.State == StateSucceeded || p.State == StateFailed || p.State == StateCanceled
-}
+func (p Parse) Terminal() bool { return p.State.Terminal() }
 
 type pageKey struct {
 	parse string
@@ -381,6 +382,12 @@ func (m *Memory) DeleteFile(owner, id string) error {
 // made, and with another body it is refused. The key and the parse are
 // written under one lock, so two calls with one key make one parse.
 func (m *Memory) CreateParse(p Parse, key, body string) (stored Parse, created bool, err error) {
+	if err := tasks.ParseTable.CheckStart(p.State); err != nil {
+		return Parse{}, false, fmt.Errorf("store: creating parse %s: %w", p.ID, err)
+	}
+	if err := tasks.StageTable.CheckStart(p.Stage); err != nil {
+		return Parse{}, false, fmt.Errorf("store: creating parse %s: %w", p.ID, err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if key != "" {
@@ -418,7 +425,10 @@ func (m *Memory) ParseByID(id string) (Parse, error) {
 }
 
 // UpdateParse changes a parse under the store's lock and returns the
-// result. change sees the current parse and edits it in place.
+// result. change sees the current parse and edits it in place. A change that
+// moves the parse to a state tasks.ParseTable has no step to is refused with
+// an error that wraps statemachine.ErrIllegalTransition and leaves the
+// parse as it was: this is the one writer of a parse's state.
 func (m *Memory) UpdateParse(id string, change func(*Parse)) (Parse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -426,21 +436,32 @@ func (m *Memory) UpdateParse(id string, change func(*Parse)) (Parse, error) {
 	if !ok {
 		return Parse{}, fault.New(fault.ParseNotFound, "no parse %s", id)
 	}
+	state, stage := p.State, p.Stage
 	change(&p)
+	if p.State != state {
+		if err := tasks.ParseTable.Check(state, p.State); err != nil {
+			return Parse{}, fmt.Errorf("store: parse %s: %w", id, err)
+		}
+	}
+	if p.Stage != stage {
+		if err := tasks.StageTable.Check(stage, p.Stage); err != nil {
+			return Parse{}, fmt.Errorf("store: parse %s: %w", id, err)
+		}
+	}
 	m.parses[id] = p
 	return p, nil
 }
 
 // Filter narrows a list of parses. A zero field matches everything.
 type Filter struct {
-	State      string
+	State      tasks.ParseState
 	File       string
 	OriginPath string
 	Labels     map[string]string
 }
 
 func (f Filter) matches(p Parse) bool {
-	if f.State != "" && p.State != f.State {
+	if f.State.Set() && p.State != f.State {
 		return false
 	}
 	if f.File != "" && p.File != f.File {
@@ -532,18 +553,19 @@ func (m *Memory) Read(owner, key string) (document.Page, *render.Image, bool) {
 	return kept.page, kept.image, true
 }
 
-// The states of a run that describes a parse's figures.
+// The states of a run that describes a parse's figures, which
+// tasks.RunTable holds to its steps.
 const (
-	RunRunning   = "running"
-	RunSucceeded = "succeeded"
-	RunFailed    = "failed"
+	RunRunning   = tasks.RunRunning
+	RunSucceeded = tasks.RunSucceeded
+	RunFailed    = tasks.RunFailed
 )
 
 // FigureRun is one request to describe the figures of a parse, and where
 // it stands. A parse has at most one: a later request replaces an earlier
 // one that has ended.
 type FigureRun struct {
-	State string
+	State tasks.RunState
 
 	// Total is how many figures the run set out to describe. Done and
 	// Failed count the ones that ended, and Reused those of Done that were
@@ -560,11 +582,11 @@ type FigureRun struct {
 	FinishedAt *time.Time
 }
 
-// The states of an extraction.
+// The states of an extraction, which tasks.FieldTable holds to its steps.
 const (
-	FieldPending   = "pending"
-	FieldSucceeded = "succeeded"
-	FieldFailed    = "failed"
+	FieldPending   = document.FieldPending
+	FieldSucceeded = document.FieldSucceeded
+	FieldFailed    = document.FieldFailed
 )
 
 // FieldRequest is one extraction a caller asks of a parse
@@ -588,7 +610,7 @@ type FieldRequest struct {
 // end, for its turn, or for a model.
 type Field struct {
 	Name  string
-	State string
+	State document.FieldState
 
 	// Schema and Instructions are what the extraction was asked with: the
 	// caller's schema as it was sent, and the caller's guidance.
@@ -668,8 +690,12 @@ type Member struct {
 func (m *Memory) StartFigureRun(parseID string, run FigureRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if have, ok := m.runs[parseID]; ok && have.State == RunRunning {
-		return fault.New(fault.Conflict, "the figures of parse %s are being described", parseID)
+	if have, ok := m.runs[parseID]; ok {
+		if err := tasks.RunTable.Check(have.State, run.State); err != nil {
+			return fault.New(fault.Conflict, "the figures of parse %s are being described", parseID)
+		}
+	} else if err := tasks.RunTable.CheckStart(run.State); err != nil {
+		return fmt.Errorf("store: starting the figures of parse %s: %w", parseID, err)
 	}
 	m.runs[parseID] = run
 	return nil
@@ -687,17 +713,26 @@ func (m *Memory) FigureRun(parseID string) (FigureRun, bool) {
 }
 
 // UpdateFigureRun changes a parse's run under the store's lock. A run
-// whose parse was deleted meanwhile is left alone.
-func (m *Memory) UpdateFigureRun(parseID string, change func(*FigureRun)) {
+// whose parse was deleted meanwhile is left alone. A change to a state
+// tasks.RunTable has no step to is refused with an error that wraps
+// statemachine.ErrIllegalTransition and leaves the run as it was.
+func (m *Memory) UpdateFigureRun(parseID string, change func(*FigureRun)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	run, ok := m.runs[parseID]
 	if !ok {
-		return
+		return nil
 	}
+	from := run.State
 	run.Failures = maps.Clone(run.Failures)
 	change(&run)
+	if run.State != from {
+		if err := tasks.RunTable.Check(from, run.State); err != nil {
+			return fmt.Errorf("store: the figures of parse %s: %w", parseID, err)
+		}
+	}
 	m.runs[parseID] = run
+	return nil
 }
 
 // UpdateBlock changes one block of a stored page under the store's lock.
@@ -755,7 +790,7 @@ func (m *Memory) DeleteParse(owner, id string) error {
 	if !ok || p.Owner != owner {
 		return fault.New(fault.ParseNotFound, "no parse %s", id)
 	}
-	if !p.Terminal() {
+	if err := tasks.ParseTable.Check(p.State, tasks.ParseGone); err != nil {
 		return fault.New(fault.NotTerminal, "parse %s has not ended", id)
 	}
 	delete(m.parses, id)
