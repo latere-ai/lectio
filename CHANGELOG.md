@@ -6,6 +6,21 @@ refused before it is pushed.
 
 ## Unreleased
 
+### Changed
+
+- **Every record with a lifecycle now refuses a step its lifecycle does not
+  have.** A parse, a task, an extraction, a figure, the run that describes a
+  parse's figures, a file's delete and a reader's circuit breaker each have
+  one written table of the states they may start in and the states each may
+  move to, and the stored records and the development server's in-memory
+  store move only along it. The tables are checked three ways: tests drive
+  every writer against its table on a real database, with every state and
+  every pair of racing writers; Lean proofs state what must stay true (an
+  ended parse is never queued again, a canceled task never runs, an
+  extraction is pending until its task ends); and TLC checks the worker lease,
+  that a worker that keeps its schedule is never taken for dead while it
+  still runs its task.
+
 ## v0.10.1 - 2026-11-15
 
 - **v0.10.0 is published with this release.** Its own release stopped before
