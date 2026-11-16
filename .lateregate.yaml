@@ -108,3 +108,32 @@ e2e:
     why: the kustomize base and every example render with kubectl
     test: {packages: [.]}
     tools: [kubectl]
+
+# The stored lifecycles are statemachine tables (internal/tasks/lifecycles.go),
+# so every switch over a state names each state.
+enums:
+  go:
+    types:
+      - internal/tasks.ParseState
+      - internal/tasks.ParseStage
+      - internal/tasks.State
+      - internal/tasks.FigureState
+      - internal/tasks.RunState
+      - internal/tasks.FileState
+      - internal/tasks.BreakerState
+      - document.FieldState
+      - document.PageState
+    fields:
+      internal/store.Parse.State: internal/tasks.ParseState
+      internal/store.Parse.Stage: internal/tasks.ParseStage
+      internal/store.Filter.State: internal/tasks.ParseState
+      internal/store.FigureRun.State: internal/tasks.RunState
+      internal/store.Field.State: document.FieldState
+      internal/store/postgres.Parse.State: internal/tasks.ParseState
+      internal/store/postgres.Filter.State: internal/tasks.ParseState
+      internal/store/postgres.Task.State: internal/tasks.State
+      internal/store/postgres.Field.State: document.FieldState
+      internal/store/postgres.FigureRun.State: internal/tasks.RunState
+      internal/store/postgres.Figure.State: internal/tasks.FigureState
+    parsers:
+      internal/tasks.ParseStateOf: Reads a parse state written as text outside the store, such as a query parameter, and reports whether ParseTable has it.
