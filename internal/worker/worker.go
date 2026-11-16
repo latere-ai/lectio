@@ -197,6 +197,10 @@ func (w *Worker) init() {
 // trip may take.
 func (w *Worker) renewal() time.Duration { return w.Lease / 4 }
 
+// bound is the longest an exchange may take before the worker gives up on it
+// and tries again: a renewal, and never less than a second.
+func (w *Worker) bound() time.Duration { return max(w.renewal(), time.Second) }
+
 // Ready reports whether the worker holds a live registration: the store
 // answered an exchange of it, or its registration, within a third of its
 // lease.
@@ -461,7 +465,7 @@ func (l *loop) discard(ctx context.Context, parse, task string, token int64) {
 	}
 	l.discards.Go(func() {
 		// The removal is not ended by the signal that stops the worker.
-		bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(l.w.renewal(), time.Second))
+		bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), l.w.bound())
 		defer cancel()
 		for _, key := range keys {
 			if err := l.w.Objects.Delete(bound, key); err != nil {
@@ -478,7 +482,7 @@ func (l *loop) exchange(ctx context.Context) {
 	// The exchange is not ended by the signal that stops the worker: a
 	// statement cut off after the store ran it would leave claims in a
 	// reply nobody read.
-	bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), max(l.w.renewal(), time.Second))
+	bound, cancel := context.WithTimeout(context.WithoutCancel(ctx), l.w.bound())
 	reply, err := l.w.Store.Exchange(bound, l.id, req)
 	cancel()
 	if err != nil {
