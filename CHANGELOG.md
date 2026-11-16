@@ -6,6 +6,8 @@ refused before it is pushed.
 
 ## Unreleased
 
+## v0.11.0 - 2026-11-16
+
 ### Changed
 
 - **Every record with a lifecycle now refuses a step its lifecycle does not
