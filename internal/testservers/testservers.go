@@ -333,6 +333,66 @@ func Database(t testing.TB, srv Postgres) string {
 	return OnDatabase(t, srv.Direct, name)
 }
 
+// templates holds, per server, the database Prepared copies: prepared once,
+// then copied by CREATE DATABASE ... TEMPLATE, which costs a file copy where
+// running every migration again costs seconds.
+var templates struct {
+	sync.Mutex
+	name map[string]string
+}
+
+// Prepared creates a database on the server that is a copy of one prepare
+// has run on, and returns its direct URL. prepare runs once per server and
+// key; every later call copies its result. The copy is dropped when the case
+// ends, and the template when the server stops.
+func Prepared(t testing.TB, srv Postgres, key string, prepare func(ctx context.Context, dsn string) error) string {
+	t.Helper()
+	ctx := context.Background()
+	run := func(ctx context.Context, statement string) error {
+		conn, err := pgx.Connect(ctx, srv.Direct)
+		if err != nil {
+			return err
+		}
+		_, err = conn.Exec(ctx, statement)
+		return errors.Join(err, conn.Close(ctx))
+	}
+	// One lock covers preparing the template and copying it: Postgres refuses
+	// to copy a template another session is connected to, and a copy holds
+	// that connection while it runs.
+	templates.Lock()
+	defer templates.Unlock()
+	if templates.name == nil {
+		templates.name = map[string]string{}
+	}
+	id := srv.Direct + "\x00" + key
+	tmpl, ok := templates.name[id]
+	if !ok {
+		tmpl = "lectio_tmpl_" + strings.ToLower(rand.Text()[:12])
+		if err := run(ctx, "create database "+tmpl); err != nil {
+			t.Fatalf("creating the template database: %v", err)
+		}
+		if err := prepare(ctx, OnDatabase(t, srv.Direct, tmpl)); err != nil {
+			if dropErr := run(ctx, "drop database if exists "+tmpl+" with (force)"); dropErr != nil {
+				t.Errorf("dropping the template database: %v", dropErr)
+			}
+			t.Fatalf("preparing the template database: %v", err)
+		}
+		templates.name[id] = tmpl
+	}
+	name := "lectio_" + strings.ToLower(rand.Text()[:12])
+	if err := run(ctx, "create database "+name+" template "+tmpl); err != nil {
+		t.Fatalf("copying the template database: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := run(ctx, "drop database if exists "+name+" with (force)"); err != nil {
+			t.Errorf("dropping the database: %v", err)
+		}
+	})
+	return OnDatabase(t, srv.Direct, name)
+}
+
 // OnDatabase is a server URL pointed at another database.
 func OnDatabase(t testing.TB, server, name string) string {
 	t.Helper()

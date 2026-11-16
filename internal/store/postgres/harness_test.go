@@ -16,6 +16,7 @@ import (
 
 	"latere.ai/x/lectio/internal/store/postgres"
 	"latere.ai/x/lectio/internal/tasks"
+	"latere.ai/x/lectio/internal/testservers"
 )
 
 // mode is one way the store reaches the database.
@@ -98,10 +99,10 @@ func defaults() tasks.Settings {
 func open(t testing.TB, srv servers, m mode, settings tasks.Settings) *harness {
 	t.Helper()
 	ctx := context.Background()
-	dsn := database(t, srv)
-	if err := postgres.Migrate(ctx, dsn); err != nil {
-		t.Fatalf("migrating: %v", err)
-	}
+	// Every harness starts from the migrated schema, copied from a template
+	// migrated once per server, since migrating each case's database again
+	// is most of a case's time.
+	dsn := testservers.Prepared(t, srv, "migrated", postgres.Migrate)
 	store, err := postgres.Open(ctx, m.serving(t, srv, dsn), postgres.Options{Settings: settings})
 	if err != nil {
 		t.Fatalf("opening the store: %v", err)
